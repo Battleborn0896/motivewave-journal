@@ -1,0 +1,17 @@
+__pycache__/
+*.pyc
+.pytest_cache/
+.venv/
+study/build/*
+!study/build/libs/
+study/build/libs/*
+!study/build/libs/motivewave-journal.jar
+/build/
+*.sqlite3
+*.sqlite3-wal
+*.sqlite3-shm
+*.ndjson
+.DS_Store
+
+# Local hand-off notes between developers; they hold machine-specific paths.
+CLAUDE_HANDOFF.md

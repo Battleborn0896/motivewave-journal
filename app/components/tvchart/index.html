@@ -1,0 +1,341 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<!--
+  The chart of MotiveWave Journal, drawn with TradingView's Lightweight Charts.
+  Scroll to zoom, drag to pan, the price scale fits what is on screen, a crosshair with labels,
+  levels as price lines on the axis. Double-click resets the view. The chart lives across
+  Streamlit reruns: new data replaces the old in place, and a view the user has zoomed or
+  panned is kept.
+
+  It speaks Streamlit's component protocol directly (componentReady, render, setFrameHeight),
+  so there is no build step.
+-->
+<style>
+  html, body { margin: 0; padding: 0; background: transparent; overflow: hidden; }
+  #wrap { position: relative; border-radius: 6px; overflow: hidden; }
+  #title { position: absolute; left: 12px; top: 8px; z-index: 4; pointer-events: none;
+           font: 700 11.5px/1.4 var(--mono); letter-spacing: .1em; text-transform: uppercase;
+           max-width: calc(100% - 90px); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  #legend { position: absolute; left: 12px; z-index: 4; pointer-events: none; font: 11.5px/1.55 var(--mono);
+            display: flex; flex-wrap: wrap; gap: 4px 14px; max-width: calc(100% - 110px);
+            padding: 2px 6px; margin-left: -6px; border-radius: 4px; background: var(--legend-bg, transparent); }
+  #legend .item { white-space: nowrap; max-width: 100%; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+  #legend .dot { display: inline-block; width: 8px; height: 8px; border-radius: 2px; margin-right: 6px; }
+  #legend .name { margin-right: 6px; }
+  #hint { position: absolute; right: 70px; bottom: 34px; z-index: 4; pointer-events: none;
+          font: 10.5px/1 var(--mono); opacity: 0; transition: opacity .3s; }
+  #wrap:hover #hint { opacity: .55; }
+  #trade-overlay { position: absolute; left: 0; top: 0; z-index: 3; pointer-events: none; }
+</style>
+<script src="lightweight-charts.standalone.production.js"></script>
+</head>
+<body>
+<div id="wrap"><div id="title"></div><div id="legend"></div><div id="chart"></div><svg id="trade-overlay"></svg>
+  <div id="hint">scroll zoom · drag pan · double-click reset</div></div>
+<script>
+const LC = window.LightweightCharts;
+const STYLE = { solid: LC.LineStyle.Solid, dotted: LC.LineStyle.Dotted, dashed: LC.LineStyle.Dashed,
+                large: LC.LineStyle.LargeDashed, sparse: LC.LineStyle.SparseDotted };
+let chart = null, entries = [], signature = null, userMoved = false, spec = null, overlayFrame = 0;
+const escapeText = v => String(v == null ? '' : v).replace(/[&<>"']/g, c =>
+  ({'&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;'}[c]));
+
+function timeLabel(time, full = false) {
+  return new Intl.DateTimeFormat('en-US', {timeZone: spec.timezone || 'UTC', hour: '2-digit',
+    minute: '2-digit', hour12: false, ...(full ? {month:'short', day:'2-digit', second:'2-digit', timeZoneName:'short'} : {})})
+    .format(new Date(Number(time) * 1000));
+}
+
+function post(type, extra) {
+  window.parent.postMessage(Object.assign({ isStreamlitMessage: true, type: type }, extra || {}), '*');
+}
+
+function formatter(fmt) {
+  const p = fmt && fmt.precision != null ? fmt.precision : 2;
+  const pre = (fmt && fmt.prefix) || '', suf = (fmt && fmt.suffix) || '';
+  return v => (v == null || isNaN(v)) ? '–'
+    : pre + Number(v).toLocaleString('en-US', { minimumFractionDigits: p, maximumFractionDigits: p }) + suf;
+}
+
+function sig(s) {
+  return JSON.stringify([s.height, s.intraday, s.timezone, !!s.tradeOverlays,
+    s.series.map(x => [x.type, x.name, x.scale || 'right', !!x.volume])]);
+}
+
+function build(s) {
+  const el = document.getElementById('chart');
+  if (chart) { chart.remove(); chart = null; }
+  const t = s.theme;
+  const hasCandles = s.series.some(x => x.type === 'candles');
+  document.documentElement.style.setProperty('--mono', t.mono);
+  document.getElementById('wrap').style.background = t.surface;
+  document.getElementById('wrap').style.border = '1px solid ' + t.border;
+  document.getElementById('title').style.color = t.ink;
+  document.getElementById('legend').style.top = s.title ? '28px' : '8px';
+  document.documentElement.style.setProperty('--legend-bg', t.surface + 'E6');
+  document.getElementById('hint').style.color = t.muted;
+  chart = LC.createChart(el, {
+    height: s.height, autoSize: false, width: el.clientWidth || document.body.clientWidth,
+    // No logo on the chart: the library's attribution notice and its link are in the app's sidebar,
+    // on every view (see VENDOR.txt). Price charts get a faint grid both ways.
+    layout: { background: { type: 'solid', color: t.surface }, textColor: t.muted, fontFamily: t.mono, fontSize: 11,
+              attributionLogo: false },
+    grid: { vertLines: { visible: hasCandles, color: t.grid }, horzLines: { color: t.grid, style: LC.LineStyle.Solid } },
+    crosshair: { mode: LC.CrosshairMode.Normal,
+                 vertLine: { color: t.crosshair, width: 1, style: LC.LineStyle.LargeDashed, labelBackgroundColor: t.label },
+                 horzLine: { color: t.crosshair, width: 1, style: LC.LineStyle.LargeDashed, labelBackgroundColor: t.label } },
+    kineticScroll: { mouse: true, touch: true },
+    rightPriceScale: { borderVisible: false,
+                       scaleMargins: { top: s.title ? 0.2 : 0.12, bottom: s.series.some(x => x.volume) ? 0.2 : 0.08 } },
+    leftPriceScale: { visible: s.series.some(x => x.scale === 'left'), borderVisible: false },
+    timeScale: { borderVisible: false, timeVisible: !!s.intraday, secondsVisible: false,
+                 rightOffset: 8, barSpacing: 7, minBarSpacing: 0.05,
+                 ...(s.timezone ? {tickMarkFormatter: time => timeLabel(time)} : {}) },
+    localization: { priceFormatter: formatter(s.format),
+                    ...(s.timezone ? {timeFormatter: time => timeLabel(time, true)} : {}) },
+    watermark: s.watermark ? { visible: true, text: s.watermark, color: t.watermark, fontSize: 40,
+                               fontFamily: t.mono, fontStyle: '700', horzAlign: 'center', vertAlign: 'center' }
+                           : { visible: false },
+    handleScroll: { mouseWheel: true, pressedMouseMove: true, horzTouchDrag: true, vertTouchDrag: false },
+    handleScale: { mouseWheel: true, pinch: true, axisPressedMouseMove: { time: true, price: true },
+                   axisDoubleClickReset: { time: true, price: true } },
+  });
+  entries = s.series.map(x => {
+    const fmt = x.format || s.format;
+    const common = { title: x.label || '', lastValueVisible: x.lastValue !== false, priceLineVisible: !!x.priceLine,
+                     priceScaleId: x.scale || 'right',
+                     priceFormat: { type: 'custom', formatter: formatter(fmt),
+                                    minMove: Math.pow(10, -((fmt && fmt.precision != null) ? fmt.precision : 2)) } };
+    let api;
+    if (x.type === 'candles') {
+      api = chart.addCandlestickSeries(Object.assign(common, {
+        upColor: t.candleUp, downColor: t.candleDown, borderUpColor: t.candleUp, borderDownColor: t.candleDown,
+        wickUpColor: t.candleUp, wickDownColor: t.candleDown, priceLineVisible: true,
+        autoscaleInfoProvider: original => {
+          const info = original();
+          if (!info || !spec.tradeOverlays) return info;
+          const range = chart.timeScale().getVisibleRange();
+          const fills = (spec.tradeOverlays.fills || []).filter(f => !range ||
+            (f.time >= range.from && f.time <= range.to));
+          const levels = (spec.tradeOverlays.levels || []).filter(l => !range ||
+            (l.to >= range.from && l.from <= range.to));
+          const values = [...fills, ...levels].map(p => p.price).filter(Number.isFinite);
+          if (values.length) info.priceRange = {
+            minValue: Math.min(info.priceRange.minValue, ...values),
+            maxValue: Math.max(info.priceRange.maxValue, ...values)};
+          return info;
+        },
+        priceLineStyle: LC.LineStyle.Dotted }));
+      if (x.volume) {
+        // Volume in its own band along the bottom, as on TradingView.
+        const vol = chart.addHistogramSeries({ priceScaleId: 'volume', priceFormat: { type: 'volume' },
+                                               lastValueVisible: false, priceLineVisible: false });
+        chart.priceScale('volume').applyOptions({ scaleMargins: { top: 0.84, bottom: 0 }, visible: false });
+        return { spec: x, api: api, lines: [], volume: vol };
+      }
+    } else if (x.type === 'area') {
+      api = chart.addAreaSeries(Object.assign(common, { lineColor: x.color, lineWidth: x.width || 2,
+        lineType: x.curved ? LC.LineType.Curved : LC.LineType.Simple, pointMarkersVisible: !!x.points,
+        pointMarkersRadius: 2.5, topColor: x.fill || (x.color + '38'), bottomColor: x.color + '00', crosshairMarkerRadius: 4,
+        crosshairMarkerBorderColor: t.surface }));
+    } else if (x.type === 'histogram') {
+      api = chart.addHistogramSeries(Object.assign(common, { color: x.color, base: 0 }));
+    } else {
+      api = chart.addLineSeries(Object.assign(common, { color: x.color, lineWidth: x.width || 2,
+        lineStyle: STYLE[x.style] || LC.LineStyle.Solid, crosshairMarkerRadius: 4,
+        lineType: x.curved ? LC.LineType.Curved : LC.LineType.Simple, crosshairMarkerBorderColor: t.surface,
+        pointMarkersVisible: !!x.points, pointMarkersRadius: 2.5 }));
+    }
+    return { spec: x, api: api, lines: [] };
+  });
+  userMoved = false;
+  chart.subscribeCrosshairMove(p => { legend(p); requestOverlay(); });
+  chart.timeScale().subscribeVisibleLogicalRangeChange(requestOverlay);
+}
+
+// Once per page: any wheel, drag or touch counts as the user taking over the view; double-click
+// hands it back. The chart follows the frame's width.
+(function () {
+  const box = document.getElementById('wrap');
+  ['mousedown', 'wheel', 'touchstart'].forEach(ev => box.addEventListener(ev, () => { userMoved = true; }, { passive: true }));
+  box.addEventListener('dblclick', () => { userMoved = false; resetView(); });
+  const el = document.getElementById('chart');
+  new ResizeObserver(() => { if (chart) { chart.applyOptions({ width: el.clientWidth }); requestOverlay(); } }).observe(el);
+  box.addEventListener('pointermove', requestOverlay, {passive: true});
+  box.addEventListener('wheel', requestOverlay, {passive: true});
+})();
+
+function resetView() {
+  if (!chart) return;
+  const n = Math.max(...entries.map(e => (e.spec.data || []).length), 0);
+  if (spec.visibleRange) {
+    chart.timeScale().setVisibleRange(spec.visibleRange);
+  } else if (spec.initialFrom) {
+    // Open on a recent window (the last few years); everything before is a scroll away.
+    const ends = entries.map(e => (e.spec.data || []).slice(-1)[0]).filter(Boolean).map(d => d.time).sort();
+    chart.timeScale().setVisibleRange({ from: spec.initialFrom, to: ends[ends.length - 1] });
+  } else if (spec.initialBars && n > spec.initialBars) {
+    chart.timeScale().setVisibleLogicalRange({ from: n - spec.initialBars, to: n + 6 });
+  } else {
+    chart.timeScale().fitContent();
+  }
+  chart.priceScale('right').applyOptions({ autoScale: true });
+  if (entries.some(e => e.spec.scale === 'left')) chart.priceScale('left').applyOptions({ autoScale: true });
+}
+
+function fill(s) {
+  const keep = userMoved ? chart.timeScale().getVisibleLogicalRange() : null;
+  entries.forEach((e, i) => {
+    const x = s.series[i];
+    e.spec = x;
+    e.api.setData(x.data || []);
+    if (e.volume) {
+      const t = s.theme;
+      e.volume.setData((x.data || []).filter(d => d.volume != null).map(d => ({ time: d.time, value: d.volume,
+        color: (d.close >= d.open ? t.candleUp : t.candleDown) + '55' })));
+    }
+    e.lines.forEach(l => e.api.removePriceLine(l));
+    e.lines = (x.lines || []).map(l => e.api.createPriceLine({
+      price: l.price, color: l.color, lineWidth: l.width || 1, lineStyle: STYLE[l.style] || LC.LineStyle.Solid,
+      axisLabelVisible: l.axisLabel !== false, title: l.title || '' }));
+    e.api.setMarkers((x.markers || []).map(m => Object.assign({ position: 'aboveBar', shape: 'circle', size: 1 }, m)));
+  });
+  document.getElementById('title').textContent = s.title || '';
+  if (keep) chart.timeScale().setVisibleLogicalRange(keep); else resetView();
+  legend(null);
+  requestOverlay();
+}
+
+function requestOverlay() {
+  if (!overlayFrame) overlayFrame = requestAnimationFrame(() => { overlayFrame = 0; drawOverlay(); });
+}
+
+function drawOverlay() {
+  const svg = document.getElementById('trade-overlay');
+  svg.replaceChildren();
+  if (!chart || !spec.tradeOverlays) return;
+  const entry = entries.find(e => e.spec.type === 'candles');
+  if (!entry) return;
+  const width = document.getElementById('chart').clientWidth, height = spec.height;
+  const plotWidth = width - chart.priceScale('right').width();
+  const plotHeight = height - chart.timeScale().height();
+  svg.setAttribute('width', width); svg.setAttribute('height', height);
+  const ns = 'http://www.w3.org/2000/svg';
+  function element(tag, attrs, parent = svg, text) {
+    const node = document.createElementNS(ns, tag);
+    Object.entries(attrs).forEach(([k, v]) => node.setAttribute(k, v));
+    if (text != null) node.textContent = text;
+    parent.appendChild(node); return node;
+  }
+  const defs = element('defs', {}), clip = element('clipPath', {id:'trade-plot-clip'}, defs);
+  element('rect', {x:0,y:0,width:plotWidth,height:plotHeight}, clip);
+  const layer = element('g', {'clip-path':'url(#trade-plot-clip)'});
+  const data = entry.spec.data || [];
+  const anchor = data[0];
+  const actualMinutes = new Set(data.filter(b => b.open != null).map(b => b.time));
+  // Journal data includes whitespace minutes. Fractional logical coordinates preserve fill seconds.
+  function xAt(time) {
+    if (!anchor) return null;
+    const scale = chart.timeScale(), minute = Math.floor(time / 60) * 60;
+    const baseTime = actualMinutes.has(minute) ? minute : anchor.time;
+    const base = scale.timeToCoordinate(baseTime);
+    if (base == null) return null;
+    const logical = scale.coordinateToLogical(base);
+    const next = logical == null ? null : scale.logicalToCoordinate(logical + 1);
+    if (next == null) return null;
+    return base + (time - baseTime) / 60 * (next - base);
+  }
+  function line(x1,y1,x2,y2,color,dash) {
+    return element('line',{x1,y1,x2,y2,stroke:color,'stroke-width':1.5,
+      ...(dash ? {'stroke-dasharray':dash} : {})},layer);
+  }
+  for (const level of spec.tradeOverlays.levels || []) {
+    const x1 = xAt(level.from), x2 = xAt(level.to), y = entry.api.priceToCoordinate(level.price);
+    if (x1 == null || x2 == null || y == null) continue;
+    line(x1,y,x2,y,level.color,level.style === 'dotted' ? '2 4' : '7 4');
+    const labelX = Math.max(6, Math.min(plotWidth - 220, x2 - 220));
+    const labelY = Math.max(spec.title ? 64 : 28, y - 6); // keep SL/TP labels below the title and OHLC legend
+    element('text',{x:labelX,y:labelY,fill:level.color,'font-size':10,'font-family':spec.theme.mono},layer,
+      level.label + ' @ ' + formatter(spec.format)(level.price));
+  }
+  const placed = [];
+  for (const fill of spec.tradeOverlays.fills || []) {
+    if (!actualMinutes.has(Math.floor(fill.time / 60) * 60)) continue;
+    const x = xAt(fill.time), y = entry.api.priceToCoordinate(fill.price);
+    if (x == null || y == null) continue;
+    placed.push({fill,x,y});
+  }
+  // Connect consecutive fills rather than implying an average-price execution really occurred.
+  for (let i=1; i<placed.length; i++) {
+    if (placed[i].fill.sequence !== placed[i-1].fill.sequence + 1) continue;
+    line(placed[i-1].x,placed[i-1].y,placed[i].x,placed[i].y,spec.theme.muted,'3 4');
+  }
+  for (const {fill,x,y} of placed) {
+    const detail = fill.side.toUpperCase() + ' · ' + fill.label + '\n' + timeLabel(fill.time,true)
+      + '\nUTC ' + fill.ts + '\nExecution: ' + (fill.execution_id || 'not supplied');
+    const group = element('g', {'pointer-events':'visiblePainted',role:'img','aria-label':detail},layer);
+    element('title',{},group,detail);
+    // Buy points up from below; sell points down from above, including short entries and covers.
+    // The tip and connector stay at the actual fill price/time, not at a candle high or low.
+    const direction = fill.side === 'buy' ? 1 : -1;
+    const points = [[x,y], [x-6,y+8*direction], [x-2.5,y+8*direction],
+      [x-2.5,y+20*direction], [x+2.5,y+20*direction], [x+2.5,y+8*direction], [x+6,y+8*direction]];
+    element('polygon',{points:points.map(p => p.join(',')).join(' '),fill:fill.color,
+      stroke:spec.theme.surface,'stroke-width':1.2,'stroke-linejoin':'round',
+      class:'trade-fill-arrow','data-side':fill.side,'data-role':fill.role},group);
+  }
+}
+
+function legend(param) {
+  const box = document.getElementById('legend');
+  if (!spec || spec.legend === false) { box.innerHTML = ''; return; }
+  const t = spec.theme;
+  box.innerHTML = entries.filter(e => e.spec.legend !== false).map(e => {
+    const x = e.spec, fmt = formatter(x.format || spec.format);
+    let point = param && param.time !== undefined ? param.seriesData.get(e.api) : null;
+    if (!point) { const d = x.data || []; point = d.length ? d[d.length - 1] : null; }
+    let text = '–';
+    if (point) {
+      if (x.type === 'candles') {
+        const up = point.close >= point.open, c = up ? t.candleUp : t.candleDown;
+        const d = x.data || [], i = d.findIndex(b => b.time === point.time), prev = i > 0 ? d[i - 1].close : point.open;
+        const chg = point.close - prev, pct = prev ? chg / prev * 100 : 0, sign = chg >= 0 ? '+' : '';
+        if (point.open == null) return '';
+        text = ['O', 'H', 'L', 'C'].map((k, j) => `<span style="color:${t.muted}">${k}</span> ` +
+          `<span style="color:${c}">${escapeText(fmt([point.open, point.high, point.low, point.close][j]))}</span>`).join(' ') +
+          ` <span style="color:${chg >= 0 ? t.candleUp : t.candleDown}">${sign}${fmt(chg)} (${sign}${pct.toFixed(2)}%)</span>`;
+        const full = i >= 0 ? d[i] : null;
+        if (full && full.volume != null) text += ` <span style="color:${t.muted}">Vol</span> <span style="color:${t.ink2}">` +
+          Intl.NumberFormat('en-US', { notation: 'compact', maximumFractionDigits: 2 }).format(full.volume) + '</span>';
+      } else {
+        text = `<span style="color:${t.ink}">${fmt(point.value)}</span>`;
+      }
+    }
+    const colour = x.type === 'candles' ? t.ink2 : x.color;
+    return `<span class="item"><span class="dot" style="background:${colour}"></span>` +
+           `<span class="name" style="color:${t.ink2}">${escapeText(x.name)}</span>${text}</span>`;
+  }).join('');
+}
+
+function render(args) {
+  spec = args.spec;
+  const s = sig(spec);
+  if (s !== signature || !chart) { build(spec); signature = s; }
+  fill(spec);
+  post('streamlit:setFrameHeight', { height: spec.height + 2 });
+}
+
+window.addEventListener('message', ev => {
+  const d = ev.data;
+  if (d && d.type === 'streamlit:render') {
+    try { render(d.args); }
+    catch (err) { document.getElementById('chart').textContent = 'Chart error: ' + err.message;
+                  post('streamlit:setFrameHeight', { height: 40 }); }
+  }
+});
+post('streamlit:componentReady', { apiVersion: 1 });
+</script>
+</body>
+</html>

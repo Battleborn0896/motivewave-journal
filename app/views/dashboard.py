@@ -1,0 +1,273 @@
+"""Configurable local dashboard pages, independently filtered widgets and a clickable calendar."""
+from __future__ import annotations
+
+import calendar
+import datetime as dt
+
+import pandas as pd
+import plotly.express as px
+import plotly.graph_objects as go
+import streamlit as st
+
+import common
+import theme
+import script_widget
+from mwjournal import tagging
+from mwjournal.analytics import summary
+from mwjournal.model import instant
+from mwjournal.workspace import WIDGETS, METRICS, GROUPS, filter_sample
+
+DEFAULT = {'name': 'Overview', 'columns': 2, 'filters': {}, 'widgets': [
+    {'id': 'summary', 'kind': 'Summary', 'title': 'Results at a glance', 'metric': 'Net P&L'},
+    {'id': 'calendar', 'kind': 'Calendar', 'title': 'Trading calendar', 'metric': 'Net P&L'},
+    {'id': 'equity', 'kind': 'Equity', 'title': 'Cumulative results', 'metric': 'Net P&L'}]}
+
+
+def filter_editor(journal, rows, prefix, old=None):
+    old = old or {}
+    library = journal.tag_library()
+    key = lambda name: common.key(journal, prefix + '-' + name)
+    result = {}
+    for field, title, column in [('markets', 'Markets', 'market'), ('accounts', 'Accounts', 'account'),
+                                 ('symbols', 'Exact contracts', 'symbol')]:
+        options = sorted({r[column] for r in rows} | set(old.get(field, [])))
+        result[field] = st.multiselect(title, options, default=old.get(field, []), key=key(field))
+    result['directions'] = st.multiselect('Directions', ['long', 'short'], default=old.get('directions', []), key=key('directions'))
+    options = sorted(library['tags'], key=lambda id: library['tags'][id]['name'])
+    for field, title in [('tags_all', 'Require every tag'), ('tags_any', 'Require any tag'), ('tags_none', 'Exclude tags')]:
+        result[field] = st.multiselect(title, options, default=old.get(field, []),
+                                       format_func=lambda id: library['tags'][id]['name'], key=key(field))
+    result['status'] = st.multiselect('Trade status', ['closed', 'open', 'incomplete'], default=old.get('status', []), key=key('status'))
+    with st.expander('Dates & numerical ranges'):
+        date_filter = st.checkbox('Limit entry dates · UTC', value=bool(old.get('start') or old.get('end')), key=key('dates-on'))
+        if date_filter:
+            days = [instant(r['opened']).date() for r in rows] or [dt.date.today()]
+            period = st.date_input('Entry date range', (dt.date.fromisoformat(old['start']) if old.get('start') else min(days),
+                                                        dt.date.fromisoformat(old['end']) if old.get('end') else max(days)), key=key('dates'))
+            if isinstance(period, (tuple, list)) and len(period) == 2:
+                result.update(start=period[0].isoformat(), end=period[1].isoformat())
+        st.caption('MAE/MFE bounds use account currency under your accuracy policy—not the selected display unit. '
+                   'Unavailable values never pass a numeric bound. R requires saved risk; duration is minutes.')
+        choices = {'score': 'Signed tag score', 'net': 'Net P&L', 'r': 'Result in R', 'mae': 'MAE · currency',
+                   'mfe': 'MFE · currency', 'quantity': 'Peak quantity', 'duration': 'Duration · minutes'}
+        ranges = st.multiselect('Numerical fields to limit', list(choices),
+                                default=[name for name in choices if old.get(name + '_min') is not None or old.get(name + '_max') is not None],
+                                format_func=choices.get, key=key('numeric-fields'))
+        for name in ranges:
+            cols = st.columns(2)
+            for col, suffix, word in [(cols[0], '_min', 'Minimum'), (cols[1], '_max', 'Maximum')]:
+                enabled = col.checkbox(word + ' ' + choices[name], value=old.get(name + suffix) is not None, key=key(name + suffix + '-on'))
+                if enabled:
+                    result[name + suffix] = col.number_input(word + ' value', value=float(old.get(name + suffix) or 0), key=key(name + suffix))
+    return result
+
+
+def render(journal, rows):
+    state = journal.workspace()
+    pages = state['dashboards']
+    top, selector, actions = st.columns([1.6, 2, 1.2], vertical_alignment='center')
+    with top:
+        theme.section('Dashboard', 'pages · widgets · global / page / widget filters')
+    choices = ['default', *sorted(pages, key=lambda id: pages[id]['order'])]
+    page_id = selector.selectbox('Dashboard page', choices, format_func=lambda id: pages[id]['name'] if id in pages else 'Overview',
+                            key=common.key(journal, 'dashboard-page'), label_visibility='collapsed')
+    page = pages.get(page_id, DEFAULT)
+    with actions.popover('Customize page', width='stretch'):
+        customize(journal, rows, page_id, page)
+    filter_col, note_col = st.columns([1, 4], vertical_alignment='center')
+    with filter_col.popover('Page filters'):
+        with st.form(common.key(journal, 'page-filters-' + page_id)):
+            rule = filter_editor(journal, rows, 'page-filter-' + page_id, page.get('filters'))
+            if st.form_submit_button('Save page filters'):
+                saved = journal.save_dashboard(page['name'], page['widgets'], id=page_id if page_id in pages else None,
+                                                columns=page['columns'], filters=rule)
+                st.session_state[common.key(journal, 'dashboard-next')] = saved
+                st.rerun()
+    rows = filter_sample(rows, page.get('filters', {}))
+    closed = [r for r in rows if r['status'] == 'closed' and r['net'] is not None]
+    note_col.caption(f'{len(closed)} closed trades · one account currency · missing measurements excluded · descriptive sample')
+    columns = page['columns']
+    cols = st.columns(columns, gap='small')
+    for index, widget in enumerate(page['widgets']):
+        with cols[index % columns].container(border=True):
+            st.markdown('### ' + widget['title'])
+            sample = filter_sample(rows, widget.get('filters', {}))
+            draw(journal, sample, widget, page_id)
+
+
+def customize(journal, rows, page_id, page):
+    pages = journal.workspace()['dashboards']
+    with st.form(common.key(journal, 'dashboard-layout-' + page_id)):
+        name = st.text_input('Page name', page['name'], max_chars=80)
+        columns = st.radio('Columns', [1, 2, 3], index=page['columns'] - 1, horizontal=True)
+        if st.form_submit_button('Save page layout'):
+            saved = journal.save_dashboard(name, page['widgets'], id=page_id if page_id in pages else None,
+                                            filters=page.get('filters', {}), columns=columns)
+            st.session_state[common.key(journal, 'dashboard-next')] = saved
+            st.rerun()
+    if st.button('Clone page', key=common.key(journal, 'clone-page-' + page_id)):
+        widgets = [{k: v for k, v in w.items() if k != 'id'} for w in page['widgets']]
+        saved = journal.save_dashboard(page['name'] + ' copy', widgets, columns=page['columns'], filters=page.get('filters'))
+        st.session_state[common.key(journal, 'dashboard-next')] = saved
+        st.rerun()
+    widgets = page['widgets']
+    selected = st.selectbox('Edit widget', ['new', *range(len(widgets))],
+                             format_func=lambda i: '＋ Add widget' if i == 'new' else widgets[i]['title'],
+                             key=common.key(journal, 'widget-edit-' + page_id))
+    old = widgets[selected] if selected != 'new' else {}
+    with st.form(common.key(journal, 'widget-form-' + page_id + '-' + str(selected))):
+        kind = st.selectbox('Widget type', WIDGETS, index=WIDGETS.index(old.get('kind', 'Equity')))
+        title = st.text_input('Widget title', old.get('title', ''), max_chars=80)
+        metric = st.selectbox('Series metric', METRICS, index=METRICS.index(old.get('metric', 'Net P&L')))
+        group = st.selectbox('Compare by', GROUPS, index=GROUPS.index(old.get('group', 'Market')))
+        ratings = journal.workspace()['ratings']
+        rating_id = st.selectbox('Rating definition', [None, *ratings],
+                                 format_func=lambda id: ratings[id]['name'] if id else 'No rating model',
+                                 index=([None, *ratings].index(old.get('rating_id')) if old.get('rating_id') in ratings else 0))
+        included = st.multiselect('Score only these tags · empty means all', list(journal.tag_library()['tags']),
+                                  default=old.get('score_tags', []),
+                                  format_func=lambda id: journal.tag_library()['tags'][id]['name'])
+        code = st.text_area('Local script · used only by Script widgets', value=old.get('code', script_widget.STARTER),
+                            height=110, max_chars=30000)
+        filters = filter_editor(journal, rows, f'widget-{page_id}-{selected}', old.get('filters'))
+        if st.form_submit_button('Save widget', type='primary'):
+            updated = {'kind': kind, 'title': title or kind, 'metric': metric, 'group': group,
+                       'rating_id': rating_id, 'score_tags': included, 'filters': filters, 'code': code}
+            new = [dict(w) for w in widgets]
+            if selected == 'new':
+                new.append(updated)
+            else:
+                new[selected] = {**updated, 'id': old['id']}
+            saved = journal.save_dashboard(page['name'], new, id=page_id if page_id in journal.workspace()['dashboards'] else None,
+                                            filters=page.get('filters'), columns=page['columns'])
+            st.session_state[common.key(journal, 'dashboard-next')] = saved
+            st.rerun()
+    if selected != 'new':
+        early, late, hide = st.columns(3)
+        def save(new):
+            saved = journal.save_dashboard(page['name'], new, id=page_id if page_id in pages else None,
+                                            filters=page.get('filters'), columns=page['columns'])
+            st.session_state[common.key(journal, 'dashboard-next')] = saved
+            st.rerun()
+        for column, direction, text in [(early, -1, '↑ Earlier'), (late, 1, '↓ Later')]:
+            other = selected + direction
+            if column.button(text, disabled=not 0 <= other < len(widgets), key=common.key(journal, text + page_id)):
+                new = [dict(w) for w in widgets]
+                new[selected], new[other] = new[other], new[selected]
+                save(new)
+        if hide.button('Remove widget', disabled=len(widgets) < 2, key=common.key(journal, 'remove-widget-' + page_id)):
+            save([w for i, w in enumerate(widgets) if i != selected])
+
+
+def values(journal, rows, widget):
+    from mwjournal.workspace import tag_score
+    field = {'Net P&L': 'net', 'Gross P&L': 'gross', 'R': 'r', 'Tag score': 'tag_score', 'Rating': 'rating'}[widget.get('metric', 'Net P&L')]
+    library = journal.tag_library()
+    result = []
+    for row in rows:
+        val = (row.get('ratings', {}).get(widget.get('rating_id')) if field == 'rating' else
+               tag_score(library, row['tag_ids'], widget['score_tags']) if field == 'tag_score' and widget.get('score_tags') else row.get(field))
+        if row['status'] == 'closed' and val is not None:
+            result.append({**row, 'value': val})
+    return sorted(result, key=lambda r: r['closed'])
+
+
+def draw(journal, rows, widget, page_id):
+    kind = widget['kind']
+    key = common.key(journal, f'dashboard-{page_id}-{widget["id"]}')
+    closed = [r for r in rows if r['status'] == 'closed' and r['net'] is not None]
+    if kind == 'Script':
+        script_widget.render(journal, rows, widget, key)
+        return
+    if kind == 'Summary':
+        stats = summary(closed)
+        cols = st.columns(2)
+        cols[0].metric('Net after fees', common.money(stats['net']))
+        cols[1].metric('Win rate', f'{stats["win_rate"]:.1f}%' if stats['win_rate'] is not None else '—')
+        cols[0].metric('Average / trade', common.money(stats['expectancy']))
+        cols[1].metric('Closed trades', str(stats['count']))
+        return
+    if kind == 'Calendar':
+        trading_calendar(journal, rows, key)
+        return
+    if kind == 'Trades':
+        if rows:
+            st.dataframe(pd.DataFrame(rows)[['symbol', 'direction', 'opened', 'net', 'tags']], hide_index=True, height=280)
+        else:
+            st.info('No trades in this sample.')
+        return
+    if kind == 'MAE / MFE':
+        measured = [r for r in common.display_excursion_rows(journal, closed) if r['display_mae'] is not None and r['display_mfe'] is not None]
+        if not measured:
+            st.info('No qualifying path under your accuracy / unit settings.')
+            return
+        fig = px.scatter(pd.DataFrame(measured), x='display_mae', y='display_mfe', color='direction', hover_data=['symbol', 'net'])
+    elif kind == 'Radar':
+        library = journal.tag_library()
+        groups = tagging.ordered_groups(library)
+        axes = list(groups)
+        vals = [100 * sum(any(library['tags'][id]['group'] == group for id in r['tag_ids']) for r in closed) / len(closed)
+                if closed else 0 for group in axes]
+        fig = go.Figure(go.Scatterpolar(r=vals + vals[:1], theta=axes + axes[:1], fill='toself', name='Tagged trades %'))
+        fig.update_layout(polar=dict(radialaxis=dict(range=[0, 100])))
+        st.caption('Percentage of this sample tagged in each group—not an edge or performance score.')
+    else:
+        # Score/rating widgets select their own metric, not the default P&L.
+        widget = {**widget, 'metric': 'Tag score' if kind == 'Tag score' else 'Rating' if kind == 'Rating' else widget.get('metric', 'Net P&L')}
+        data = values(journal, closed, widget)
+        if not data:
+            st.info('No qualifying closed values. Ratings require a selected definition; R requires planned risk.')
+            return
+        frame = pd.DataFrame(data)
+        if kind in ('Equity', 'Tag score', 'Rating', 'Drawdown'):
+            cumulative = frame.value.cumsum()
+            frame['series'] = cumulative - cumulative.cummax().clip(lower=0) if kind == 'Drawdown' else frame.value if kind == 'Rating' else cumulative
+            fig = px.line(frame, x='closed', y='series', markers=True, labels={'series': widget['metric'], 'closed': 'Exit (UTC)'})
+        elif kind == 'Distribution':
+            fig = px.histogram(frame, x='value', labels={'value': widget['metric']})
+        else:
+            group = widget.get('group', 'Market')
+            zone = journal.workspace()['preferences'].get('display_timezone', 'America/New_York')
+            pairs = []
+            for r in data:
+                time = pd.Timestamp(r['opened']).tz_convert(zone)
+                labels = (r['tags'] if group == 'Tags' else r['playbooks'] if group == 'Playbooks' else
+                          [r['market'] if group == 'Market' else r['symbol'] if group == 'Exact contract' else
+                           r['direction'] if group == 'Direction' else f'{time.hour:02d}:00' if group == 'Entry hour' else time.day_name()])
+                pairs.extend({'group': label, 'value': r['value']} for label in labels)
+            if not pairs:
+                st.info('No values in the chosen groups.')
+                return
+            frame = pd.DataFrame(pairs).groupby('group', as_index=False).agg(value=('value', 'mean'), count=('value', 'count'))
+            fig = px.bar(frame, x='group', y='value', hover_data=['count'], labels={'value': 'Average ' + widget['metric']})
+    fig.update_layout(height=270, margin=dict(l=20, r=20, t=20, b=25), showlegend=False)
+    st.plotly_chart(fig, width='stretch', config=theme.PLOTLY_CONFIG, key=key)
+
+
+def trading_calendar(journal, rows, key):
+    from zoneinfo import ZoneInfo
+    zone = journal.workspace()['preferences'].get('display_timezone', 'America/New_York')
+    days = [instant(r['opened']).astimezone(ZoneInfo(zone)).date() for r in rows]
+    latest = max(days) if days else dt.date.today()
+    months = sorted({d.replace(day=1) for d in days} | {latest.replace(day=1)}, reverse=True)
+    with st.container(key='journal-calendar-' + key):
+        month = st.selectbox('Month', months, format_func=lambda d: d.strftime('%B %Y'), key=key + '-month', label_visibility='collapsed')
+        hide = journal.workspace()['preferences'].get('hide_weekends', False)
+        names = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'][:5 if hide else 7]
+        for col, name in zip(st.columns(len(names)), names):
+            col.caption(name)
+        for week in calendar.monthcalendar(month.year, month.month):
+            for col, day in zip(st.columns(len(names)), week):
+                if not day:
+                    col.caption(' ')
+                    continue
+                date = dt.date(month.year, month.month, day)
+                sample = [r for r, opened in zip(rows, days) if opened == date and r['status'] == 'closed' and r['net'] is not None]
+                net = sum(r['net'] for r in sample)
+                title = f'{day}  \n{net:+.0f}' if sample else str(day)
+                def open_day(date=date):
+                    st.session_state.update(common.navigation('Daily review'))
+                    st.session_state[common.key(journal, 'review-day')] = date
+                    st.session_state[common.key(journal, 'review-tz')] = zone
+                col.button(title, key=key + '-day-' + str(date), on_click=open_day, width='stretch',
+                           help=f'{date}: {len(sample)} closed trades, {net:+.2f} · click for Daily Report Card')

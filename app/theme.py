@@ -1,0 +1,239 @@
+"""The look of MotiveWave Journal: one set of tokens, one chart template and the few page components.
+
+A Tradecraft-inspired workspace: charcoal planes, yellow navigation, green/red outcomes and
+colour-coded tag groups. Signs, labels and selected outlines carry meaning alongside colour.
+.streamlit/config.toml carries the same colours for Streamlit's own widgets.
+"""
+
+from __future__ import annotations
+
+import hashlib
+import html
+import re
+
+import plotly.graph_objects as go
+import plotly.io as pio
+import streamlit as st
+
+# ---------------------------------------------------------------- tokens
+
+PAGE = '#151617'          # page plane
+SURFACE = '#1D1E1F'        # panels and the chart surface
+SURFACE_2 = '#272829'      # raised rows, hover
+SIDEBAR = '#111213'
+HAIRLINE = '#292B2C'       # gridlines
+BASELINE = '#414345'       # axes, zero lines
+BORDER = 'rgba(255,255,255,0.12)'
+INK = '#E8E8E5'            # primary text
+INK_2 = '#BEC0BB'          # secondary text
+MUTED = '#959A94'          # labels, axis text
+ACCENT = '#E2CF32'         # chrome and emphasis only, never data
+ACCENT_DEEP = '#49451E'    # fill behind the primary button
+PRICE = '#FE9926'          # the last price on a chart's price axis
+UP = '#45BF89'
+DOWN = '#E16E6B'
+SERIES = ['#60A9E8', '#ED9B55', '#45BF89', '#E2CF32', '#DA83B4', '#85BD72', '#AF92DF', '#E16E6B']
+STATUS = {'good': UP, 'warning': '#E2CF32', 'critical': DOWN, 'neutral': MUTED}
+TAG_COLOURS = {'Setup': '#65CA98', 'Execution': '#EBAB66', 'Mindset': '#BD9DE8', 'Other tags': '#73B6EB'}
+FONT = '-apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", Inter, system-ui, sans-serif'
+MONO = 'ui-monospace, "SF Mono", "JetBrains Mono", Menlo, Consolas, "Roboto Mono", monospace'
+
+# ---------------------------------------------------------------- page chrome
+
+CSS = f"""
+<style>
+html, body, [data-testid="stAppViewContainer"], .stApp {{ background:{PAGE}; font-family:{FONT}; }}
+/* The header is kept (it holds the button that reopens a collapsed sidebar) but made invisible and
+   click-through; only its menu, deploy and status widgets are hidden. */
+[data-testid="stHeader"] {{ background:transparent; pointer-events:none; }}
+[data-testid="stHeader"] [data-testid="stExpandSidebarButton"] {{ pointer-events:auto; }}
+[data-testid="stToolbarActions"], [data-testid="stMainMenu"], [data-testid="stAppDeployButton"],
+[data-testid="stStatusWidget"], [data-testid="stDecoration"], footer {{ display:none !important; }}
+/* While the sidebar is collapsed, leave room for the reopen button above the page. */
+.stApp:has([data-testid="stExpandSidebarButton"]) .block-container {{ padding-top:3.4rem !important; }}
+[data-testid="stExpandSidebarButton"] {{ background:{SURFACE_2} !important; border:1px solid {ACCENT} !important;
+    border-radius:6px !important; color:{INK} !important; }}
+/* The connection status refreshes every few seconds: never dim the page while it does. */
+[data-stale="true"], .stale-element, [data-testid="stElementContainer"][data-stale] {{ opacity:1 !important;
+    transition:none !important; filter:none !important; }}
+.block-container {{ padding:0.8rem 1.6rem 3rem 1.6rem !important; max-width:none !important; }}
+[data-testid="stSidebar"] {{ background:{SIDEBAR}; border-right:1px solid {BORDER}; }}
+[data-testid="stSidebar"] {{ min-width:230px !important; max-width:230px !important; }}
+[data-testid="stSidebarHeader"] {{ height:32px; min-height:32px; }}
+[data-testid="stSidebarUserContent"] {{ padding-bottom:16px; }}
+[data-testid="stSidebarUserContent"] > [data-testid="stVerticalBlock"] {{ gap:8px; }}
+[data-testid="stSidebar"] [data-testid="stButtonGroup"] {{ width:100%; }}
+[data-testid="stSidebar"] [data-testid="stButtonGroup"] > div {{ flex-direction:column; gap:2px; }}
+[data-testid="stSidebar"] [data-testid="stButtonGroup"] button {{ width:100%; min-width:160px; justify-content:flex-start;
+    border:0; background:transparent; padding:6px 10px; min-height:30px; font-family:{FONT}; }}
+[class*="st-key-journal-calendar"] [data-testid="stVerticalBlock"] {{ gap:4px; }}
+[class*="st-key-journal-calendar"] [data-testid="stHorizontalBlock"] {{ gap:4px; }}
+[class*="st-key-journal-calendar"] button {{ padding:2px !important; min-height:34px !important; height:34px; }}
+[class*="st-key-journal-calendar"] button p {{ white-space:pre-line; font-size:10px; line-height:12px;
+    white-space:normal; margin:0 !important; overflow:visible; text-overflow:clip; }}
+[data-testid="stSidebar"] button[aria-checked="true"] {{ background:{ACCENT_DEEP} !important;
+    border-color:{ACCENT} !important; color:{ACCENT} !important; }}
+[data-testid="stSidebar"] button[aria-checked="true"] p {{ color:inherit !important; }}
+h1, h2, h3 {{ font-family:{FONT}; letter-spacing:-0.01em; }}
+h3 {{ font-size:15px !important; font-weight:600 !important; color:{INK} !important; }}
+[data-testid="stMarkdownContainer"] p {{ color:{INK_2}; }}
+[data-testid="stCaptionContainer"] {{ color:{MUTED} !important; }}
+[data-testid="stMetricValue"] {{ font-family:{MONO}; font-size:25px; }}
+[data-testid="stTabs"] [data-baseweb="tab-list"] {{ gap:18px; }}
+[data-testid="stTabs"] [data-baseweb="tab"] {{ font-family:{FONT}; font-size:13px; padding:8px 0; }}
+.st-key-trade-review-workspace, .st-key-trade-review-workspace [data-testid="stVerticalBlock"] {{ gap:8px; }}
+[class*="st-key-tag-workspace"] {{ background:{SURFACE}; padding:12px !important; }}
+[class*="st-key-tag-workspace"] h3 {{ font-size:17px !important; margin:0; }}
+[class*="st-key-tag-workspace"] [data-testid="stVerticalBlock"] {{ gap:10px; }}
+[class*="st-key-tag-workspace"] {{ max-height:min(600px, calc(100dvh - 350px)); min-height:260px;
+    overflow-y:auto !important; }}
+[class*="st-key-tag-workspace"] [data-testid="stButtonGroup"] button {{ padding:4px 7px; }}
+[class*="st-key-tag-workspace"] [data-testid="stButtonGroup"] button {{ font-family:{FONT}; border-radius:4px;
+    background:transparent; border:1px solid {BASELINE}; }}
+[class*="st-key-tag-workspace"] [data-testid="stButtonGroup"] button p {{ color:inherit !important; }}
+[class*="st-key-tag-workspace"] button[role="radio"][aria-checked="true"] {{ color:{ACCENT} !important;
+    border-color:{ACCENT} !important; background:{ACCENT_DEEP} !important; }}
+.st-key-trade-result-positive [data-testid="stMetricValue"] {{ color:{UP}; }}
+.st-key-trade-result-negative [data-testid="stMetricValue"] {{ color:{DOWN}; }}
+div[data-testid="stExpander"] details {{ background:{SURFACE}; border:1px solid {BORDER}; border-radius:6px; }}
+div[role="radiogroup"] label p {{ font-size:13px; }}
+[data-testid="stButtonGroup"] button {{ font-family:{MONO}; font-size:12.5px; border-radius:4px; }}
+.stButton button, .stFormSubmitButton button, .stDownloadButton button, .stLinkButton a {{ border-radius:4px; }}
+[data-testid="stBaseButton-primary"], [data-testid="stBaseButton-primaryFormSubmit"] {{
+    background:{ACCENT} !important; border:1px solid {ACCENT} !important; color:{SIDEBAR} !important; }}
+[data-testid="stBaseButton-primary"] p, [data-testid="stBaseButton-primaryFormSubmit"] p {{ color:inherit !important; }}
+[data-testid="stBaseButton-primary"]:hover, [data-testid="stBaseButton-primaryFormSubmit"]:hover {{
+    background:#F0DD4B !important; }}
+input, textarea {{ font-family:{MONO} !important; }}
+.mwj-brand {{ font-family:{MONO}; font-size:12px; font-weight:700; letter-spacing:.06em; text-transform:uppercase;
+             color:{ACCENT}; margin:2px 0 0; }}
+.mwj-brand-sub {{ color:{MUTED}; font-size:12px; margin:2px 0 10px; }}
+.mwj-section {{ display:flex; align-items:center; gap:10px; margin:18px 0 8px; color:{INK}; font-family:{MONO};
+               font-size:12px; font-weight:700; letter-spacing:.12em; text-transform:uppercase; }}
+.mwj-section:before {{ content:''; width:3px; height:12px; background:{ACCENT}; }}
+.mwj-section:after {{ content:''; flex:1; height:1px; background:{BORDER}; }}
+.mwj-section .hint {{ font-family:{FONT}; text-transform:none; letter-spacing:0; font-weight:400; color:{MUTED};
+                     font-size:12.5px; }}
+.mwj-chip {{ display:inline-flex; align-items:center; gap:7px; padding:2px 9px; border-radius:3px;
+            font-family:{MONO}; font-size:11.5px; font-weight:650; letter-spacing:.04em; white-space:nowrap; }}
+.mwj-chip:before {{ content:''; width:7px; height:7px; border-radius:50%; background:currentColor; }}
+.mwj-chip.big {{ font-size:14px; padding:5px 12px; }}
+.mwj-status-note {{ color:{INK_2}; font-size:12.5px; line-height:1.45; margin:6px 0 0; }}
+.mwj-status-note.warn {{ color:{STATUS['warning']}; }}
+</style>
+"""
+
+
+def apply() -> None:
+    """Page-wide CSS and the chart template. Call once from the entry script."""
+    st.markdown(CSS, unsafe_allow_html=True)
+    register_template()
+
+
+def tag_group_key(group: str) -> str:
+    """CSS-safe, stable and independent of labels supplied by the user."""
+    return 'tag-colour-' + hashlib.sha256(group.encode()).hexdigest()[:12]
+
+
+def tag_group_css(groups) -> str:
+    rules = []
+    for group in groups:
+        colour = TAG_COLOURS.get(group)
+        if colour is None:
+            colour = SERIES[int(hashlib.sha256(group.encode()).hexdigest()[:8], 16) % len(SERIES)]
+        selector = '.st-key-' + tag_group_key(group)
+        rules.append(f'{selector} button[aria-pressed="true"] {{background:{colour} !important; '
+                     f'border-color:{colour} !important; color:{SIDEBAR} !important; font-weight:600;}} '
+                     f'{selector} button[aria-pressed="false"]:hover {{border-color:{colour} !important;}}')
+    return '<style>' + ''.join(rules) + '</style>'
+
+
+def tag_colors_css(groups):
+    """Per-tag colors scoped by safe group hashes, never by unescaped user labels."""
+    rules = []
+    for group, tags in groups.items():
+        for index, tag in enumerate(tags, 1):
+            color = tag['color']
+            if not re.fullmatch(r'#[0-9a-fA-F]{6}', color):
+                continue
+            def luminance(hex_color):
+                rgb = [int(hex_color[i:i + 2], 16) / 255 for i in (1, 3, 5)]
+                linear = [v / 12.92 if v <= .04045 else ((v + .055) / 1.055) ** 2.4 for v in rgb]
+                return sum(v * weight for v, weight in zip(linear, (.2126, .7152, .0722)))
+            background = luminance(color)
+            dark = (background + .05) / (luminance(SIDEBAR) + .05)
+            light = (luminance(INK) + .05) / (background + .05)
+            text_color = SIDEBAR if dark >= light else INK
+            selector = f'.st-key-{tag_group_key(group)} [data-testid="stButtonGroup"] button:nth-of-type({index})'
+            rules.append(f'{selector}[aria-pressed="true"],{selector}[aria-checked="true"] '
+                         f'{{background:{color} !important;border-color:{color} !important;color:{text_color} !important;}} '
+                         f'{selector}:hover {{border-color:{color} !important;}}')
+    return '<style>' + ''.join(rules) + '</style>'
+
+
+def outcome_style(row):
+    """Tint closed results without treating an open position or unknown P&L as a win/loss."""
+    net = row['Net P&L']
+    if row['Status'] != 'closed' or net is None or net != net:
+        return [''] * len(row)
+    colour, background = (UP, '#233D31') if net > 0 else (DOWN, '#402A29') if net < 0 else (ACCENT, '#393720')
+    return [f'background-color: {background}; color: {colour}'] * len(row)
+
+
+def brand(name: str, subtitle: str = '') -> None:
+    st.markdown(f"<div class='mwj-brand'>{html.escape(name)}</div>"
+                + (f"<div class='mwj-brand-sub'>{html.escape(subtitle)}</div>" if subtitle else ''),
+                unsafe_allow_html=True)
+
+
+def section(title: str, hint: str = '') -> None:
+    st.markdown(f"<div class='mwj-section'>{html.escape(title)}"
+                + (f"<span class='hint'>{html.escape(hint)}</span>" if hint else '') + '</div>',
+                unsafe_allow_html=True)
+
+
+def chip(text: str, tone: str = 'neutral', *, state: str | None = None, big: bool = False) -> str:
+    """A status word with its dot. The word carries the meaning; the colour only repeats it."""
+    colour = STATUS.get(tone, MUTED)
+    return (f"<span class='mwj-chip{' big' if big else ''}' data-state='{html.escape(state or text, quote=True)}' "
+            f"style='background:{colour}26;color:{colour};border:1px solid {colour}55'>{html.escape(text)}</span>")
+
+
+def status(label: str, tone: str, state: str, notes=(), *, big: bool = False) -> None:
+    """A status chip and the lines under it, as one element however many lines there are.
+
+    The status is drawn by fragments that redraw themselves every few seconds. A fragment that draws
+    fewer elements than last time can leave the old ones on screen (seen in the sidebar: 'Connected'
+    above the note of the state before it), so what varies is kept inside a single element.
+    `notes` are (text, is_warning) pairs.
+    """
+    st.markdown(chip(label, tone, state=state, big=big) + ''.join(
+        f"<div class='mwj-status-note{' warn' if warn else ''}'>{html.escape(text)}</div>" for text, warn in notes),
+        unsafe_allow_html=True)
+
+
+# ---------------------------------------------------------------- charts
+
+# Plotly charts behave like a trading platform: scroll to zoom, drag to pan, double-click to reset,
+# no toolbar. (The trade chart itself is drawn by tvchart, not Plotly.)
+PLOTLY_CONFIG = {'displayModeBar': False, 'scrollZoom': True, 'doubleClick': 'reset'}
+TEMPLATE = 'mwjournal'
+
+
+def register_template() -> None:
+    if TEMPLATE not in pio.templates:
+        # Axis numbers in monospace, like a chart platform's price axis.
+        axis = dict(gridcolor=HAIRLINE, gridwidth=1, linecolor=BASELINE, zerolinecolor=BASELINE, zerolinewidth=1,
+                    tickfont=dict(family=MONO, color=MUTED, size=10.5), title=dict(font=dict(color=MUTED, size=11)),
+                    showspikes=True, spikecolor=BASELINE, spikethickness=1, spikedash='solid', spikemode='across')
+        pio.templates[TEMPLATE] = go.layout.Template(layout=dict(
+            font=dict(family=FONT, color=INK_2, size=12),
+            paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)', colorway=SERIES,
+            xaxis={**axis, 'showgrid': False}, yaxis=axis, hovermode='x unified', dragmode='pan',
+            hoverlabel=dict(bgcolor=PAGE, bordercolor=BASELINE, font=dict(family=MONO, color=INK, size=11.5)),
+            legend=dict(orientation='h', x=0, y=1.02, yanchor='bottom', font=dict(color=INK_2, size=11),
+                        bgcolor='rgba(0,0,0,0)'),
+            margin=dict(l=10, r=10, t=36, b=10),
+            title=dict(font=dict(color=INK, size=12.5, family=MONO), x=0, xanchor='left', y=0.98),
+        ), data=dict(scatter=[go.Scatter(line=dict(width=2))]))
+    pio.templates.default = 'plotly_dark+' + TEMPLATE

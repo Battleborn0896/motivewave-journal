@@ -1,0 +1,196 @@
+"""Requested tick-only and click-first workflows with no platform/trading/recording side effects."""
+import datetime as dt
+import json
+import sqlite3
+
+import pytest
+
+import common
+import runtime
+import theme
+from mwjournal import Journal, PriceSample
+from mwjournal import tagging
+from mwjournal.metrics import measurements
+from mwjournal.model import instant
+from mwjournal.post_exit import best_post_exit
+from test_app import open_app, press, said, show, widget
+from test_chart import seed_preview
+
+
+@pytest.fixture(autouse=True)
+def home(tmp_path, monkeypatch):
+    monkeypatch.setenv('MWJ_HOME', str(tmp_path))
+    yield tmp_path
+    runtime.stop_all()
+
+
+def recorded(journal):
+    trade = journal.trades()[0]
+    samples = [PriceSample(trade.symbol, (instant(trade.opened) + dt.timedelta(seconds=s)).isoformat(),
+                            'fixture-ticks', p, p) for s, p in [(0, 5000), (15, 4999), (50, 5004), (100, 5002)]]
+    journal.ingest_prices(samples)
+    for metric in measurements(trade, samples, 'fixture-ticks'):
+        journal.record_metric(trade, metric)
+    return trade
+
+
+@pytest.mark.parametrize('unit', ['currency', 'points', 'ticks', 'r'])
+def test_tick_only_is_default_for_every_unit_and_raw_estimates_remain_in_backup(home, unit):
+    journal = seed_preview(home)
+    trade = journal.trades()[0]
+    original = journal.best_metric(trade)
+    assert original['precision'] == 'estimated-bars'
+    journal.set_excursion_unit(unit)
+    assert journal.display_settings()['excursion_policy'] == 'ticks-only'
+    rows = common.rows_for(journal)
+    assert rows[0]['mfe'] is None and rows[0]['mae'] is None
+    assert common.display_excursion_rows(journal, rows)[0]['display_mfe'] is None
+    assert common.best_display_metric(journal, trade) == {}
+    from views import export
+    payload = json.loads(export.files(journal)[0][2])
+    assert payload['trades'][0]['mfe'] is None
+    assert payload['measurements'][trade.id][0]['precision'] == 'estimated-bars'
+    backup = home / 'snapshot.sqlite3'
+    backup.write_bytes(journal.backup())
+    snapshot = sqlite3.connect(backup)  # a WAL-mode snapshot needs a real path, not deserialize(:memory:)
+    assert json.loads(snapshot.execute('SELECT payload FROM metrics').fetchone()[0])['mfe'] == original['mfe']
+    snapshot.close()
+    assert journal.best_metric(trade) == original
+
+
+def test_tick_policy_uses_ticks_not_platform_reports_and_excludes_reported_capture_gaps(home):
+    journal = seed_preview(home)
+    trade = recorded(journal)
+    journal.record_metric(trade, {'source': 'platform', 'precision': 'platform-reported', 'mfe': 99999, 'mae': 999,
+                                  'notes': [], 'path': []})
+    assert common.best_display_metric(journal, trade)['source'] == 'fixture-ticks'
+    journal.ingest_gaps([{'type': 'gap', 'provider': 'fixture-ticks', 'ts': trade.opened, 'dropped': 1}])
+    assert common.best_display_metric(journal, trade) == {}
+    journal.set_excursion_policy('best-available')
+    assert common.best_display_metric(journal, trade)['source'] == 'platform'
+
+
+def test_accuracy_control_is_distinct_from_units_and_propagates_to_headers_and_analytics(home):
+    journal = seed_preview(home)
+    app = open_app()
+    assert widget(app.selectbox, 'MAE / MFE accuracy').value == 'ticks-only'
+    assert widget(app.metric, 'MAE').value == widget(app.metric, 'MFE').value == '—'
+    assert said(app.caption, 'Candle estimates are excluded')
+    widget(app.selectbox, 'MAE / MFE units').set_value('ticks').run()
+    assert widget(app.metric, 'MFE').value == '—'
+    widget(app.selectbox, 'MAE / MFE accuracy').set_value('best-available').run()
+    assert not app.exception and widget(app.metric, 'MFE').value == '12.00 ticks'
+    widget(app.selectbox, 'MAE / MFE accuracy').set_value('ticks-only').run()
+    show(app, 'Edge')
+    assert said(app.caption, '0 of 1 closed trades qualify')
+    assert widget(app.metric, 'Net after recorded fees').value == '+242.00'
+    assert journal.best_metric(journal.trades()[0])['precision'] == 'estimated-bars'
+
+
+def test_ticks_survive_unit_change_and_selected_trade_remains_visible_with_list(home):
+    journal = seed_preview(home)
+    recorded(journal)
+    app = open_app()
+    assert any('Opened (UTC)' in frame.value.columns for frame in app.dataframe)
+    assert widget(app.metric, 'MFE').value != '—'
+    widget(app.selectbox, 'MAE / MFE units').set_value('points').run()
+    assert widget(app.metric, 'MFE').value == '4.00 pts'
+    widget(app.selectbox, 'MAE / MFE units').set_value('ticks').run()
+    assert widget(app.metric, 'MFE').value == '16.00 ticks'
+    assert widget(app.selectbox, 'MAE / MFE accuracy').value == 'ticks-only'
+
+
+def test_tag_manager_rename_color_retirement_and_exclusive_group_work_on_existing_trade(home):
+    journal = seed_preview(home)
+    trade = journal.trades()[0]
+    journal.set_trade_tag_group(trade, 'Setup', ['Breakout'])
+    id = next(iter(tagging.ids(journal.tag_library(), ['Breakout'])))
+    app = open_app('Tags')
+    widget(app.selectbox, 'Edit tag').set_value(id).run()
+    widget(app.text_input, 'Tag name').set_value('Retest')
+    widget(app.color_picker, 'Selected tag color').set_value('#123456')
+    widget(app.checkbox, 'Available on days').set_value(True)
+    press(app, 'Save tag')
+    assert journal.tag_library()['tags'][id]['color'] == '#123456'
+    assert 'Retest' in journal.annotations()[trade.id]['tags']
+    widget(app.selectbox, 'Edit group').set_value('Setup').run()
+    widget(app.checkbox, 'One choice at a time').set_value(True)
+    press(app, 'Save group')
+    show(app, 'Trades')
+    widget(app.pills, 'Setup').set_value('Pullback').run()
+    assert 'Retest' not in journal.annotations()[trade.id]['tags']
+    assert 'Pullback' in journal.annotations()[trade.id]['tags']
+    assert '#123456' in theme.tag_colors_css(tagging.ordered_groups(journal.tag_library()))
+    show(app, 'Tags')
+    widget(app.selectbox, 'Edit tag').set_value(id).run()
+    widget(app.checkbox, 'Retired').set_value(True)
+    press(app, 'Save tag')
+    assert 'Retest' not in journal.tag_catalog()
+    assert not app.exception
+
+
+def test_day_tags_and_playbook_can_be_clicked_without_retyping_and_daily_notes_do_not_erase(home):
+    journal = seed_preview(home)
+    trade = journal.trades()[0]
+    id = next(iter(tagging.ids(journal.tag_library(), ['Patient'])))
+    journal.edit_tag(id, levels=['trade', 'day'])
+    journal.save_playbook('Calm pullback', {'Setup': ['Pullback'], 'Mindset': ['Patient']})
+    app = open_app('Daily review')
+    widget(app.date_input, 'Trading day').set_value(dt.date(2026, 10, 7)).run()
+    widget(app.pills, 'Mindset').set_value(['Patient']).run()
+    press(app, 'Save daily review')
+    assert 'Patient' in common.rows_for(journal)[0]['tags']
+    show(app, 'Trades')
+    press(app, 'Apply combination')
+    assert common.rows_for(journal)[0]['playbooks'] == ['Calm pullback']
+    assert said(app.success, 'Matches: Calm pullback')
+    show(app, 'Edge')
+    widget(app.selectbox, 'Compare edge by').set_value('Playbooks').run()
+    table = next(d.value for d in app.dataframe if 'Playbook' in d.value.columns)
+    assert table.iloc[0]['Playbook'] == 'Calm pullback'
+
+
+def test_dashboard_preferences_persist_per_environment_and_empty_selection_is_rejected(home):
+    journal = seed_preview(home)
+    app = open_app('Edge')
+    widget(app.multiselect, 'Dashboard sections').set_value(['Compare', 'Overview'])
+    press(app, 'Save dashboard')
+    assert [t.label for t in app.tabs] == ['Compare', 'Overview']
+    assert Journal().display_settings()['dashboard_sections'] == ['Compare', 'Overview']
+    assert Journal(dataset='replay').display_settings()['dashboard_sections'] == ['Overview', 'Compare', 'MAE / MFE', 'Runners']
+    widget(app.multiselect, 'Dashboard sections').set_value([])
+    press(app, 'Save dashboard')
+    assert said(app.error, 'at least one')
+    assert journal.display_settings()['dashboard_sections'] == ['Compare', 'Overview']
+
+
+def test_include_any_exclude_filters_and_renamed_aliases_keep_their_identity(home):
+    journal = seed_preview(home)
+    trade = journal.trades()[0]
+    journal.set_trade_tag_group(trade, 'Setup', ['Breakout'])
+    app = open_app('Edge')
+    widget(app.multiselect, 'Tags').set_value(['Breakout', 'Patient']).run()
+    assert said(app.info, 'Statistics need')
+    widget(app.radio, 'Tag match').set_value('Any selected').run()
+    assert widget(app.metric, 'Win rate').value == '100.0%'
+    id = next(iter(tagging.ids(journal.tag_library(), ['Breakout'])))
+    journal.edit_tag(id, name='Renamed')
+    app.run()
+    assert widget(app.metric, 'Win rate').value == '100.0%'
+    widget(app.multiselect, 'Exclude tags').set_value(['Renamed']).run()
+    assert said(app.info, 'Statistics need')
+
+
+def test_runner_policy_does_not_allow_bar_hindsight_when_ticks_are_required(home):
+    journal = seed_preview(home)
+    trade = journal.trades()[0]
+    result = best_post_exit(journal, trade, minutes=5)
+    assert result['precision'] == 'pending' and result['extra_mfe'] is None
+    journal.set_excursion_policy('best-available')
+    assert best_post_exit(journal, trade, minutes=5)['precision'] == 'estimated-bars'
+
+
+def test_tag_color_text_has_contrast_and_untrusted_css_values_are_rejected():
+    assert f'color:{theme.INK} !important' in theme.tag_colors_css({'x': [{'color': '#123456'}]})
+    assert f'color:{theme.SIDEBAR} !important' in theme.tag_colors_css({'x': [{'color': '#eeeeee'}]})
+    assert theme.tag_colors_css({'<script>': [{'color': 'red;}body{display:none'}]}) == '<style></style>'

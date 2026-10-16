@@ -1,0 +1,93 @@
+name: Build tester apps
+
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  windows:
+    runs-on: windows-2025
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+          cache: pip
+      - name: Install packaging dependencies
+        run: python -m pip install -r desktop/windows/requirements-build.txt
+      - name: Install test dependency
+        run: python -m pip install 'pytest>=8'
+      - name: Run Python test suite
+        run: python -m pytest -q -p no:cacheprovider
+      - name: Build portable Windows app
+        run: python scripts/build_windows.py
+      - name: Inspect portable Windows package
+        shell: pwsh
+        run: |
+          $zip = 'build/windows/MotiveWave-Journal-Windows-x64.zip'
+          if (!(Test-Path $zip)) { throw "Missing Windows tester ZIP" }
+          $listing = tar -tf $zip
+          if (!($listing -match 'MotiveWave Journal.exe$')) { throw "ZIP is missing the launcher" }
+          if (!($listing -match 'motivewave-journal.jar$')) { throw "ZIP is missing the study JAR" }
+      - uses: actions/upload-artifact@v4
+        with:
+          name: MotiveWave-Journal-Windows-x64
+          path: build/windows/MotiveWave-Journal-Windows-x64.zip
+          if-no-files-found: error
+
+  macos:
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+          cache: pip
+      - name: Install runtime and packaging dependencies
+        run: python -m pip install -r requirements.txt 'pyinstaller>=6.16,<7' 'pytest>=8'
+      - name: Run Python test suite
+        run: python -m pytest -q -p no:cacheprovider
+      - name: Build self-contained macOS DMG
+        run: python scripts/build_macos_release.py --target-arch arm64
+      - uses: actions/upload-artifact@v4
+        with:
+          name: MotiveWave-Journal-macOS
+          path: build/release/*.dmg
+          if-no-files-found: error
+
+  release:
+    if: startsWith(github.ref, 'refs/tags/')
+    needs: [windows, macos]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: MotiveWave-Journal-*
+          merge-multiple: true
+      - name: Create checksums
+        shell: bash
+        run: sha256sum MotiveWave-Journal-*.dmg MotiveWave-Journal-Windows-x64.zip > SHA256SUMS.txt
+      - uses: softprops/action-gh-release@v2
+        with:
+          name: MotiveWave Journal ${{ github.ref_name }}
+          prerelease: true
+          generate_release_notes: true
+          body: |
+            Early tester build. Use a MotiveWave simulation account or Replay first—not a live account.
+
+            The study is read-only: it records fills, linked protection and chart prices locally and cannot place, change or cancel orders. Journal data stays on the tester's computer.
+
+            macOS: Apple Silicon only for this build. The app is ad-hoc signed, so Gatekeeper may require Control-click → Open.
+
+            Windows: extract the entire ZIP, then run `MotiveWave Journal.exe`. Do not separate the EXE from its `_internal` folder. Windows may show a SmartScreen warning because this tester build is not Authenticode-signed.
+
+            After opening the app, use Setup → Install MotiveWave study, restart MotiveWave, and add Journal → MotiveWave Journal to each exact-contract chart being tested.
+          files: |
+            MotiveWave-Journal-*.dmg
+            MotiveWave-Journal-Windows-x64.zip
+            SHA256SUMS.txt

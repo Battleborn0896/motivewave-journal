@@ -1,0 +1,19 @@
+# MotiveWave Journal's Streamlit settings, read when the app is started from the repository root
+# (run.sh, or: streamlit run app/app.py). The colours repeat app/theme.py for Streamlit's own widgets.
+
+[theme]
+base = "dark"
+primaryColor = "#E2CF32"
+backgroundColor = "#151617"
+secondaryBackgroundColor = "#1D1E1F"
+textColor = "#E8E8E5"
+
+[server]
+# A trade journal is personal: answer on this computer only, not to the rest of the network.
+address = "localhost"
+
+[browser]
+gatherUsageStats = false
+
+[client]
+toolbarMode = "minimal"

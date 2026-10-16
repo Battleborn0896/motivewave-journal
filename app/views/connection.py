@@ -1,0 +1,265 @@
+"""Connection: the study writes a file on this computer and the app reads it. Nothing has to be typed.
+
+The app starts watching the study's default bridge file by itself (runtime.start). This view says
+what it currently hears from the study, how to install the study, and where the less common
+settings are: another bridge file, extra watched CSV files, the instrument multiplier.
+"""
+
+from __future__ import annotations
+
+import datetime as dt
+import html
+import os
+from pathlib import Path
+import shutil
+
+import pandas as pd
+import streamlit as st
+
+import common
+import theme
+from mwjournal import paths
+from mwjournal.model import instant
+from mwjournal.sync import DEFAULT_CONNECTION
+
+JAR = Path(__file__).resolve().parents[2] / 'study' / 'build' / 'libs' / 'motivewave-journal.jar'
+FORMATS = {'executions': 'Execution CSV', 'prices': 'Prices CSV', 'bridge': 'Another bridge file · NDJSON'}
+RESERVED = (DEFAULT_CONNECTION, 'worker')      # 'worker' is the status row of the background reader itself
+
+
+def study_extension_folder() -> Path:
+    configured = os.environ.get('MOTIVEWAVE_EXTENSIONS', '').strip()
+    return Path(configured).expanduser() if configured else Path.home() / 'MotiveWave Extensions'
+
+
+def install_study(jar: Path = JAR, destination: Path | None = None) -> tuple[Path, Path | None]:
+    """Atomically install only this app's JAR; preserve the prior copy for easy recovery."""
+    jar = Path(jar)
+    if not jar.is_file() or jar.name != 'motivewave-journal.jar':
+        raise ValueError('The packaged MotiveWave Journal study is missing.')
+    folder = Path(destination) if destination is not None else study_extension_folder()
+    folder.mkdir(parents=True, exist_ok=True)
+    target = folder / jar.name
+    temporary = folder / ('.' + jar.name + '.new')
+    previous = folder / (jar.name + '.previous')
+    backup = None
+    try:
+        if target.is_file():
+            shutil.copy2(target, previous)
+            backup = previous
+        shutil.copy2(jar, temporary)
+        os.replace(temporary, target)
+        (folder / '.last_updated').touch()
+    except OSError:
+        temporary.unlink(missing_ok=True)
+        raise
+    return target, backup
+
+
+def render(journal, rows) -> None:
+    theme.section('Study connection', 'the study writes a file on this computer; the app reads it')
+    status_card(journal.dataset)
+    name, profile, _, link = common.study_link(journal)
+    if profile is not None:
+        enabled = st.toggle('Capture enabled', value=bool(profile.get('enabled')),
+                            key=common.key(journal, 'capture-enabled'),
+                            help='Switch off to stop reading the bridge file. Nothing is lost: the study keeps '
+                                 'writing, and reading carries on from the same place when this is switched on.')
+        if enabled != bool(profile.get('enabled')):
+            journal.put('profiles', name, {**profile, 'enabled': enabled})
+            st.rerun()
+    install_steps(expanded=link.state != 'Connected')
+    with st.expander('Advanced'):
+        bridge_file_form(journal)
+        watched_files(journal, name)
+    with st.expander('What fill capture can and cannot see'):
+        st.markdown(
+            '- It is read-only: the study never places, changes or cancels an order.\n'
+            '- Fills are read from MotiveWave internals that are not part of its supported SDK, so a MotiveWave '
+            'update can stop fill capture. The status above then shows the study\'s own message. Prices keep '
+            'recording either way.\n'
+            '- A stop or target is captured only when MotiveWave links it to the position. Standalone orders are '
+            'never guessed from price.\n'
+            '- Fees can be the platform\'s estimates; such trades are flagged.\n'
+            '- Prices are recorded per chart: put the study on the chart of each contract you trade. One study '
+            'reads the account for all of them.\n'
+            '- Replay prices are recorded as they play, and rewinding starts a new run. They count as real ticks '
+            'only when the study\'s Real Tick Data box says the replay runs on tick data.')
+    gaps = journal.capture_gaps()
+    if gaps:
+        st.warning('The study reported dropped ticks. Excursions for the affected windows carry a warning.')
+        st.dataframe(pd.DataFrame(gaps[-20:]), hide_index=True, width='stretch')
+    theme.section('Instrument multiplier', 'dollars per full price point per contract; 1 for shares')
+    common.multiplier_form(journal, 'multiplier')
+    st.caption(f'Journal database: {journal.path}')
+
+
+@st.fragment(run_every='5s')
+def status_card(dataset: str) -> None:
+    """Redrawn every few seconds, so starting the study turns this to Connected without a click."""
+    journal = common.open_journal(dataset)
+    if journal is None:
+        return
+    name, profile, status, link = common.study_link(journal)
+    heartbeat = status.get('heartbeat') or {}
+    said = ' · '.join(str(v) for v in (heartbeat.get('detail'), heartbeat.get('workspace')
+                                       and f"workspace {heartbeat['workspace']}") if v)
+    damaged, others = status.get('damaged_lines'), common.other_problems(journal, name)
+    # One element, whatever there is to say: see theme.status for why a fragment must not vary its count.
+    theme.status(link.label, link.tone, link.state, big=True, notes=(
+        [(link.detail, False)]
+        + [('The study says: ' + said, False)] * bool(said and not status.get('error'))
+        + [(f'{damaged} damaged lines in the bridge file were skipped. MotiveWave closing in the middle of a '
+            'write leaves one; the events around it are unaffected.', True)] * bool(damaged)
+        + [(f'{others} other watched file{"s" if others > 1 else ""} could not be read. See Advanced.', True)]
+        * bool(others)))
+    now = dt.datetime.now(dt.timezone.utc)
+    c1, c2, c3 = st.columns(3)
+    c1.metric('Last heard from the study', common.ago((now - link.heard).total_seconds()) if link.heard else '—')
+    c2.metric('Last new events read', read_at(status, now))
+    c3.metric('Fills in this journal', f'{journal.execution_count():,}')
+    st.caption('Watching this file')
+    st.code(str((profile or {}).get('path', '')) or 'no file', language=None)
+
+
+def read_at(status: dict, now: dt.datetime) -> str:
+    try:
+        return common.ago((now - instant(status['checked'])).total_seconds()) if status.get('status') == 'synced' else '—'
+    except (KeyError, ValueError, TypeError, AttributeError):
+        return '—'
+
+
+def install_steps(*, expanded: bool) -> None:
+    with st.expander('Install the study', expanded=expanded):
+        st.markdown(
+            '1. Install the packaged study with the button below.\n'
+            '2. Restart MotiveWave, then add **Journal → MotiveWave Journal** to a chart of the exact contract you trade, for example '
+            'ESZ6 and not a continuous contract.\n'
+            '3. Leave the study\'s **File** setting as it is. Its default is the file this page watches.')
+        if st.button('Install MotiveWave study', type='primary', disabled=not JAR.is_file()):
+            try:
+                target, backup = install_study()
+                st.success(f'Installed {target.name}. Restart MotiveWave, then add Journal → MotiveWave Journal to your chart.')
+                if backup:
+                    st.caption(f'The prior copy was preserved as {backup.name}.')
+            except (OSError, ValueError) as exc:
+                st.error('The study could not be installed: ' + str(exc))
+        st.caption('Manual option: in MotiveWave choose Study → All Studies → Import and select the packaged JAR.')
+        st.caption('The status above turns to Connected a few seconds later. Live and paper trades are filed '
+                   'under Live, replay trades under Replay.')
+        st.caption(f'Built jar found: {JAR}' if JAR.is_file() else
+                   f'No built jar yet at {JAR}')
+        if paths.chosen_home() is not None:
+            st.warning('This app was started with MWJ_HOME, so it does not use the standard folder. MotiveWave '
+                       'sees MWJ_HOME only when it is started from the same environment. Otherwise copy this '
+                       'path into the study\'s File setting:')
+            st.code(str(paths.bridge_file('live')), language=None)
+
+
+# ---------------------------------------------------------------- advanced
+
+def live_bridge() -> Path:
+    """The live file the study connection reads. The study is given this one path; it derives the replay file."""
+    journal = common.open_journal('live')
+    _, profile = common.study_connection(journal) if journal is not None else (None, None)
+    return Path(profile['path']) if profile and profile.get('path') else paths.bridge_file('live')
+
+
+def watch(live_file: Path) -> str | None:
+    """Point both environments at this live bridge file and the replay file beside it. An error, or None."""
+    if not live_file.is_absolute():
+        return 'Give the full path of the file, starting from the drive or the root folder.'
+    if live_file.is_dir():
+        return 'That is a folder. Name the file inside it, for example motivewave.ndjson.'
+    if live_file.name.endswith('.replay.ndjson'):
+        return 'That is a replay file. Enter the live file; the replay file is found beside it.'
+    targets = []
+    for dataset, file in (('live', live_file), ('replay', paths.replay_bridge(live_file))):
+        journal = common.open_journal(dataset)
+        if journal is None:
+            return f'The {dataset} journal could not be opened. Neither connection was changed.'
+        targets.append((journal, file))
+    for journal, file in targets:
+        name, profile = common.study_connection(journal)
+        if profile is not None and os.path.normcase(str(profile.get('path'))) == os.path.normcase(str(file)):
+            continue
+        journal.put('profiles', name or DEFAULT_CONNECTION,
+                    {**(profile or {'enabled': True}), 'path': str(file), 'mode': 'bridge'})
+        journal.clear_status(name or DEFAULT_CONNECTION)       # what the other file said no longer applies
+    return None
+
+
+def bridge_file_form(journal) -> None:
+    current = live_bridge()
+    st.caption('Watch a different bridge file. Only needed when the study\'s File setting was changed: both '
+               'must name the same file.')
+    with st.form(common.key(journal, 'bridge-file')):
+        typed = st.text_input('Live bridge file · the full path from the study\'s File setting', str(current))
+        st.caption(f'The replay file is found beside it: {paths.replay_bridge(current).name}')
+        c1, c2, _ = st.columns([1, 1, 3])
+        chosen = c1.form_submit_button('Watch this file', type='primary')
+        default = c2.form_submit_button('Use the default file')
+    if not (chosen or default):
+        return
+    if chosen and not typed.strip():
+        st.error('Enter the full path of the bridge file.')
+        return
+    error = watch(paths.bridge_file('live') if default else Path(typed.strip()).expanduser())
+    if error:
+        st.error(error)
+    else:
+        st.rerun()
+
+
+def watched_files(journal, study: str | None) -> None:
+    theme.section('Other watched files', 'optional: a CSV another program keeps rewriting')
+    profiles, statuses = journal.get('profiles'), journal.get('sync_status')
+    for name, profile in sorted(profiles.items()):
+        if name == study:
+            continue
+        mode = profile.get('mode')
+        c1, c2, c3 = st.columns([6, 2, 1])
+        c1.markdown(f"**{html.escape(name)}** · {FORMATS.get(mode, html.escape(str(mode)))}", unsafe_allow_html=True)
+        c1.caption(str(profile.get('path', '')))
+        enabled = c2.toggle('Enabled', value=bool(profile.get('enabled')), key=common.key(journal, 'enabled-' + name))
+        if enabled != bool(profile.get('enabled')):
+            journal.put('profiles', name, {**profile, 'enabled': enabled})
+            st.rerun()
+        if c3.button('Remove', key=common.key(journal, 'remove-' + name)):
+            journal.remove_profile(name)
+            st.rerun()
+        status = statuses.get(name, {})
+        if status.get('error') and enabled:
+            st.warning(status['error'])
+        elif status.get('status') == 'synced':
+            st.caption(f"Read {status.get('checked', '')[:19].replace('T', ' ')} UTC · "
+                       f"{status.get('executions', 0)} new executions, {status.get('prices', 0)} price updates")
+    with st.form(common.key(journal, 'new-watched-file')):
+        name = st.text_input('Name', placeholder='My broker export')
+        path = st.text_input('File to watch · full path', placeholder='/Users/me/exports/fills.csv')
+        mode = st.selectbox('Format', list(FORMATS), format_func=FORMATS.get)
+        c1, c2 = st.columns(2)
+        timezone = c1.text_input('Timezone of dates without an offset', 'America/New_York')
+        provider = c2.text_input('Source identity', 'csv', help='Kept with every fill or price read from this file.')
+        st.caption('Only for a prices CSV:')
+        c1, c2, c3 = st.columns(3)
+        symbol = c1.text_input('Exact contract', 'ESZ6')
+        seconds = c2.selectbox('Bar duration', [60, 1, 0, 300], format_func=lambda n: 'Ticks' if n == 0 else f'{n} s')
+        proxy = c3.checkbox('Prices are a proxy / continuous contract')
+        remembered = st.session_state.get(common.MAPPING_KEY)
+        mapping = st.checkbox('Execution CSV: use the column mapping from my last preview in Import', value=False)
+        if not st.form_submit_button('Add this file'):
+            return
+        file = Path(path.strip()).expanduser()
+        name = name.strip()
+        if not name or name in profiles or name in RESERVED:
+            st.error('Give the file a name that is not in use.')
+        elif not path.strip() or not file.is_absolute() or (mode != 'bridge' and not file.is_file()):
+            st.error('Give the full path of an existing file.')
+        elif mapping and not remembered:
+            st.error('Preview the CSV in Import first; its column mapping is remembered from there.')
+        else:
+            journal.put('profiles', name, {'path': str(file), 'mode': mode, 'timezone': timezone, 'provider': provider,
+                                          'mapping': remembered if mapping else None, 'symbol': symbol.strip().upper(),
+                                          'resolution_seconds': seconds, 'proxy': proxy, 'enabled': True})
+            st.rerun()

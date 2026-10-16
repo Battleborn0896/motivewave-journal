@@ -1,0 +1,55 @@
+name: Alpha bug report
+description: Report a reproducible MotiveWave Journal tester issue
+title: "[Alpha] "
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Use a simulation account or Replay while testing. Do not paste passwords, API keys or unredacted private account data.
+  - type: dropdown
+    id: platform
+    attributes:
+      label: Platform
+      options:
+        - macOS Apple Silicon
+        - Windows 11 x64
+        - Windows 10 x64
+        - Other
+    validations:
+      required: true
+  - type: input
+    id: versions
+    attributes:
+      label: Journal, study and MotiveWave versions
+      placeholder: "Journal 0.4.0; study 0.3.2; MotiveWave …"
+    validations:
+      required: true
+  - type: dropdown
+    id: environment
+    attributes:
+      label: Trading environment
+      options:
+        - Live mode with simulation account
+        - Replay using real ticks
+        - Replay using generated/simulated prices
+    validations:
+      required: true
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Steps to reproduce
+      description: Include the exact contract and whether scale-ins or partial exits were involved.
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected and actual result
+    validations:
+      required: true
+  - type: textarea
+    id: diagnostics
+    attributes:
+      label: Redacted diagnostics
+      description: Optional. Check logs before attaching them; remove anything you do not want to share.

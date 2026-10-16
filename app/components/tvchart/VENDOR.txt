@@ -1,0 +1,7 @@
+TradingView Lightweight Charts 4.2.3 (Apache-2.0), from the npm package
+"lightweight-charts@4.2.3" (sha1 0a0174793fc246b37bd8b96d1d4caadd2ecb329e), unmodified.
+Copyright 2023 TradingView, Inc. See LICENSE-lightweight-charts.txt.
+
+Attribution notice (from the library's NOTICE): TradingView Lightweight Charts™, Copyright (c) 2025
+TradingView, Inc. https://www.tradingview.com/ . Shown in the app's sidebar with that link, which is why
+the in-chart logo is turned off.

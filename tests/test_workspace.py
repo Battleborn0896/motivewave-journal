@@ -1,0 +1,287 @@
+"""Local parity workflows on isolated paper fixtures; no broker, recording or network."""
+import copy
+import datetime as dt
+import json
+from concurrent.futures import ThreadPoolExecutor
+
+import pytest
+
+import common
+import runtime
+from mwjournal import Execution, Journal
+from mwjournal import tagging
+from mwjournal.workspace import validate_graph, replay_run, tag_score, rating, filter_sample
+from test_app import open_app, show, press, widget, said
+from test_chart import seed_preview
+from views.checklists import starter
+
+
+@pytest.fixture(autouse=True)
+def home(tmp_path, monkeypatch):
+    monkeypatch.setenv('MWJ_HOME', str(tmp_path))
+    yield tmp_path
+    runtime.stop_all()
+
+
+def test_workspace_reads_do_not_save_definitions_or_rearm_anything(home):
+    journal = Journal()
+    assert journal.workspace()['dashboards'] == {}
+    journal.reconcile_drafts()
+    with journal.connect() as db:
+        assert not db.execute("SELECT 1 FROM journal_meta WHERE key='workspace'").fetchone()
+
+
+def test_signed_tag_scores_and_conditional_weighted_ratings_preserve_raw_trade(home):
+    journal = seed_preview(home)
+    trade = journal.trades()[0]
+    before = journal.executions()
+    lib = journal.tag_library()
+    patient = next(iter(tagging.ids(lib, ['Patient'])))
+    fomo = next(iter(tagging.ids(lib, ['FOMO'])))
+    journal.edit_tag(patient, score=2)
+    journal.edit_tag(fomo, score=-3)
+    lib = journal.tag_library()
+    assert tag_score(lib, [patient, fomo]) == -1
+    assert tag_score(lib, [patient, fomo], [patient]) == 2
+    model = journal.save_rating('Process', [
+        {'name': 'Calm', 'weight': 2, 'rules': {'Mindset': ['Patient']}},
+        {'name': 'Setup', 'weight': 1, 'rules': {'Setup': ['Pullback']}, 'when': {'Mindset': ['Patient']}}])
+    definition = journal.workspace()['ratings'][model]
+    assert rating(lib, [], definition) == 0
+    assert rating(lib, [patient], definition) == pytest.approx(200 / 3)
+    journal.set_trade_tag_group(trade, 'Mindset', ['Patient'])
+    assert common.rows_for(journal)[0]['ratings'][model] == pytest.approx(200 / 3)
+    assert journal.executions() == before
+    with pytest.raises(ValueError):
+        journal.edit_tag(patient, score=float('nan'))
+
+
+def test_saved_filters_remain_attached_after_rename_and_layer_by_intersection(home):
+    journal = seed_preview(home)
+    trade = journal.trades()[0]
+    journal.set_trade_tag_group(trade, 'Setup', ['Pullback'])
+    journal.save_filter('Pullbacks', {'tags_all': ['Pullback'], 'accounts': ['paper']})
+    lib = journal.tag_library()
+    id = next(iter(tagging.ids(lib, ['Pullback'])))
+    journal.edit_tag(id, name='VWAP pullback')
+    assert len(filter_sample(common.rows_for(journal), journal.workspace()['filters']['Pullbacks'])) == 1
+    assert not filter_sample(filter_sample(common.rows_for(journal), {'accounts': ['paper']}), {'directions': ['short']})
+    with pytest.raises(ValueError):
+        journal.save_filter('Bad', {'tags_all': ['Not a tag']})
+
+
+def test_numeric_filters_exclude_missing_values_and_reject_reversed_bounds(home):
+    journal = seed_preview(home)
+    journal.save_filter('Positive R', {'r_min': 1, 'net_min': 0, 'duration_max': 10})
+    assert len(filter_sample(common.rows_for(journal), journal.workspace()['filters']['Positive R'])) == 1
+    assert not filter_sample(common.rows_for(journal), {'mfe_min': 0})  # tick-only: no valid prices, not zero
+    journal.update_annotation(journal.trades()[0].id, {'initial_risk': None})
+    assert not filter_sample(common.rows_for(journal), {'r_min': 0})
+    with pytest.raises(ValueError):
+        journal.save_filter('Invalid', {'net_min': 100, 'net_max': 0})
+
+
+def test_dashboard_pages_widgets_clone_and_partial_writes_are_dataset_local(home):
+    journal = Journal()
+    id = journal.save_dashboard('Overview', [{'kind': 'Equity', 'metric': 'R'}, {'kind': 'Calendar'}], columns=2)
+    page = journal.workspace()['dashboards'][id]
+    assert len({w['id'] for w in page['widgets']}) == 2
+    journal.save_filter('Longs', {'directions': ['long']})
+    journal.save_dashboard('Renamed', page['widgets'][::-1], id=id, columns=1)
+    assert journal.workspace()['filters']['Longs']['directions'] == ['long']
+    assert Journal(dataset='replay').workspace()['dashboards'] == {}
+    before = journal.workspace()
+    with pytest.raises(ValueError):
+        journal.save_dashboard('Bad', [{'kind': 'eval arbitrary code'}])
+    assert journal.workspace() == before
+
+
+def test_concurrent_workspace_preferences_and_filters_do_not_clobber(home):
+    journal = Journal()
+    def write(i):
+        if i % 2:
+            journal.save_filter('filter-' + str(i), {'directions': ['long']})
+        else:
+            journal.save_preferences(timer_minutes=5 + i)
+    with ThreadPoolExecutor(max_workers=4) as pool:
+        list(pool.map(write, range(8)))
+    assert len(journal.workspace()['filters']) == 4
+    assert journal.workspace()['preferences']['timer_minutes'] >= 5
+
+
+@pytest.mark.parametrize('change', ['unknown-tag', 'unknown-link', 'duplicate', 'automatic-loop', 'question-to-question'])
+def test_graph_validation_rejects_unknowns_and_automatic_loops(home, change):
+    journal = Journal()
+    graph = starter()
+    if change == 'unknown-tag':
+        graph['nodes'][1]['tag_ids'] = ['Not a tag']
+    elif change == 'unknown-link':
+        graph['nodes'][1]['next'] = ['missing']
+    elif change == 'duplicate':
+        graph['nodes'].append(copy.deepcopy(graph['nodes'][1]))
+    elif change == 'automatic-loop':
+        graph['nodes'][1]['next'] = ['yes']
+    else:
+        graph['nodes'][0]['next'] = ['plan']
+    with pytest.raises(ValueError):
+        journal.save_checklist('Invalid', graph)
+    assert not journal.workspace()['checklists']
+
+
+def test_checklist_branches_tags_counter_loops_undo_and_definition_snapshots(home):
+    journal = seed_preview(home)
+    trade = journal.trades()[0]
+    graph = starter()
+    graph['nodes'][1].update(next=['counter'], tag_ids=['Patient'])
+    graph['nodes'].append({'id': 'counter', 'kind': 'counter', 'text': 'Plans checked', 'next': ['plan']})
+    definition = journal.save_checklist('Plan', graph)
+    run = journal.start_checklist(definition, trade.id)
+    result = journal.answer_checklist(run, 'yes')
+    assert result['current'] == 'plan' and result['counters'] == {'counter': 1}
+    assert result['answer_events'][0]['action'] == 'answer' and result['answer_events'][0]['at']
+    assert tagging.names(journal.tag_library(), result['tag_ids']) == ['Patient']
+    assert 'Patient' not in journal.annotations()[trade.id]['tags']  # no silent apply
+    journal.answer_checklist(run, 'yes')
+    assert journal.workspace()['runs'][run]['counters']['counter'] == 2
+    journal.answer_checklist(run, undo=True)
+    assert journal.workspace()['runs'][run]['counters']['counter'] == 1
+    assert journal.workspace()['runs'][run]['answer_events'][-1]['action'] == 'undo'
+    changed = starter()
+    changed['nodes'][0]['text'] = 'Changed question'
+    journal.save_checklist('Plan revised', changed, id=definition)
+    assert journal.workspace()['runs'][run]['graph']['nodes'][0]['text'] != 'Changed question'
+    assert len(journal.workspace()['checklists'][definition]['backups']) == 1
+    result = journal.answer_checklist(run, 'no')
+    assert result['complete']
+    with pytest.raises(ValueError):
+        journal.answer_checklist(run, 'yes')
+
+
+def test_checkin_clock_groups_and_trade_scope_are_explicit(home):
+    journal = seed_preview(home)
+    trade = journal.trades()[0]
+    id = journal.record_checkin('Mindset', ['Patient'], trade_id=trade.id, at=trade.opened)
+    assert journal.workspace()['checkins'][id]['at'] == trade.opened
+    with pytest.raises(ValueError):
+        journal.record_checkin('Mindset', ['Breakout'])
+    with pytest.raises(ValueError):
+        Journal(dataset='replay').record_checkin('Mindset', ['Patient'], trade_id=trade.id)
+
+
+def test_scoped_draft_attaches_once_and_never_changes_raw_fills_or_existing_review(home):
+    journal = Journal()
+    id = journal.save_draft('Plan', provider='motivewave', account='paper', symbol='ESZ6',
+                            start='2026-10-07T14:00:00Z', end='2026-10-07T14:05:00Z', tags=['Patient'],
+                            notes='Draft note', risk=999)
+    journal = seed_preview(home)
+    trade = journal.trades()[0]
+    before = journal.executions()
+    journal.reconcile_drafts()
+    assert journal.workspace()['drafts'][id]['state'] == 'attached'
+    assert 'Patient' in journal.annotations()[trade.id]['tags']
+    assert journal.annotations()[trade.id]['initial_risk'] == 200
+    assert journal.annotations()[trade.id]['notes'] == 'Synthetic fixture, not an actual account trade.'
+    journal.update_annotation(trade.id, {}, remove_tags=['Patient'])
+    Journal().reconcile_drafts()
+    assert 'Patient' not in journal.annotations()[trade.id]['tags']
+    assert journal.executions() == before
+
+
+@pytest.mark.parametrize('field,value', [('provider', 'another'), ('account', 'another'), ('symbol', 'ESM6')])
+def test_draft_does_not_match_root_alias_or_other_account_provider(home, field, value):
+    journal = seed_preview(home)
+    trade = journal.trades()[0]
+    args = {'provider': trade.provider, 'account': trade.account, 'symbol': trade.symbol}
+    args[field] = value
+    id = journal.save_draft('Plan', **args, start='2026-10-07T14:00:00Z', end='2026-10-07T14:05:00Z', tags=['Patient'])
+    journal.reconcile_drafts()
+    assert journal.workspace()['drafts'][id]['state'] == 'armed'
+    assert 'Patient' not in journal.annotations()[trade.id]['tags']
+
+
+def test_overlapping_drafts_are_ambiguous_and_cancellation_resolves_without_data_loss(home):
+    journal = Journal()
+    ids = [journal.save_draft('Plan ' + str(i), provider='motivewave', account='paper', symbol='ESZ6',
+                             start='2026-10-07T14:00:00Z', end='2026-10-07T14:05:00Z', tags=['Patient']) for i in range(2)]
+    journal = seed_preview(home)
+    journal.reconcile_drafts()
+    assert all(journal.workspace()['drafts'][id]['state'] == 'ambiguous' for id in ids)
+    journal.cancel_draft(ids[0])
+    journal.reconcile_drafts()
+    assert journal.workspace()['drafts'][ids[1]]['state'] == 'attached'
+    assert journal.workspace()['drafts'][ids[0]]['state'] == 'cancelled'
+
+
+def test_pretrade_draft_never_silently_retags_a_trade_already_in_the_journal(home):
+    journal = seed_preview(home)
+    trade = journal.trades()[0]
+    id = journal.save_draft('Plan', provider=trade.provider, account=trade.account, symbol=trade.symbol,
+                            start='2026-10-07T14:00:00Z', end='2026-10-07T14:05:00Z', tags=['Patient'])
+    journal.reconcile_drafts()
+    assert journal.workspace()['drafts'][id]['state'] == 'armed'
+    assert 'Patient' not in journal.annotations()[trade.id]['tags']
+
+
+@pytest.mark.parametrize('view', ['Dashboard', 'Checklists', 'Live session', 'Ratings', 'General'])
+def test_new_views_render_without_recording_orders_or_raw_trade_changes(home, view):
+    journal = seed_preview(home)
+    before = journal.executions()
+    app = open_app(view)
+    assert not app.exception
+    assert journal.executions() == before
+
+
+def test_checklist_ui_build_run_branch_undo_and_apply_tags(home):
+    journal = seed_preview(home)
+    graph = starter()
+    graph['nodes'][1]['tag_ids'] = ['Patient']
+    journal.save_checklist('Plan', graph)
+    app = open_app()
+    press(app, 'Start new run')
+    press(app, 'Yes — continue my plan')
+    assert said(app.success, 'Checklist complete')
+    press(app, 'Undo last answer')
+    assert not said(app.success, 'Checklist complete')
+    press(app, 'Yes — continue my plan')
+    press(app, 'Apply collected tags')
+    assert 'Patient' in journal.annotations()[journal.trades()[0].id]['tags']
+
+
+def test_dashboard_calendar_navigation_and_widget_save(home):
+    journal = seed_preview(home)
+    app = open_app('Dashboard')
+    widget(app.text_input, 'Page name').set_value('My dashboard')
+    press(app, 'Save page layout')
+    assert widget(app.selectbox, 'Dashboard page').value in journal.workspace()['dashboards']
+    widget(app.selectbox, 'Widget type').set_value('Tag score')
+    press(app, 'Save widget')
+    page = journal.workspace()['dashboards'][widget(app.selectbox, 'Dashboard page').value]
+    assert page['widgets'][-1]['kind'] == 'Tag score'
+    button = next(b for b in app.button if b.label.startswith('7  \n'))
+    button.click().run()
+    assert not app.exception
+    assert widget(app.date_input, 'Trading day').value == dt.date(2026, 10, 7)
+
+
+def test_export_includes_new_workflow_definitions_and_run_history(home):
+    journal = seed_preview(home)
+    definition = journal.save_checklist('Plan', starter())
+    journal.start_checklist(definition)
+    from views.export import files
+    data = json.loads(files(journal)[0][2])
+    assert len(data['workspace']['runs']) == 1
+    assert definition in data['workspace']['checklists']
+
+
+def test_custom_visualization_scripts_are_opt_in_network_denied_and_do_not_get_account_or_fill_data(home):
+    import script_widget
+    journal = seed_preview(home)
+    rendered = script_widget.document(common.rows_for(journal), journal.tag_library()['tags'], script_widget.STARTER)
+    assert 'new Worker' in rendered and 'worker.terminate()' in rendered and 'worker-src blob:' in rendered
+    assert 'connect-src' in rendered and 'none' in rendered
+    assert 'paper' not in rendered and 'execution_id' not in rendered
+    id = journal.save_dashboard('Custom', [{'kind': 'Script', 'code': script_widget.STARTER}])
+    app = open_app('Dashboard')
+    widget(app.selectbox, 'Dashboard page').set_value(id).run()
+    assert said(app.caption, 'Not running')
+    assert any(b.label == 'Run local script' for b in app.button)

@@ -1,0 +1,19 @@
+# Third-party notices
+
+MotiveWave Journal is released under the MIT licence (see `LICENSE`). It bundles or builds against the
+following third-party work.
+
+## TradingView Lightweight Charts
+
+`app/components/tvchart/lightweight-charts.standalone.production.js` is TradingView Lightweight
+Charts 4.2.3, unmodified, under the Apache License 2.0. The licence text is in
+`app/components/tvchart/LICENSE-lightweight-charts.txt` and the provenance in
+`app/components/tvchart/VENDOR.txt`.
+
+TradingView Lightweight Charts™, Copyright (c) 2025 TradingView, Inc. https://www.tradingview.com/
+
+## MotiveWave SDK
+
+The study in `study/` compiles against `mwave_sdk.jar`, which ships with MotiveWave and is not
+included here. MotiveWave is a trademark of MotiveWave Software. This project is independent and is
+not affiliated with, endorsed by or supported by MotiveWave Software.
