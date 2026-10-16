@@ -55,7 +55,7 @@ def render(fills, *, missing_minute=False):
                'series': [{'type': 'candles', 'data': candles}],
                'tradeOverlays': {'fills': fills, 'levels': []}}
     result = subprocess.run([node, '-e', HARNESS, str(COMPONENT)], input=json.dumps(fixture),
-                            text=True, capture_output=True, check=True, timeout=10)
+                            text=True, encoding='utf-8', capture_output=True, check=True, timeout=10)
     return json.loads(result.stdout)
 
 

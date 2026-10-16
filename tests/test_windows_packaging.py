@@ -68,7 +68,7 @@ def test_pyinstaller_build_is_windowed_onedir_and_bundles_payload(tmp_path):
     assert "--onefile" not in command
     add_data = command[command.index("--add-data") + 1]
     assert add_data == f"{payload}{os.pathsep}journal"
-    assert command[-1].endswith("desktop/windows/launcher.py")
+    assert command[-1].replace("\\", "/").endswith("desktop/windows/launcher.py")
 
 
 def test_backend_arguments_are_loopback_headless_and_do_not_arm_recording(tmp_path):

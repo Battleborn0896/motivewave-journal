@@ -33,7 +33,7 @@ def line(id, side='buy', minute=0):
 def watched(tmp_path, text):
     journal = Journal(tmp_path / 'trades.db')
     file = tmp_path / 'bridge.ndjson'
-    file.write_text(text)
+    file.write_text(newline='', data=text)
     journal.put('profiles', 'bridge', {'path': str(file), 'mode': 'bridge', 'enabled': True})
     return journal, file
 
@@ -245,7 +245,7 @@ def test_file_watcher_handles_rewrites_restart_duplicates_and_partial_ndjson(tmp
     file = tmp_path / 'bridge.ndjson'
     e = {**fill('a', 'buy', 1, 100).__dict__, 'type': 'execution', 'version': 1}
     event = json.dumps(e) + '\n'
-    file.write_text(event + '{"unfinished":')
+    file.write_text(newline='', data=event + '{"unfinished":')
     journal.put('profiles', 'bridge', {'path': str(file), 'mode': 'bridge', 'enabled': True})
     worker = SyncWorker(journal)
     worker.poll()
@@ -253,7 +253,7 @@ def test_file_watcher_handles_rewrites_restart_duplicates_and_partial_ndjson(tmp
     assert journal.get('sync_status')['bridge']['status'] == 'synced'
     SyncWorker(journal).poll()
     assert len(journal.executions()) == 1
-    file.write_text(json.dumps({**fill('b', 'sell', 1, 102, 2).__dict__, 'type': 'execution'}) + '\n')
+    file.write_text(newline='', data=json.dumps({**fill('b', 'sell', 1, 102, 2).__dict__, 'type': 'execution'}) + '\n')
     # Truncation resets the offset; an overwritten same-size file is covered in an additional regression.
     worker.poll()
     assert len(journal.executions()) == 2 and journal.trades()[0].closed
@@ -265,11 +265,11 @@ def test_ndjson_rewritten_in_place_at_the_same_size_does_not_lose_fills(tmp_path
     a = json.dumps({**fill('a', 'buy', 1, 100).__dict__, 'type': 'execution'}) + '\n'
     b = json.dumps({**fill('b', 'buy', 1, 100).__dict__, 'type': 'execution'}) + '\n'
     assert len(a) == len(b)
-    file.write_text(a)
+    file.write_text(newline='', data=a)
     journal.put('profiles', 'bridge', {'path': str(file), 'mode': 'bridge', 'enabled': True})
     worker = SyncWorker(journal)
     worker.poll()
-    file.write_text(b)
+    file.write_text(newline='', data=b)
     worker.poll()
     assert len(journal.executions()) == 2
 
@@ -285,15 +285,15 @@ def test_restarted_worker_resumes_after_the_lines_already_consumed(tmp_path, mon
     assert len(seen) == 1                          # nothing new, so nothing is read or parsed again
     beat = json.dumps({'type': 'heartbeat', 'provider': 'test', 'ts': '2026-10-07T14:05:00Z',
                        'status': 'connected'}) + '\n'
-    with file.open('a') as fh:
+    with file.open('a', newline='') as fh:
         fh.write(line('c', 'buy', 2) + beat[:20])
     restarted(journal).poll()
     assert seen[1:] == [line('c', 'buy', 2)]       # only the new committed line, not the partial tail
     assert len(journal.executions()) == 3
-    with file.open('a') as fh:
+    with file.open('a', newline='') as fh:
         fh.write(beat[20:])                        # the writer finishes its line; it is shorter than a checkpoint
     restarted(journal).poll()
-    with file.open('a') as fh:
+    with file.open('a', newline='') as fh:
         fh.write(line('d', 'sell', 3))
     restarted(journal).poll()
     assert seen[2:] == [beat, line('d', 'sell', 3)] and len(journal.executions()) == 4
@@ -304,24 +304,35 @@ def test_restarted_worker_resumes_after_the_lines_already_consumed(tmp_path, mon
     assert journal.bridge_offset('bridge') is None and 'bridge' not in journal.get('sync_status')
 
 
+def test_bridge_lines_ending_in_crlf_import_and_resume(tmp_path):
+    # The study writes the platform line separator, so on Windows every event ends in CRLF.
+    journal, file = watched(tmp_path, (line('a') + line('b', 'sell', 1)).replace('\n', '\r\n'))
+    SyncWorker(journal).poll()
+    assert len(journal.executions()) == 2
+    with file.open('a', newline='') as fh:
+        fh.write(line('c', 'buy', 2).replace('\n', '\r\n'))
+    restarted(journal).poll()
+    assert len(journal.executions()) == 3
+
+
 def test_truncated_or_replaced_bridge_restarts_from_zero_across_a_restart(tmp_path, monkeypatch):
     journal, file = watched(tmp_path, line('a') + line('b', 'sell', 1))
     SyncWorker(journal).poll()
     seen = parsed_texts(monkeypatch)
-    file.write_text(line('c', 'buy', 2))           # truncated in place: shorter than the stored position
+    file.write_text(newline='', data=line('c', 'buy', 2))           # truncated in place: shorter than the stored position
     restarted(journal).poll()
     assert seen == [line('c', 'buy', 2)] and len(journal.executions()) == 3
     # Another file moved over the path. It even begins with the bytes already consumed, so only
     # its identity says it is not the file that was being read.
     replacement = tmp_path / 'new.ndjson'
-    replacement.write_text(line('c', 'buy', 2) + line('d', 'sell', 3) + line('e', 'buy', 4))
+    replacement.write_text(newline='', data=line('c', 'buy', 2) + line('d', 'sell', 3) + line('e', 'buy', 4))
     os.replace(replacement, file)
     restarted(journal).poll()
-    assert seen[1:] == [file.read_text()] and len(journal.executions()) == 5
+    assert seen[1:] == [file.read_bytes().decode()] and len(journal.executions()) == 5
     assert len(line('e')) == len(line('f'))
-    file.write_text(line('c', 'buy', 2) + line('d', 'sell', 3) + line('f', 'buy', 4))    # same file and size, new last line
+    file.write_text(newline='', data=line('c', 'buy', 2) + line('d', 'sell', 3) + line('f', 'buy', 4))    # same file and size, new last line
     restarted(journal).poll()
-    assert seen[2:] == [file.read_text()] and len(journal.executions()) == 6
+    assert seen[2:] == [file.read_bytes().decode()] and len(journal.executions()) == 6
     restarted(journal).poll()
     assert len(seen) == 3 and len(journal.executions()) == 6
 
@@ -340,11 +351,11 @@ def test_corrupted_stored_offset_rereads_the_file_instead_of_skipping_or_failing
     SyncWorker(journal).poll()
     with sqlite3.connect(journal.path) as db:
         assert db.execute('UPDATE bridge_offsets SET ' + damage).rowcount == 1
-    with file.open('a') as fh:
+    with file.open('a', newline='') as fh:
         fh.write(line('c', 'buy', 2))
     seen = parsed_texts(monkeypatch)
     restarted(journal).poll()
-    assert seen == [file.read_text()]              # read again from the beginning; duplicates are harmless
+    assert seen == [file.read_bytes().decode()]              # read again from the beginning; duplicates are harmless
     assert len(journal.executions()) == 3 and journal.get('sync_status')['bridge']['status'] == 'synced'
     assert journal.bridge_offset('bridge')[1] == file.stat().st_size    # and the stored record is repaired
     restarted(journal).poll()
@@ -358,13 +369,13 @@ def test_line_cut_short_by_a_crash_is_counted_and_capture_continues(tmp_path):
     status = journal.get('sync_status')['bridge']
     assert [e.execution_id for e in journal.executions()] == ['a']
     assert status['status'] == 'synced' and status['damaged_lines'] == 1
-    with file.open('a') as fh:
+    with file.open('a', newline='') as fh:
         fh.write(line('c', 'sell', 2))
     restarted(journal).poll()
     assert len(journal.executions()) == 2 and journal.get('sync_status')['bridge']['damaged_lines'] == 1
-    assert preview_bridge(file.read_text()).errors            # a manual import still refuses the file
+    assert preview_bridge(file.read_bytes().decode()).errors            # a manual import still refuses the file
     # Well-formed JSON that is wrong is a setup problem, not crash debris, and still stops the watcher.
-    with file.open('a') as fh:
+    with file.open('a', newline='') as fh:
         fh.write('{"version":2,"type":"execution"}\n' + line('d', 'buy', 3))
     restarted(journal).poll()
     assert 'Unsupported bridge protocol version' in journal.get('sync_status')['bridge']['error']
@@ -374,7 +385,7 @@ def test_line_cut_short_by_a_crash_is_counted_and_capture_continues(tmp_path):
 def test_one_broken_connection_is_reported_without_starving_the_others(tmp_path):
     journal, _ = watched(tmp_path, line('a'))
     broken = tmp_path / 'broken.csv'
-    broken.write_text('symbol,side,qty,price,ts,notes\nESZ6,buy,1,100,2026-10-07T14:00:00Z,"' + 'x' * 140000 + '\n')
+    broken.write_text(newline='', data='symbol,side,qty,price,ts,notes\nESZ6,buy,1,100,2026-10-07T14:00:00Z,"' + 'x' * 140000 + '\n')
     journal.put('profiles', 'broken', {'path': str(broken), 'mode': 'executions', 'enabled': True})
     journal.put('profiles', 'unknown', {'path': str(broken), 'mode': 'orders', 'enabled': True})
     journal.put('profiles', 'pathless', {'mode': 'bridge', 'enabled': True})
@@ -413,18 +424,18 @@ def test_watcher_recalculates_late_fills_and_only_price_windows_affected(tmp_pat
     bridge = tmp_path / 'ticks.ndjson'
     journal.put('profiles', 'ticks', {'path': str(bridge), 'mode': 'bridge', 'enabled': True})
     event = {'type': 'tick', 'provider': 'test-prices', 'symbol': 'ESZ6', 'ts': tick(0, 98).ts, 'price': 98}
-    bridge.write_text(json.dumps(event) + '\n')
+    bridge.write_text(newline='', data=json.dumps(event) + '\n')
     worker = SyncWorker(journal)
     worker.poll()
     assert journal.best_metric(journal.trades()[0])['mae'] == 100
     called = []
     original = sync.measurements
     monkeypatch.setattr(sync, 'measurements', lambda *args: called.append(args[0].id) or original(*args))
-    bridge.write_text(json.dumps(event) + '\n' + json.dumps({**event, 'ts': tick(10, 999).ts, 'price': 999}) + '\n')
+    bridge.write_text(newline='', data=json.dumps(event) + '\n' + json.dumps({**event, 'ts': tick(10, 999).ts, 'price': 999}) + '\n')
     worker.metric_clock -= 6
     worker.poll()
     assert not called                      # current ticks must not rebuild historical closed trades
-    bridge.write_text(bridge.read_text() + json.dumps({**fill('c', 'buy', 1, 100, 10).__dict__, 'type': 'execution'}) + '\n')
+    bridge.write_text(newline='', data=bridge.read_bytes().decode() + json.dumps({**fill('c', 'buy', 1, 100, 10).__dict__, 'type': 'execution'}) + '\n')
     worker.poll()
     assert called                          # a late fill rebuilds its basis against already-cached ticks
 
