@@ -12,15 +12,21 @@ import streamlit as st
 import common
 import theme
 import script_widget
+from views import edge
 from mwjournal import tagging
 from mwjournal.analytics import summary
 from mwjournal.model import instant
 from mwjournal.workspace import WIDGETS, METRICS, GROUPS, filter_sample
 
 DEFAULT = {'name': 'Overview', 'columns': 2, 'filters': {}, 'widgets': [
-    {'id': 'summary', 'kind': 'Summary', 'title': 'Results at a glance', 'metric': 'Net P&L'},
-    {'id': 'calendar', 'kind': 'Calendar', 'title': 'Trading calendar', 'metric': 'Net P&L'},
-    {'id': 'equity', 'kind': 'Equity', 'title': 'Cumulative results', 'metric': 'Net P&L'}]}
+    {'id': 'summary', 'kind': 'Summary', 'title': 'Results at a Glance', 'metric': 'Net P&L'},
+    {'id': 'calendar', 'kind': 'Calendar', 'title': 'Trading Calendar', 'metric': 'Net P&L'},
+    {'id': 'equity', 'kind': 'Equity', 'title': 'Equity Curve', 'metric': 'Net P&L'}]}
+LINES = ('Equity', 'Tag score', 'Rating', 'Drawdown')
+WIDGET_HELP = {'Radar': 'The share of this sample tagged in each category. Not an edge or a performance score.',
+               'Calendar': 'Each day\'s net result in your display time zone. Click a day for its Daily Report Card.',
+               'Drawdown': 'How far the running total sits below its highest point so far.'}       # drawn along the trades, one point each
+AXES = {'trade': 'Trade number', 'time': 'Date and time'}
 
 
 def filter_editor(journal, rows, prefix, old=None):
@@ -38,21 +44,24 @@ def filter_editor(journal, rows, prefix, old=None):
         result[field] = st.multiselect(title, options, default=old.get(field, []),
                                        format_func=lambda id: library['tags'][id]['name'], key=key(field))
     result['status'] = st.multiselect('Trade status', ['closed', 'open', 'incomplete'], default=old.get('status', []), key=key('status'))
-    with st.expander('Dates & numerical ranges'):
-        date_filter = st.checkbox('Limit entry dates · UTC', value=bool(old.get('start') or old.get('end')), key=key('dates-on'))
+    with st.expander('Dates and Number Ranges'):
+        date_filter = st.checkbox('Limit entry dates', value=bool(old.get('start') or old.get('end')), key=key('dates-on'),
+                                  help='Calendar days in your display time zone.')
         if date_filter:
-            days = [instant(r['opened']).date() for r in rows] or [dt.date.today()]
+            days = [dt.date.fromisoformat(r['entry_day']) if r.get('entry_day') else instant(r['opened']).date()
+                    for r in rows] or [dt.date.today()]
             period = st.date_input('Entry date range', (dt.date.fromisoformat(old['start']) if old.get('start') else min(days),
                                                         dt.date.fromisoformat(old['end']) if old.get('end') else max(days)), key=key('dates'))
             if isinstance(period, (tuple, list)) and len(period) == 2:
                 result.update(start=period[0].isoformat(), end=period[1].isoformat())
-        st.caption('MAE/MFE bounds use account currency under your accuracy policy—not the selected display unit. '
-                   'Unavailable values never pass a numeric bound. R requires saved risk; duration is minutes.')
         choices = {'score': 'Signed tag score', 'net': 'Net P&L', 'r': 'Result in R', 'mae': 'MAE · currency',
                    'mfe': 'MFE · currency', 'quantity': 'Peak quantity', 'duration': 'Duration · minutes'}
-        ranges = st.multiselect('Numerical fields to limit', list(choices),
+        ranges = st.multiselect('Numbers to limit', list(choices),
                                 default=[name for name in choices if old.get(name + '_min') is not None or old.get(name + '_max') is not None],
-                                format_func=choices.get, key=key('numeric-fields'))
+                                format_func=choices.get, key=key('numeric-fields'),
+                                help='MAE / MFE limits use account currency under your accuracy setting, not the '
+                                     'display unit. A trade without a value never passes a limit. R needs a saved '
+                                     'planned risk; duration is in minutes.')
         for name in ranges:
             cols = st.columns(2)
             for col, suffix, word in [(cols[0], '_min', 'Minimum'), (cols[1], '_max', 'Maximum')]:
@@ -65,32 +74,30 @@ def filter_editor(journal, rows, prefix, old=None):
 def render(journal, rows):
     state = journal.workspace()
     pages = state['dashboards']
-    top, selector, actions = st.columns([1.6, 2, 1.2], vertical_alignment='center')
-    with top:
-        theme.section('Dashboard', 'pages · widgets · global / page / widget filters')
+    top, selector, filter_col, actions = st.columns([2.4, 2, 1, 1], vertical_alignment='center')
     choices = ['default', *sorted(pages, key=lambda id: pages[id]['order'])]
     page_id = selector.selectbox('Dashboard page', choices, format_func=lambda id: pages[id]['name'] if id in pages else 'Overview',
                             key=common.key(journal, 'dashboard-page'), label_visibility='collapsed')
     page = pages.get(page_id, DEFAULT)
-    with actions.popover('Customize page', width='stretch'):
-        customize(journal, rows, page_id, page)
-    filter_col, note_col = st.columns([1, 4], vertical_alignment='center')
-    with filter_col.popover('Page filters'):
-        with st.form(common.key(journal, 'page-filters-' + page_id)):
+    with filter_col.popover('Filters', width='stretch', help='Filters for this page. Each widget can add its own.'):
+        with st.form(common.key(journal, 'page-filters-' + page_id), border=False):
             rule = filter_editor(journal, rows, 'page-filter-' + page_id, page.get('filters'))
-            if st.form_submit_button('Save page filters'):
+            if st.form_submit_button('Save Page Filters', type='primary'):
                 saved = journal.save_dashboard(page['name'], page['widgets'], id=page_id if page_id in pages else None,
                                                 columns=page['columns'], filters=rule)
                 st.session_state[common.key(journal, 'dashboard-next')] = saved
                 st.rerun()
+    with actions.popover('Customize', width='stretch', help='Name, columns and widgets of this page; clone it.'):
+        customize(journal, rows, page_id, page)
     rows = filter_sample(rows, page.get('filters', {}))
     closed = [r for r in rows if r['status'] == 'closed' and r['net'] is not None]
-    note_col.caption(f'{len(closed)} closed trades · one account currency · missing measurements excluded · descriptive sample')
+    with top:
+        theme.section('Dashboard', f'{len(closed)} closed trade{"" if len(closed) == 1 else "s"}')
     columns = page['columns']
     cols = st.columns(columns, gap='small')
     for index, widget in enumerate(page['widgets']):
         with cols[index % columns].container(border=True):
-            st.markdown('### ' + widget['title'])
+            st.markdown('### ' + widget['title'], help=WIDGET_HELP.get(widget['kind']))
             sample = filter_sample(rows, widget.get('filters', {}))
             draw(journal, sample, widget, page_id)
 
@@ -100,19 +107,19 @@ def customize(journal, rows, page_id, page):
     with st.form(common.key(journal, 'dashboard-layout-' + page_id)):
         name = st.text_input('Page name', page['name'], max_chars=80)
         columns = st.radio('Columns', [1, 2, 3], index=page['columns'] - 1, horizontal=True)
-        if st.form_submit_button('Save page layout'):
+        if st.form_submit_button('Save Page Layout'):
             saved = journal.save_dashboard(name, page['widgets'], id=page_id if page_id in pages else None,
                                             filters=page.get('filters', {}), columns=columns)
             st.session_state[common.key(journal, 'dashboard-next')] = saved
             st.rerun()
-    if st.button('Clone page', key=common.key(journal, 'clone-page-' + page_id)):
+    if st.button('Clone Page', key=common.key(journal, 'clone-page-' + page_id)):
         widgets = [{k: v for k, v in w.items() if k != 'id'} for w in page['widgets']]
         saved = journal.save_dashboard(page['name'] + ' copy', widgets, columns=page['columns'], filters=page.get('filters'))
         st.session_state[common.key(journal, 'dashboard-next')] = saved
         st.rerun()
     widgets = page['widgets']
     selected = st.selectbox('Edit widget', ['new', *range(len(widgets))],
-                             format_func=lambda i: '＋ Add widget' if i == 'new' else widgets[i]['title'],
+                             format_func=lambda i: '＋ Add a widget' if i == 'new' else widgets[i]['title'],
                              key=common.key(journal, 'widget-edit-' + page_id))
     old = widgets[selected] if selected != 'new' else {}
     with st.form(common.key(journal, 'widget-form-' + page_id + '-' + str(selected))):
@@ -120,6 +127,10 @@ def customize(journal, rows, page_id, page):
         title = st.text_input('Widget title', old.get('title', ''), max_chars=80)
         metric = st.selectbox('Series metric', METRICS, index=METRICS.index(old.get('metric', 'Net P&L')))
         group = st.selectbox('Compare by', GROUPS, index=GROUPS.index(old.get('group', 'Market')))
+        axis = st.selectbox('Along the bottom', list(AXES), format_func=AXES.get,
+                            index=list(AXES).index(old.get('axis', 'trade')) if old.get('axis', 'trade') in AXES else 0,
+                            help='For line widgets. Trade number puts trades side by side, so nights and weekends '
+                                 'take no room; date and time uses your display time zone.')
         ratings = journal.workspace()['ratings']
         rating_id = st.selectbox('Rating definition', [None, *ratings],
                                  format_func=lambda id: ratings[id]['name'] if id else 'No rating model',
@@ -127,11 +138,11 @@ def customize(journal, rows, page_id, page):
         included = st.multiselect('Score only these tags · empty means all', list(journal.tag_library()['tags']),
                                   default=old.get('score_tags', []),
                                   format_func=lambda id: journal.tag_library()['tags'][id]['name'])
-        code = st.text_area('Local script · used only by Script widgets', value=old.get('code', script_widget.STARTER),
+        code = st.text_area('Local script · Script widgets only', value=old.get('code', script_widget.STARTER),
                             height=110, max_chars=30000)
         filters = filter_editor(journal, rows, f'widget-{page_id}-{selected}', old.get('filters'))
-        if st.form_submit_button('Save widget', type='primary'):
-            updated = {'kind': kind, 'title': title or kind, 'metric': metric, 'group': group,
+        if st.form_submit_button('Save Widget', type='primary'):
+            updated = {'kind': kind, 'title': title or kind, 'metric': metric, 'group': group, 'axis': axis,
                        'rating_id': rating_id, 'score_tags': included, 'filters': filters, 'code': code}
             new = [dict(w) for w in widgets]
             if selected == 'new':
@@ -155,7 +166,7 @@ def customize(journal, rows, page_id, page):
                 new = [dict(w) for w in widgets]
                 new[selected], new[other] = new[other], new[selected]
                 save(new)
-        if hide.button('Remove widget', disabled=len(widgets) < 2, key=common.key(journal, 'remove-widget-' + page_id)):
+        if hide.button('Remove Widget', disabled=len(widgets) < 2, key=common.key(journal, 'remove-widget-' + page_id)):
             save([w for i, w in enumerate(widgets) if i != selected])
 
 
@@ -179,29 +190,41 @@ def draw(journal, rows, widget, page_id):
     if kind == 'Script':
         script_widget.render(journal, rows, widget, key)
         return
+    currency = rows[0]['currency'] if rows else 'USD'
+    zone = common.display_zone(journal)
     if kind == 'Summary':
         stats = summary(closed)
         cols = st.columns(2)
-        cols[0].metric('Net after fees', common.money(stats['net']))
-        cols[1].metric('Win rate', f'{stats["win_rate"]:.1f}%' if stats['win_rate'] is not None else '—')
-        cols[0].metric('Average / trade', common.money(stats['expectancy']))
-        cols[1].metric('Closed trades', str(stats['count']))
+        cols[0].metric('Net P&L', common.money(stats['net'], currency), help='After recorded fees.')
+        cols[1].metric('Win Rate', f'{stats["win_rate"]:.1f}%' if stats['win_rate'] is not None else '—')
+        cols[0].metric('Average Trade', common.money(stats['expectancy'], currency))
+        cols[1].metric('Trades', str(stats['count']), help='Closed trades in this widget\'s sample.')
         return
     if kind == 'Calendar':
         trading_calendar(journal, rows, key)
         return
     if kind == 'Trades':
         if rows:
-            st.dataframe(pd.DataFrame(rows)[['symbol', 'direction', 'opened', 'net', 'tags']], hide_index=True, height=280)
+            st.dataframe(common.money_table([{'Entry': common.moment(r['opened'], zone, seconds=False), 'Contract': r['symbol'],
+                                              'Side': r['direction'].title(), 'Net P&L': r['net'], 'Tags': r['tags']}
+                                             for r in rows], currency, results=['Net P&L']), hide_index=True, height=280)
         else:
             st.info('No trades in this sample.')
         return
     if kind == 'MAE / MFE':
         measured = [r for r in common.display_excursion_rows(journal, closed) if r['display_mae'] is not None and r['display_mfe'] is not None]
         if not measured:
-            st.info('No qualifying path under your accuracy / unit settings.')
+            st.info('No trade is measured under your MAE / MFE accuracy and unit settings.')
             return
-        fig = px.scatter(pd.DataFrame(measured), x='display_mae', y='display_mfe', color='direction', hover_data=['symbol', 'net'])
+        frame = pd.DataFrame(measured)
+        frame['Net P&L'] = [common.money(v, currency) for v in frame.net]
+        unit = common.excursion_unit(journal)
+        fig = px.scatter(frame, x='display_mae', y='display_mfe', color='direction',
+                         hover_data={'symbol': True, 'Net P&L': True, 'direction': False},
+                         labels={'display_mae': 'MAE', 'display_mfe': 'MFE', 'symbol': 'Contract'})
+        if unit == 'currency':
+            theme.money_axis(fig, currency, [*frame.display_mae, *frame.display_mfe], axis='xaxis')
+            theme.money_axis(fig, currency, [*frame.display_mae, *frame.display_mfe])
     elif kind == 'Radar':
         library = journal.tag_library()
         groups = tagging.ordered_groups(library)
@@ -210,24 +233,31 @@ def draw(journal, rows, widget, page_id):
                 if closed else 0 for group in axes]
         fig = go.Figure(go.Scatterpolar(r=vals + vals[:1], theta=axes + axes[:1], fill='toself', name='Tagged trades %'))
         fig.update_layout(polar=dict(radialaxis=dict(range=[0, 100])))
-        st.caption('Percentage of this sample tagged in each group—not an edge or performance score.')
     else:
         # Score/rating widgets select their own metric, not the default P&L.
         widget = {**widget, 'metric': 'Tag score' if kind == 'Tag score' else 'Rating' if kind == 'Rating' else widget.get('metric', 'Net P&L')}
         data = values(journal, closed, widget)
         if not data:
-            st.info('No qualifying closed values. Ratings require a selected definition; R requires planned risk.')
+            st.info('No closed values to show. A rating needs a rating system chosen in the widget; R needs a planned risk.')
             return
         frame = pd.DataFrame(data)
-        if kind in ('Equity', 'Tag score', 'Rating', 'Drawdown'):
+        money = widget['metric'] in ('Net P&L', 'Gross P&L')
+        if kind in LINES:
             cumulative = frame.value.cumsum()
-            frame['series'] = cumulative - cumulative.cummax().clip(lower=0) if kind == 'Drawdown' else frame.value if kind == 'Rating' else cumulative
-            fig = px.line(frame, x='closed', y='series', markers=True, labels={'series': widget['metric'], 'closed': 'Exit (UTC)'})
+            series = cumulative - cumulative.cummax().clip(lower=0) if kind == 'Drawdown' else frame.value if kind == 'Rating' else cumulative
+            name = {'Drawdown': 'Drawdown', 'Rating': 'Rating'}.get(kind, 'Total')
+            fig = edge.progress_chart(data, [(name, list(series), theme.SERIES[0])], zone, axis=widget.get('axis', 'trade'),
+                                      currency=currency if money else None, value=formatter(widget['metric'], currency),
+                                      height=270)
+            st.plotly_chart(fig, width='stretch', config=theme.PLOTLY_CONFIG, key=key)
+            return
         elif kind == 'Distribution':
             fig = px.histogram(frame, x='value', labels={'value': widget['metric']})
+            fig.update_layout(yaxis_title='Trades')
+            if money:
+                theme.money_axis(fig, currency, frame.value, axis='xaxis')
         else:
             group = widget.get('group', 'Market')
-            zone = journal.workspace()['preferences'].get('display_timezone', 'America/New_York')
             pairs = []
             for r in data:
                 time = pd.Timestamp(r['opened']).tz_convert(zone)
@@ -239,14 +269,27 @@ def draw(journal, rows, widget, page_id):
                 st.info('No values in the chosen groups.')
                 return
             frame = pd.DataFrame(pairs).groupby('group', as_index=False).agg(value=('value', 'mean'), count=('value', 'count'))
-            fig = px.bar(frame, x='group', y='value', hover_data=['count'], labels={'value': 'Average ' + widget['metric']})
+            fig = px.bar(frame, x='group', y='value', hover_data=['count'],
+                         labels={'value': 'Average ' + widget['metric'], 'group': group, 'count': 'Trades'})
+            if money:
+                theme.money_axis(fig, currency, frame.value)
     fig.update_layout(height=270, margin=dict(l=20, r=20, t=20, b=25), showlegend=False)
     st.plotly_chart(fig, width='stretch', config=theme.PLOTLY_CONFIG, key=key)
 
 
+def formatter(metric, currency):
+    """How one value of a widget's measure is written when hovered."""
+    if metric in ('Net P&L', 'Gross P&L'):
+        return lambda v: common.money(v, currency)
+    if metric == 'R':
+        return lambda v: '—' if v is None else f'{v:+.2f}R'
+    return lambda v: '—' if v is None else f'{v:+,.2f}'.rstrip('0').rstrip('.')
+
+
 def trading_calendar(journal, rows, key):
     from zoneinfo import ZoneInfo
-    zone = journal.workspace()['preferences'].get('display_timezone', 'America/New_York')
+    zone = common.display_zone(journal)
+    currency = rows[0]['currency'] if rows else 'USD'
     days = [instant(r['opened']).astimezone(ZoneInfo(zone)).date() for r in rows]
     latest = max(days) if days else dt.date.today()
     months = sorted({d.replace(day=1) for d in days} | {latest.replace(day=1)}, reverse=True)
@@ -264,10 +307,11 @@ def trading_calendar(journal, rows, key):
                 date = dt.date(month.year, month.month, day)
                 sample = [r for r, opened in zip(rows, days) if opened == date and r['status'] == 'closed' and r['net'] is not None]
                 net = sum(r['net'] for r in sample)
-                title = f'{day}  \n{net:+.0f}' if sample else str(day)
+                title = f'{day}  \n' + common.md(common.money(net, currency, decimals=0)) if sample else str(day)
                 def open_day(date=date):
                     st.session_state.update(common.navigation('Daily review'))
                     st.session_state[common.key(journal, 'review-day')] = date
                     st.session_state[common.key(journal, 'review-tz')] = zone
                 col.button(title, key=key + '-day-' + str(date), on_click=open_day, width='stretch',
-                           help=f'{date}: {len(sample)} closed trades, {net:+.2f} · click for Daily Report Card')
+                           help=common.md(f'{common.day_label(date, zone, weekday=True)}: {len(sample)} closed trades, '
+                                          f'{common.money(net, currency)} · click for the Daily Report Card'))

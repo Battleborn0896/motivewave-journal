@@ -9,22 +9,81 @@ import copy
 import hashlib
 import json
 import re
+import sqlite3
 from zoneinfo import ZoneInfo
 
 from .model import instant
-from .tags import DEFAULT_CATALOG
+from .tags import LEGACY_CATALOG, STARTER_VERSION, STARTERS
 
 
 def identity(name):
     return hashlib.sha256(name.encode()).hexdigest()[:24]
 
 
+def starter_library(timezone='America/New_York'):
+    """Setup, Execution and Mindset as ordinary tags, marked as offered so they are offered once."""
+    state = {'version': 1, 'tags': {}, 'groups': {}, 'playbooks': {}, 'session_timezone': timezone,
+             'starters': STARTER_VERSION}
+    for order, (group, colour, names) in enumerate(STARTERS):
+        state['groups'][group] = {'exclusive': False, 'order': order}
+        for name in names:
+            id = identity(name)
+            state['tags'][id] = {'id': id, 'name': name, 'aliases': [name], 'group': group, 'retired': False,
+                                 'levels': ['trade'], 'color': colour, 'order': len(state['tags'])}
+    return state
+
+
+def _never_tagged(db):
+    """No tag was ever chosen or referred to here: no tagged review or day, and none of the old
+    built-in suggestions named in a rating, filter, checklist or draft."""
+    for (payload,) in db.execute('SELECT payload FROM annotations'):
+        if any(json.loads(payload).get(name) for name in ('tags', 'tag_ids', 'day_tag_exclusions')):
+            return False
+    for (payload,) in db.execute('SELECT payload FROM sessions'):
+        if json.loads(payload).get('day_tag_ids'):
+            return False
+    legacy = [identity(name) for name in LEGACY_CATALOG]
+    return not any(id in value for (value,) in db.execute("SELECT value FROM journal_meta WHERE key != 'tag_library'")
+                   for id in legacy)
+
+
+def _offer_starters(db):
+    """Store the starter library for a journal that has never had one, once. Inside the write lock
+    the question is asked again, so two windows opening the same new journal store one library."""
+    began = not db.in_transaction
+    try:
+        if began:
+            db.execute('BEGIN IMMEDIATE')
+        if (db.execute("SELECT 1 FROM journal_meta WHERE key IN ('tag_library', 'tag_catalog')").fetchone() is None
+                and _never_tagged(db)):
+            db.execute("INSERT INTO journal_meta VALUES('tag_library',?)",
+                       (json.dumps(starter_library(), sort_keys=True, allow_nan=False),))
+        if began:
+            db.commit()
+    except sqlite3.OperationalError:
+        if began and db.in_transaction:
+            db.rollback()
+        return json.dumps(starter_library())      # a read-only copy: show them without storing them
+    row = db.execute("SELECT value FROM journal_meta WHERE key='tag_library'").fetchone()
+    return row[0] if row else None
+
+
 def library(db):
     saved = db.execute("SELECT value FROM journal_meta WHERE key='tag_library'").fetchone()
+    legacy = db.execute("SELECT value FROM journal_meta WHERE key='tag_catalog'").fetchone()
+    if saved is None and legacy is None and _never_tagged(db):
+        # A brand-new journal opens on the starter categories. They are stored at once, with the
+        # record that they were offered, so a journal whose tags were all deleted stays empty.
+        stored = _offer_starters(db)
+        saved = (stored,) if stored else None
     state = json.loads(saved[0]) if saved else {'version': 1, 'tags': {}, 'groups': {}, 'playbooks': {},
                                                'session_timezone': 'America/New_York'}
-    legacy = db.execute("SELECT value FROM journal_meta WHERE key='tag_catalog'").fetchone()
-    catalog = {**DEFAULT_CATALOG, **(json.loads(legacy[0]) if legacy else {})}
+    # A library from 0.4.0 or earlier always holds the hidden suggestions of that version, as it
+    # did then, except any the trader has since deleted. A library that was offered the starters
+    # holds only what is stored.
+    removed = set(state.get('removed', []))
+    catalog = {} if state.get('starters') else {n: g for n, g in LEGACY_CATALOG.items() if n not in removed}
+    catalog.update(json.loads(legacy[0]) if legacy else {})
     for row in db.execute('SELECT payload FROM annotations'):
         for name in json.loads(row[0]).get('tags', []):
             catalog.setdefault(name, 'Other tags')
@@ -43,6 +102,62 @@ def library(db):
     return state
 
 
+def _plural(count, word):
+    return f'{count} {word}' + ('' if count == 1 else 's')
+
+
+def tag_uses(db, state, id):
+    """Why a tag cannot be deleted, as phrases ('is on 3 trades'); empty when nothing uses it. A
+    used tag is retired instead, so no review, day, playbook, rating, filter, checklist or draft is
+    left pointing at nothing."""
+    names = set(state['tags'][id]['aliases'])
+    trades = days = 0
+    for (payload,) in db.execute('SELECT payload FROM annotations'):
+        data = json.loads(payload)
+        trades += bool(id in data.get('tag_ids', []) or id in data.get('day_tag_exclusions', [])
+                       or names & set(data.get('tags', [])))
+    for (payload,) in db.execute('SELECT payload FROM sessions'):
+        days += id in json.loads(payload).get('day_tag_ids', [])
+    uses = ['is on ' + ' and '.join(_plural(n, word) for n, word in ((trades, 'trade'), (days, 'day')) if n)] \
+        if trades or days else []
+    if any(id in choices for book in state['playbooks'].values() for choices in book['rules'].values()):
+        uses.append('is part of a playbook')
+    quoted = [json.dumps(name) for name in names]
+    if any(id in value or any(q in value for q in quoted)
+           for (value,) in db.execute("SELECT value FROM journal_meta WHERE key != 'tag_library'")):
+        uses.append('is named in a rating, filter, checklist or draft')
+    return uses
+
+
+def group_uses(db, state, group):
+    """Why a category cannot be deleted, as phrases ('holds 4 tags'); empty when nothing uses it."""
+    held = sum(tag['group'] == group for tag in state['tags'].values())
+    uses = ['holds ' + _plural(held, 'tag')] if held else []
+    if any(group in book['rules'] for book in state['playbooks'].values()):
+        uses.append('is part of a playbook')
+    quoted = json.dumps(group)
+    if any(quoted in value for (value,) in db.execute("SELECT value FROM journal_meta WHERE key != 'tag_library'")):
+        uses.append('is named in a rating, timer or checklist')
+    return uses
+
+
+def delete_tag(state, id):
+    state = copy.deepcopy(state)
+    tag = state['tags'].pop(id)
+    if not state.get('starters'):
+        # An old built-in suggestion would otherwise come back with the next read.
+        state['removed'] = sorted(set(state.get('removed', [])) | {n for n in tag['aliases'] if n in LEGACY_CATALOG})
+    return state
+
+
+def delete_group(state, group):
+    state = copy.deepcopy(state)
+    del state['groups'][group]
+    for index, name in enumerate(sorted(state['groups'], key=lambda g: state['groups'][g]['order'])):
+        state['groups'][name]['order'] = index
+    return state
+
+
 def save(db, state):
     db.execute("INSERT OR REPLACE INTO journal_meta VALUES('tag_library',?)",
                (json.dumps(state, sort_keys=True, allow_nan=False),))
@@ -55,14 +170,22 @@ def ids(state, values):
 
 
 def ensure_names(state, values, group='Other tags'):
+    # A new tag takes its category's colour when the category has one, so Mindset stays Mindset-coloured.
+    colours = {tag['color'] for tag in state['tags'].values() if tag['group'] == group}
+    colour = colours.pop() if len(colours) == 1 else '#65CA98'
+    added = False
     for name in values:
         if ids(state, [name]):
             continue
         id = identity(name)
         state['tags'][id] = {'id': id, 'name': name, 'aliases': [name], 'group': group,
-                             'retired': False, 'levels': ['trade'], 'color': '#65CA98',
+                             'retired': False, 'levels': ['trade'], 'color': colour,
                              'order': len(state['tags'])}
-    state['groups'].setdefault(group, {'exclusive': False, 'order': len(state['groups'])})
+        added = True
+    if added:
+        # Only a category that now holds a new tag. Saving a note, or clicking a tag that already
+        # exists, must not leave an empty 'Other tags' card in the tag panel.
+        state['groups'].setdefault(group, {'exclusive': False, 'order': len(state['groups'])})
 
 
 def selected(state, annotation):

@@ -135,11 +135,11 @@ def test_account_alias_is_display_only_and_named_journal_switch_preserves_indepe
     id = journals.create(capture, 'My journal', [('motivewave', 'paper')])
     named = journals.open_named(capture, id)
     named.set_excursion_unit('points')
-    app = open_app()
-    widget(app.selectbox, 'Local journal').set_value(id).run()
+    app = open_app('General')
+    widget(app.sidebar.selectbox, 'Local journal').set_value(id).run()      # in the sidebar once one exists
     assert not app.exception
     assert widget(app.selectbox, 'MAE / MFE units').value == 'points'
-    widget(app.selectbox, 'Local journal').set_value(None).run()
+    widget(app.sidebar.selectbox, 'Local journal').set_value(None).run()
     assert widget(app.selectbox, 'MAE / MFE units').value == 'currency'
 
 
@@ -147,10 +147,10 @@ def test_named_journal_creation_and_archive_ui_do_not_remove_files(home):
     capture = seed_preview(home)
     app = open_app('Journals')
     widget(app.text_input, 'New journal name').set_value('Practice')
-    press(app, 'Create local journal')
+    press(app, 'Create Journal')
     id = widget(app.selectbox, 'Local journal').value
     assert id in journals.registry(capture)['journals']
     file = journals.journal_path(capture, id)
-    press(app, 'Archive journal')
+    press(app, 'Archive Journal')
     assert file.is_file()
     assert app.session_state[common.key(capture, 'named-journal')] is None

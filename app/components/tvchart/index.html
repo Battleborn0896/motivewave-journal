@@ -43,8 +43,10 @@ const escapeText = v => String(v == null ? '' : v).replace(/[&<>"']/g, c =>
   ({'&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;'}[c]));
 
 function timeLabel(time, full = false) {
-  return new Intl.DateTimeFormat('en-US', {timeZone: spec.timezone || 'UTC', hour: '2-digit',
-    minute: '2-digit', hour12: false, ...(full ? {month:'short', day:'2-digit', second:'2-digit', timeZoneName:'short'} : {})})
+  // The journal's display time zone, written as the rest of the journal writes it: '11:52 AM' on the
+  // axis, 'Oct 15, 11:52:42 AM EDT' under the crosshair and on a fill.
+  return new Intl.DateTimeFormat('en-US', {timeZone: spec.timezone || 'UTC', hour: 'numeric',
+    minute: '2-digit', hour12: true, ...(full ? {month:'short', day:'numeric', second:'2-digit', timeZoneName:'short'} : {})})
     .format(new Date(Number(time) * 1000));
 }
 

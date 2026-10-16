@@ -45,3 +45,36 @@ def test_only_known_closed_results_receive_outcome_tints():
     assert all(theme.ACCENT in s for s in theme.outcome_style(row(0)))
     for result in (row(None), row(float('nan')), row(0, 'open'), row(-100, 'open')):
         assert theme.outcome_style(result) == ['', '', '']
+
+
+def test_money_axes_read_like_every_other_amount():
+    import plotly.graph_objects as go
+    figure = go.Figure()
+    theme.money_axis(figure, 'USD', [-300, 1200])
+    assert figure.layout.yaxis.tickformat == '$,.0f' and figure.layout.yaxis.hoverformat == '$,.2f'
+    theme.money_axis(figure, 'USD', [3.5, -2], axis='xaxis')          # a small range keeps its cents
+    assert figure.layout.xaxis.tickformat == '$,.2f'
+    euro = go.Figure()
+    theme.money_axis(euro, 'EUR', [100])
+    assert euro.layout.yaxis.tickprefix == '€' and euro.layout.yaxis.tickformat == ',.0f'
+
+
+def test_a_section_title_keeps_long_explanations_in_its_tooltip(monkeypatch):
+    drawn = []
+    monkeypatch.setattr(theme.st, 'markdown', lambda body, **kwargs: drawn.append((body, kwargs)))
+    theme.section('Import Trades', help='For trades the study did not capture.')
+    body, kwargs = drawn[0]
+    assert 'Import Trades' in body and 'did not capture' not in body
+    assert kwargs['help'] == 'For trades the study did not capture.' and kwargs['unsafe_allow_html']
+
+
+def test_result_colours_reach_the_paragraph_a_metric_value_is_drawn_in():
+    # Streamlit draws a metric's value as Markdown, and every Markdown paragraph is grey: a colour set
+    # only on the value's box never shows. Seen in a browser: a red '-$88.10' tile read grey.
+    css = re.sub(r'\s+', ' ', theme.CSS)
+    for selector in ('.st-key-trade-result-positive [data-testid="stMetricValue"] p',
+                     '.st-key-trade-result-negative [data-testid="stMetricValue"] p',
+                     '[class*="st-key-tile-"][class*="-positive"] [data-testid="stMetricValue"] p',
+                     '[class*="st-key-tile-"][class*="-negative"] [data-testid="stMetricValue"] p'):
+        rule = css[css.index(selector):].split('}', 1)[0]
+        assert ('color:' + theme.UP) in rule or ('color:' + theme.DOWN) in rule

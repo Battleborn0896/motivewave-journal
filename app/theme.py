@@ -69,8 +69,10 @@ html, body, [data-testid="stAppViewContainer"], .stApp {{ background:{PAGE}; fon
 [class*="st-key-journal-calendar"] [data-testid="stVerticalBlock"] {{ gap:4px; }}
 [class*="st-key-journal-calendar"] [data-testid="stHorizontalBlock"] {{ gap:4px; }}
 [class*="st-key-journal-calendar"] button {{ padding:2px !important; min-height:34px !important; height:34px; }}
-[class*="st-key-journal-calendar"] button p {{ white-space:pre-line; font-size:10px; line-height:12px;
+[class*="st-key-journal-calendar"] button p {{ font-size:10px; line-height:12px;
     white-space:normal; margin:0 !important; overflow:visible; text-overflow:clip; }}
+/* The label's paragraph is inline, so its lines take the container's height: keep both lines inside the cell. */
+[class*="st-key-journal-calendar"] button [data-testid="stMarkdownContainer"] {{ font-size:10px; line-height:12px; }}
 [data-testid="stSidebar"] button[aria-checked="true"] {{ background:{ACCENT_DEEP} !important;
     border-color:{ACCENT} !important; color:{ACCENT} !important; }}
 [data-testid="stSidebar"] button[aria-checked="true"] p {{ color:inherit !important; }}
@@ -82,19 +84,29 @@ h3 {{ font-size:15px !important; font-weight:600 !important; color:{INK} !import
 [data-testid="stTabs"] [data-baseweb="tab-list"] {{ gap:18px; }}
 [data-testid="stTabs"] [data-baseweb="tab"] {{ font-family:{FONT}; font-size:13px; padding:8px 0; }}
 .st-key-trade-review-workspace, .st-key-trade-review-workspace [data-testid="stVerticalBlock"] {{ gap:8px; }}
-[class*="st-key-tag-workspace"] {{ background:{SURFACE}; padding:12px !important; }}
-[class*="st-key-tag-workspace"] h3 {{ font-size:17px !important; margin:0; }}
-[class*="st-key-tag-workspace"] [data-testid="stVerticalBlock"] {{ gap:10px; }}
-[class*="st-key-tag-workspace"] {{ max-height:min(600px, calc(100dvh - 350px)); min-height:260px;
-    overflow-y:auto !important; }}
-[class*="st-key-tag-workspace"] [data-testid="stButtonGroup"] button {{ padding:4px 7px; }}
-[class*="st-key-tag-workspace"] [data-testid="stButtonGroup"] button {{ font-family:{FONT}; border-radius:4px;
-    background:transparent; border:1px solid {BASELINE}; }}
-[class*="st-key-tag-workspace"] [data-testid="stButtonGroup"] button p {{ color:inherit !important; }}
-[class*="st-key-tag-workspace"] button[role="radio"][aria-checked="true"] {{ color:{ACCENT} !important;
-    border-color:{ACCENT} !important; background:{ACCENT_DEEP} !important; }}
-.st-key-trade-result-positive [data-testid="stMetricValue"] {{ color:{UP}; }}
-.st-key-trade-result-negative [data-testid="stMetricValue"] {{ color:{DOWN}; }}
+/* A metric's value is drawn as Markdown, so its paragraph needs the colour too: the rule for Markdown
+   paragraphs above would otherwise turn every result grey. */
+.st-key-trade-result-positive [data-testid="stMetricValue"], .st-key-trade-result-positive [data-testid="stMetricValue"] p {{ color:{UP}; }}
+.st-key-trade-result-negative [data-testid="stMetricValue"], .st-key-trade-result-negative [data-testid="stMetricValue"] p {{ color:{DOWN}; }}
+/* The connection badge in the sidebar is one button: an invisible button lies over the chip and opens Setup. */
+.st-key-connection-badge {{ position:relative; gap:0 !important; border-radius:4px; }}
+.st-key-connection-badge [data-testid="stElementContainer"]:has(.stButton) {{ position:absolute !important; inset:0;
+    z-index:2; margin:0 !important; }}
+.st-key-connection-badge .stButton, .st-key-connection-badge .stButton button {{ width:100%; height:100%;
+    min-height:0 !important; padding:0; opacity:0; cursor:pointer; }}
+.st-key-connection-badge:hover .mwj-go {{ color:{ACCENT}; }}
+.st-key-connection-badge:has(button:focus-visible) {{ outline:2px solid {ACCENT}; outline-offset:2px; }}
+.mwj-go {{ color:{MUTED}; font-size:12px; margin-left:8px; white-space:nowrap; }}
+/* Headline numbers (Stats, the Daily Report Card, dashboard summaries): results carry their colour. */
+.st-key-stat-tiles [data-testid="stMetricValue"], .st-key-day-tiles [data-testid="stMetricValue"] {{ font-size:22px; }}
+[class*="st-key-tile-"][class*="-positive"] [data-testid="stMetricValue"],
+[class*="st-key-tile-"][class*="-positive"] [data-testid="stMetricValue"] p {{ color:{UP}; }}
+[class*="st-key-tile-"][class*="-negative"] [data-testid="stMetricValue"],
+[class*="st-key-tile-"][class*="-negative"] [data-testid="stMetricValue"] p {{ color:{DOWN}; }}
+.st-key-cost-tiles [data-testid="stMetricValue"] {{ font-size:17px; }}
+.st-key-cost-tiles [data-testid="stMetricLabel"] p {{ font-size:12px; }}
+/* Setup's page buttons, in three titled groups, sit close together. */
+[class*="st-key-setup-group-"] [data-testid="stVerticalBlock"] {{ gap:8px; }}
 div[data-testid="stExpander"] details {{ background:{SURFACE}; border:1px solid {BORDER}; border-radius:6px; }}
 div[role="radiogroup"] label p {{ font-size:13px; }}
 [data-testid="stButtonGroup"] button {{ font-family:{MONO}; font-size:12.5px; border-radius:4px; }}
@@ -186,10 +198,11 @@ def brand(name: str, subtitle: str = '') -> None:
                 unsafe_allow_html=True)
 
 
-def section(title: str, hint: str = '') -> None:
+def section(title: str, hint: str = '', *, help: str | None = None) -> None:
+    """A section title. `hint` is a few words beside it; anything longer belongs in `help`, the ?."""
     st.markdown(f"<div class='mwj-section'>{html.escape(title)}"
                 + (f"<span class='hint'>{html.escape(hint)}</span>" if hint else '') + '</div>',
-                unsafe_allow_html=True)
+                unsafe_allow_html=True, help=help)
 
 
 def chip(text: str, tone: str = 'neutral', *, state: str | None = None, big: bool = False) -> str:
@@ -218,6 +231,20 @@ def status(label: str, tone: str, state: str, notes=(), *, big: bool = False) ->
 # no toolbar. (The trade chart itself is drawn by tvchart, not Plotly.)
 PLOTLY_CONFIG = {'displayModeBar': False, 'scrollZoom': True, 'doubleClick': 'reset'}
 TEMPLATE = 'mwjournal'
+
+
+def money_axis(figure, currency='USD', values=(), *, axis='yaxis') -> None:
+    """Axis numbers written as money, '$1,200' and '-$300', like every amount in the journal.
+    Small ranges keep their cents so the ticks do not repeat."""
+    from mwjournal import humanize
+    finite = [abs(v) for v in values if v is not None and v == v]
+    decimals = 0 if finite and max(finite) >= 20 else 2
+    sign = humanize.symbol(currency)
+    if sign == '$':
+        # d3's own currency format puts the minus before the dollar sign.
+        figure.update_layout({axis: dict(tickformat=f'$,.{decimals}f', hoverformat='$,.2f')})
+    else:
+        figure.update_layout({axis: dict(tickprefix=sign, tickformat=f',.{decimals}f', hoverformat=',.2f')})
 
 
 def register_template() -> None:

@@ -1,8 +1,9 @@
 """Connection: the study writes a file on this computer and the app reads it. Nothing has to be typed.
 
-The app starts watching the study's default bridge file by itself (runtime.start). This view says
-what it currently hears from the study, how to install the study, and where the less common
-settings are: another bridge file, extra watched CSV files, the instrument multiplier.
+The app starts watching the study's default bridge file by itself (runtime.start). This Setup page
+says what it currently hears from the study, in detail, and holds the less common settings in titled
+sections: installing the study again, another bridge file, extra watched CSV files, the instrument
+multiplier. The first install is one of the three steps on the first Setup page (views/setup.py).
 """
 
 from __future__ import annotations
@@ -56,10 +57,20 @@ def install_study(jar: Path = JAR, destination: Path | None = None) -> tuple[Pat
     return target, backup
 
 
+LIMITS = ('The study is read-only: it never places, changes or cancels an order. Fills are read from MotiveWave '
+          'internals that are not part of its supported SDK, so a MotiveWave update can stop fill capture; the '
+          'status above then shows the study\'s own message, and prices keep recording either way. A stop or target '
+          'is captured only when MotiveWave links it to the position; standalone orders are never guessed from '
+          'price. Fees can be the platform\'s estimates; such trades are flagged. Prices are recorded per chart: put '
+          'the study on the chart of each contract you trade; one study reads the account for all of them. Replay '
+          'prices are recorded as they play, and rewinding starts a new run. They count as real ticks only when '
+          'the study\'s Real Tick Data box says the replay runs on tick data.')
+
+
 def render(journal, rows) -> None:
-    theme.section('Study connection', 'the study writes a file on this computer; the app reads it')
+    theme.section('Connection')
     status_card(journal.dataset)
-    name, profile, _, link = common.study_link(journal)
+    name, profile, _, _ = common.study_link(journal)
     if profile is not None:
         enabled = st.toggle('Capture enabled', value=bool(profile.get('enabled')),
                             key=common.key(journal, 'capture-enabled'),
@@ -68,30 +79,36 @@ def render(journal, rows) -> None:
         if enabled != bool(profile.get('enabled')):
             journal.put('profiles', name, {**profile, 'enabled': enabled})
             st.rerun()
-    install_steps(expanded=link.state != 'Connected')
-    with st.expander('Advanced'):
-        bridge_file_form(journal)
-        watched_files(journal, name)
-    with st.expander('What fill capture can and cannot see'):
-        st.markdown(
-            '- It is read-only: the study never places, changes or cancels an order.\n'
-            '- Fills are read from MotiveWave internals that are not part of its supported SDK, so a MotiveWave '
-            'update can stop fill capture. The status above then shows the study\'s own message. Prices keep '
-            'recording either way.\n'
-            '- A stop or target is captured only when MotiveWave links it to the position. Standalone orders are '
-            'never guessed from price.\n'
-            '- Fees can be the platform\'s estimates; such trades are flagged.\n'
-            '- Prices are recorded per chart: put the study on the chart of each contract you trade. One study '
-            'reads the account for all of them.\n'
-            '- Replay prices are recorded as they play, and rewinding starts a new run. They count as real ticks '
-            'only when the study\'s Real Tick Data box says the replay runs on tick data.')
+    st.caption('What the study can and cannot see', help=LIMITS)
     gaps = journal.capture_gaps()
     if gaps:
         st.warning('The study reported dropped ticks. Excursions for the affected windows carry a warning.')
-        st.dataframe(pd.DataFrame(gaps[-20:]), hide_index=True, width='stretch')
-    theme.section('Instrument multiplier', 'dollars per full price point per contract; 1 for shares')
+        st.dataframe(gap_table(gaps[-20:], common.display_zone(journal)), hide_index=True, width='stretch')
+    study_section()
+    theme.section('Bridge File')
+    bridge_file_form(journal)
+    watched_files(journal, name)
+    theme.section('Instrument Multiplier')
     common.multiplier_form(journal, 'multiplier')
     st.caption(f'Journal database: {journal.path}')
+
+
+def study_section() -> None:
+    """Installing the study again, for example after an app update: Setup's step 1 shows ✓ Done once the
+    study has reported in, so this is where a second install lives."""
+    theme.section('Study')
+    if not JAR.is_file():
+        st.caption('In MotiveWave choose Study → All Studies → Import and pick motivewave-journal.jar.')
+        return
+    if st.button('Install MotiveWave Study', key='connection-study-install',
+                 help='Copies the study that came with this app into your MotiveWave Extensions folder. The copy '
+                      'already there is kept beside it as a backup. Restart MotiveWave afterwards.'):
+        try:
+            _, backup = install_study()
+            st.success('Installed. Restart MotiveWave to use it.'
+                       + (' The previous copy was kept as a backup.' if backup else ''))
+        except (OSError, ValueError) as exc:
+            st.error('The study could not be installed: ' + str(exc))
 
 
 @st.fragment(run_every='5s')
@@ -111,15 +128,26 @@ def status_card(dataset: str) -> None:
         + [('The study says: ' + said, False)] * bool(said and not status.get('error'))
         + [(f'{damaged} damaged lines in the bridge file were skipped. MotiveWave closing in the middle of a '
             'write leaves one; the events around it are unaffected.', True)] * bool(damaged)
-        + [(f'{others} other watched file{"s" if others > 1 else ""} could not be read. See Advanced.', True)]
+        + [(f'{others} other watched file{"s" if others > 1 else ""} could not be read. See Other Watched Files below.', True)]
         * bool(others)))
     now = dt.datetime.now(dt.timezone.utc)
     c1, c2, c3 = st.columns(3)
-    c1.metric('Last heard from the study', common.ago((now - link.heard).total_seconds()) if link.heard else '—')
-    c2.metric('Last new events read', read_at(status, now))
-    c3.metric('Fills in this journal', f'{journal.execution_count():,}')
+    c1.metric('Last Heard From Study', common.ago((now - link.heard).total_seconds()) if link.heard else '—')
+    c2.metric('Last New Events', read_at(status, now))
+    c3.metric('Fills in This Journal', f'{journal.execution_count():,}')
     st.caption('Watching this file')
     st.code(str((profile or {}).get('path', '')) or 'no file', language=None)
+
+
+def gap_table(gaps: list[dict], zone: str) -> pd.DataFrame:
+    """The study's dropped-tick reports as a person reads them: when, which contract, how many."""
+    def when(value):
+        try:
+            return common.moment(value, zone) if value else '—'
+        except (ValueError, TypeError):
+            return str(value)
+    return pd.DataFrame([{'When': when(g.get('ts')), 'Contract': g.get('symbol') or 'All',
+                          'Ticks Dropped': g.get('dropped', '—'), 'Source': g.get('provider', '')} for g in gaps])
 
 
 def read_at(status: dict, now: dt.datetime) -> str:
@@ -127,33 +155,6 @@ def read_at(status: dict, now: dt.datetime) -> str:
         return common.ago((now - instant(status['checked'])).total_seconds()) if status.get('status') == 'synced' else '—'
     except (KeyError, ValueError, TypeError, AttributeError):
         return '—'
-
-
-def install_steps(*, expanded: bool) -> None:
-    with st.expander('Install the study', expanded=expanded):
-        st.markdown(
-            '1. Install the packaged study with the button below.\n'
-            '2. Restart MotiveWave, then add **Journal → MotiveWave Journal** to a chart of the exact contract you trade, for example '
-            'ESZ6 and not a continuous contract.\n'
-            '3. Leave the study\'s **File** setting as it is. Its default is the file this page watches.')
-        if st.button('Install MotiveWave study', type='primary', disabled=not JAR.is_file()):
-            try:
-                target, backup = install_study()
-                st.success(f'Installed {target.name}. Restart MotiveWave, then add Journal → MotiveWave Journal to your chart.')
-                if backup:
-                    st.caption(f'The prior copy was preserved as {backup.name}.')
-            except (OSError, ValueError) as exc:
-                st.error('The study could not be installed: ' + str(exc))
-        st.caption('Manual option: in MotiveWave choose Study → All Studies → Import and select the packaged JAR.')
-        st.caption('The status above turns to Connected a few seconds later. Live and paper trades are filed '
-                   'under Live, replay trades under Replay.')
-        st.caption(f'Built jar found: {JAR}' if JAR.is_file() else
-                   f'No built jar yet at {JAR}')
-        if paths.chosen_home() is not None:
-            st.warning('This app was started with MWJ_HOME, so it does not use the standard folder. MotiveWave '
-                       'sees MWJ_HOME only when it is started from the same environment. Otherwise copy this '
-                       'path into the study\'s File setting:')
-            st.code(str(paths.bridge_file('live')), language=None)
 
 
 # ---------------------------------------------------------------- advanced
@@ -191,14 +192,18 @@ def watch(live_file: Path) -> str | None:
 
 def bridge_file_form(journal) -> None:
     current = live_bridge()
-    st.caption('Watch a different bridge file. Only needed when the study\'s File setting was changed: both '
-               'must name the same file.')
+    if paths.chosen_home() is not None:
+        st.warning('This app was started with MWJ_HOME, so it does not use the standard folder. MotiveWave sees '
+                   'MWJ_HOME only when it is started from the same environment. Otherwise copy this path into the '
+                   'study\'s File setting:')
+        st.code(str(paths.bridge_file('live')), language=None)
     with st.form(common.key(journal, 'bridge-file')):
-        typed = st.text_input('Live bridge file · the full path from the study\'s File setting', str(current))
-        st.caption(f'The replay file is found beside it: {paths.replay_bridge(current).name}')
-        c1, c2, _ = st.columns([1, 1, 3])
-        chosen = c1.form_submit_button('Watch this file', type='primary')
-        default = c2.form_submit_button('Use the default file')
+        typed = st.text_input('Live bridge file · the full path from the study\'s File setting', str(current),
+                              help='Only needed when the study\'s File setting was changed: both must name the same '
+                                   f'file. The replay file is found beside it: {paths.replay_bridge(current).name}')
+        c1, c2, _ = st.columns([1, 1, 2])
+        chosen = c1.form_submit_button('Watch This File', type='primary')
+        default = c2.form_submit_button('Use the Default File')
     if not (chosen or default):
         return
     if chosen and not typed.strip():
@@ -212,7 +217,7 @@ def bridge_file_form(journal) -> None:
 
 
 def watched_files(journal, study: str | None) -> None:
-    theme.section('Other watched files', 'optional: a CSV another program keeps rewriting')
+    theme.section('Other Watched Files')
     profiles, statuses = journal.get('profiles'), journal.get('sync_status')
     for name, profile in sorted(profiles.items()):
         if name == study:
@@ -232,23 +237,24 @@ def watched_files(journal, study: str | None) -> None:
         if status.get('error') and enabled:
             st.warning(status['error'])
         elif status.get('status') == 'synced':
-            st.caption(f"Read {status.get('checked', '')[:19].replace('T', ' ')} UTC · "
+            st.caption(f"Read {common.moment(status['checked'], common.display_zone(journal)) if status.get('checked') else 'just now'} · "
                        f"{status.get('executions', 0)} new executions, {status.get('prices', 0)} price updates")
-    with st.form(common.key(journal, 'new-watched-file')):
-        name = st.text_input('Name', placeholder='My broker export')
+    with st.expander('Watch Another File', expanded=False), st.form(common.key(journal, 'new-watched-file')):
+        name = st.text_input('Name', placeholder='My broker export',
+                             help='Optional: a CSV or bridge file another program keeps rewriting. The '
+                                  'journal reads new lines from it the same way it reads the study.')
         path = st.text_input('File to watch · full path', placeholder='/Users/me/exports/fills.csv')
         mode = st.selectbox('Format', list(FORMATS), format_func=FORMATS.get)
         c1, c2 = st.columns(2)
-        timezone = c1.text_input('Timezone of dates without an offset', 'America/New_York')
+        timezone = c1.text_input('Time zone of dates without an offset', 'America/New_York')
         provider = c2.text_input('Source identity', 'csv', help='Kept with every fill or price read from this file.')
-        st.caption('Only for a prices CSV:')
         c1, c2, c3 = st.columns(3)
-        symbol = c1.text_input('Exact contract', 'ESZ6')
-        seconds = c2.selectbox('Bar duration', [60, 1, 0, 300], format_func=lambda n: 'Ticks' if n == 0 else f'{n} s')
+        symbol = c1.text_input('Exact contract · prices CSV only', 'ESZ6')
+        seconds = c2.selectbox('Bar duration · prices CSV only', [60, 1, 0, 300], format_func=lambda n: 'Ticks' if n == 0 else f'{n} s')
         proxy = c3.checkbox('Prices are a proxy / continuous contract')
         remembered = st.session_state.get(common.MAPPING_KEY)
         mapping = st.checkbox('Execution CSV: use the column mapping from my last preview in Import', value=False)
-        if not st.form_submit_button('Add this file'):
+        if not st.form_submit_button('Add This File'):
             return
         file = Path(path.strip()).expanduser()
         name = name.strip()

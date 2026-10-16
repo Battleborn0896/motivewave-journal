@@ -7,24 +7,49 @@ Live/paper and replay have separate databases. No routine CSV export/import is r
 MotiveWave Journal is an independent open-source project. It is not affiliated with, endorsed by or
 supported by MotiveWave Software.
 
+## What's new in 0.4.1: simpler screens
+
+0.4.1 changes how the journal looks and where things are, not what it can do. Existing journals,
+tags, categories and reviews are kept exactly as they are.
+
+- **Three pages.** The sidebar holds only Live / Replay, **Trades**, **Stats** and **Setup**, and the
+  study's state (Connected, Stale, ...). Click the state to open Setup. Nothing in the sidebar folds.
+- **Trades** lists trades under day headers with each day's net P&L and trade count. Each row is one
+  line: entry time, contract, side, size, net P&L and how long the trade lasted. Click a row, or use
+  **← Prev / Next →**, to open a trade. New trades appear by themselves; there is no refresh button.
+  **Filters** and **Options** (chart settings, merge and split) are two small menus at the top.
+- **Tags start ready to click.** A new journal opens with three starter categories (Setup,
+  Execution, Mindset). One click tags the trade. Rename, recolour, retire or delete them under
+  **Setup → Tags & Playbooks**; deleted starters never come back. Journals from 0.4.0 keep their own
+  library and are never given the starters.
+- **Plain times and money.** Every time is shown in one display time zone (this computer's, unless
+  you choose another under **Setup → Display**), for example *Oct 15, 11:52 AM*. Money carries its
+  currency sign: *-$152.48*, *+$810.02*. Stored fill times stay UTC.
+- **Stats** opens on five numbers (Net P&L, Win Rate, Average Trade, Profit Factor, Largest
+  Drawdown). The equity curve counts trades along the bottom, so nights and weekends take no room;
+  **By Date** puts it on the clock instead.
+- **Setup** shows the study's state with one line saying what to do, the three steps to start
+  capturing, the display settings (time zone, MAE / MFE units and accuracy, saved filter, hide
+  weekends), and one button for every other page: Tags & Playbooks, Rating Systems, Checklists,
+  Dashboards, Daily Report Card, Session Tools, Connection, Journals & Accounts, Import Trades,
+  Export & Backup. Explanations moved into the small **?** beside each control.
+
 ## Using the journal
 
-The main pages are **Dashboard**, **Daily trades**, **Find my edge**, **Daily Report Card**,
-**Session tools**, **Checklists**, and **Settings**. Navigation is a vertical
-menu; the selected page stays highlighted. The older Analytics/Trades route names remain compatible.
+The sidebar has three pages: **Trades**, **Stats** and **Setup**. Every other page (dashboards,
+the Daily Report Card, session tools, checklists, tags, imports, backups) is one click away on Setup.
 The trade list stays on the left while the selected trade's chart and tags stay on the right.
-Click a row or choose a trade; no separate opening/back-navigation step is needed.
-**Chart & tags** puts the chart and a grouped, clickable tagging panel side by side. Click a tag to
-toggle it; changes save automatically. **New tag** creates a reusable tag/group and applies it to
-the current trade. **Copy tags** adds another trade's tags without replacing existing tags or notes.
-The optional starter tags are suggestions only. Day tags you explicitly select are inherited by
-trades opened on that local calendar date; otherwise no trade is automatically tagged.
-Choose an existing group from the **Tag group** dropdown; type a group name only when choosing
-**＋ New group**. Settings also lets you pick a captured instrument instead of retyping its symbol.
-**Notes & plan → Use saved setup** applies an existing setup/playbook name in one selection;
+Click a row, or use Prev / Next; no separate opening/back-navigation step is needed.
+**Chart & Tags** puts the chart and a grouped, clickable tagging panel side by side. Click a tag to
+toggle it; changes save automatically. **＋ Tag** creates a reusable tag and applies it to the current
+trade; **＋ Category** creates a category. **More Tagging Tools → Copy Tags From Another Trade** adds
+another trade's tags without replacing existing tags or notes. Day tags you explicitly select are
+inherited by trades opened on that local calendar date; otherwise no trade is automatically tagged.
+Setup → Connection also lets you pick a captured instrument instead of retyping its symbol.
+**Notes → Use saved setup** applies an existing setup/playbook name in one selection;
 new setup names can still be entered normally.
 
-**MAE / MFE units** is visible in the sidebar: choose account currency, points, ticks or R. The
+**MAE / MFE units** is under **Setup → Display**: choose account currency, points, ticks or R. The
 preference is remembered independently for Live and Replay, and applies to the trade list, detail
 cards, excursion plots and runner views. Actual net P&L is unchanged.
 
@@ -40,7 +65,7 @@ measurement alternatives; summary excursions/CSV follow the accuracy policy in a
   Scale-ins update that average; partial-exit realised profit is not added to price movement.
 - Ticks: those points divided by the contract's confirmed minimum price increment. Outright
   ES/MES/NQ/MNQ are detected automatically; other symbols need a one-time size in MAE/MFE or
-  Settings. Unknown sizes stay unavailable, not guessed. Average entries can produce fractional ticks.
+  Setup → Connection. Unknown sizes stay unavailable, not guessed. Average entries can produce fractional ticks.
 - R: whole-position currency excursion divided by saved **initial total planned risk**. Missing
   risk stays unavailable, not zero.
 
@@ -50,16 +75,16 @@ cannot safely be divided by an arbitrary size to invent a price path. Source qua
 replay simulation and capture-gap warnings remain visible. Points and currency can therefore select
 different measurement sources. Points remain available without a cash multiplier; currency/R do not.
 
-Analytics uses four in-place tabs: **Overview** for cumulative results, **Compare** for tag/setup or
+Stats uses four in-place tabs: **Overview** for cumulative results, **Compare** for tag/setup or
 market/time comparisons, **MAE / MFE** for price/position excursions, and **Runners** for the separate
 post-exit hypothesis. Tables lead with sample count and average net result per trade. Comparisons
-are descriptions of your recorded sample, not proof of an edge. **Customize dashboard** saves the
-visible sections and their order per environment. Filters support all/any selected tags, excluded
+are descriptions of your recorded sample, not proof of an edge. **Customize** saves the
+visible tabs and their order per environment. Filters support all/any selected tags, excluded
 tags, direction, process rating and playbook combinations. Required historical tag aliases still
 resolve after a rename; unknown required names match nothing, not everything.
 
-**Settings → Tags & playbooks** edits names, colors, group membership, order and availability on
-trades/days. Stable tag IDs and aliases preserve historical associations when renamed. Retirement
+**Setup → Tags & Playbooks** edits names, colors, group membership, order and availability on
+trades/days, and deletes a tag or category that nothing uses. Stable tag IDs and aliases preserve historical associations when renamed. Retirement
 hides a tag from new choices without deleting its history; unretire it to restore the choice.
 Exclusive groups allow one current choice; enabling exclusivity does not erase historical conflicts.
 Day tags use the entry's calendar date in the configured timezone (not an exchange-session roll).
@@ -69,7 +94,7 @@ migrate existing daily reviews or selections.
 Playbooks accept alternatives within each participating group (OR), require every participating
 group (AND), and ignore other groups. Matching is automatic; applying a combination is explicit.
 For exclusive alternatives, application retains a matching choice or selects the first listed tag.
-Non-exclusive groups apply the saved alternatives together. **Check this tag combination** tests
+Non-exclusive groups apply the saved alternatives together. **Check This Combination** tests
 hypothetical selections without retagging the trade and includes only trades closed before this
 entry in the same currency; its sample is descriptive, not a forecast.
 
@@ -78,14 +103,15 @@ The outright index tick defaults follow CME's [Micro equity product overview](ht
 and [MNQ specifications](https://www.cmegroup.com/markets/equities/nasdaq/micro-e-mini-nasdaq-100.contractSpecs.html).
 These are not spread/option specifications; contract-specific overrides are stored separately.
 
-Use the in-place **Notes & plan**, **MAE / MFE**, **Executions**, and **Runner** tabs
+Use the in-place **Notes** tab and the **More** tab (MAE / MFE, Executions, Runner, Checklists)
 instead of scrolling through a long stacked page. Setup/notes autosave when leaving the field;
-planned risk/SL/TP use **Save plan**. **Prev / Next** reviews adjacent trades while
+planned risk/SL/TP use **Save Plan**. **Prev / Next** reviews adjacent trades while
 the list remains visible. A tag edit that removes the current trade from your filters keeps it
 open until you change the filter/selection, rather than interrupting the review. Existing flat tags
-remain under **Other tags**. **+ Category** creates first-class groups such as Orderflow or Psychology,
-including empty groups; **+ Tag** creates and immediately applies a reusable tag. The untouched Setup,
-Execution and Mindset examples stay hidden unless **Show starter examples** is enabled. Any starter
+remain under **Other tags**. **＋ Category** creates first-class groups such as Orderflow or Psychology,
+including empty groups; **＋ Tag** creates and immediately applies a reusable tag. A journal from 0.4.0
+keeps its untouched Setup, Execution and Mindset suggestions hidden unless **Show starter examples**
+(under More Tagging Tools) is on, and shows them when it has no categories of its own. Any starter
 tag already used on a trade remains visible. Renames display the current label but keep the original stored review
 and aliases. Tag libraries, playbooks and day tags are local and live/replay-specific, included in
 JSON/SQLite backup. No destructive schema migration is required.
@@ -94,11 +120,11 @@ The charcoal workspace, yellow accents, outcome-tinted trade rows and coloured s
 follow the same visual direction as Tradecraft. Selection outlines and signed P&L remain alongside
 colour cues. This workflow is inspired by its [public daily-trades documentation](https://support.tradecraft.club/kb/daily-trades-section/)
 and official tutorials, not its proprietary implementation or brand assets. Study setup, imports
-and backups remain in Settings. See [reference notes and remaining gaps](docs/tradecraft-reference.md).
+and backups remain in Setup. See [reference notes and remaining gaps](docs/tradecraft-reference.md).
 
 **Markets** automatically groups recognised futures expiries: NQZ6/NQM7 → NQ, ESZ6/ESH7 → ES,
-and MNQZ6/MNQM7 → MNQ. Micros remain separate from full-size contracts. Use **More filters →
-Exact contracts** to narrow to one expiry, or **Analytics → Compare → Market / Exact contract**
+and MNQZ6/MNQM7 → MNQ. Micros remain separate from full-size contracts. Use **Filters → More Filters →
+Exact contracts** to narrow to one expiry, or **Stats → Compare → Market / Exact contract**
 to compare them. Unknown symbols stay unchanged.
 
 This is an analytics rollup, not a continuous futures price series: fills, round trips, protective
@@ -107,16 +133,16 @@ no rollover price gaps are silently adjusted, and one expiry's ticks never subst
 
 ## Dashboard and session workflows (0.3)
 
-**Dashboard → Customize page** creates/clones/renames pages, chooses 1–3 columns, adds/edits/removes
+**Setup → Dashboards → Customize** creates/clones/renames pages, chooses 1–3 columns, adds/edits/removes
 and reorders widgets. Summary, equity, drawdown, calendar, comparisons, distributions, MAE/MFE,
 tag scores, ratings, radar, trades and custom-statistics widgets are independently configurable.
 The default uses two independently stacked columns so the calendar doesn't push the equity curve
 below an unnecessarily tall row. Global saved filters, page filters and widget filters intersect;
 they never modify captured trades. Saved tag rules use stable identities. Calendar buttons open
-the exact day's Report Card. General settings can hide weekends and set dashboard timezone.
+the exact day's Report Card. **Setup → Display** can hide weekends and sets the display time zone.
 
 Tag scores are signed values configured on each tag. A trade's score is the sum of its selected
-tag scores; a widget can restrict the contributing tags. **Settings → Rating systems** creates
+tag scores; a widget can restrict the contributing tags. **Setup → Rating Systems** creates
 weighted tag criteria, optionally applicable only when a playbook matches. Ratings are satisfied
 weight / applicable weight × 100, or unavailable when no criterion applies. Manual stars stay
 independent. These are process measures, not P&L, forecasts, or claims of Tradecraft's exact formula.
@@ -137,7 +163,7 @@ contract and a market-clock window, at most 24 hours. Only newly captured trades
 matches attach nothing; cancellation preserves the draft record. Existing reviewed groups, notes
 and risk take precedence. Reconciliation runs after bridge polling, not during a read-only render.
 
-Custom-statistics scripts require an explicit **Run local script** click for each changed code or
+Custom-statistics scripts require an explicit **Run Local Script** click for each changed code or
 trade sample. Code runs in a two-second Web Worker inheriting a restrictive CSP, with no DOM,
 account IDs, raw fills, file access, broker access or external libraries. Return a text result or
 up to 5,000 finite values in a line/bar series. This is intentionally a smaller surface than
@@ -175,8 +201,8 @@ recorder. The lower-storage **Trade + After Exit Only** option keeps a bounded p
 window and **After Exit (Minutes)** (30 by default, 0–120 configurable). Neither mode holds a position
 or modifies an order. Both require the chart/study/feed to keep running; `Never` disables ticks.
 
-In Trades, expand **Could I have let this trade run?**. In Edge, expand **Which tags have room for
-runners?**. Choose a fixed 5/15/30/60/120-minute horizon. Analysis reports extra peak gross profit,
+In Trades, open **More → Runner** and expand **Could I Have Let This Trade Run?**. In Stats, open
+**Runners** and expand **Which Tags Have Room for Runners?**. Choose a fixed 5/15/30/60/120-minute horizon. Analysis reports extra peak gross profit,
 adverse movement, the observed fixed-horizon result, and approximate time to the peak. The
 hypothesis retains only the final exit fill's quantity; earlier partial exits remain unchanged.
 Planned total initial risk is required for R statistics. Compare winners or exits near 1R by tag/setup.
@@ -261,11 +287,12 @@ bash study/scripts/build.sh
 ```
 
 The output is `study/build/libs/motivewave-journal.jar`. A packaged desktop user can click
-**Setup → Install MotiveWave study**. The app atomically installs only this named JAR, preserves its
+**Setup → Install MotiveWave Study**. The app atomically installs only this named JAR, preserves its
 previous copy and asks for a MotiveWave restart. Manual alternative: use **Study → All Studies →
 Import**. Then add **Journal → MotiveWave Journal** to each exact contract
 chart you trade. Keep the study's File default. The app starts watching both files by itself.
-Check **Connection** in the app: it should change from Waiting For Study to Connected.
+Check **Setup** in the app: it should change from Waiting For Study to Connected. To install the
+study again after an app update, use **Setup → Connection → Install MotiveWave Study**.
 See [MotiveWave's import instructions](https://docs.motivewave.com/knowledge-base/study/add-a-custom-study).
 
 Use `MOTIVEWAVE_SDK` for a non-default SDK path and `JAVA_HOME` for the JDK. No SDK/native platform
@@ -330,7 +357,7 @@ you chose to take against MotiveWave's fills (time, price, size, symbol), linked
 price extrema. Repeat in replay, pause immediately after a short round trip, and then rewind.
 Never count a fixture chart as proof of that integration.
 
-The Edge view separates gross/net closed-trade curves and recorded fee drag, including fees in R
+Stats separates gross/net closed-trade curves and recorded fee drag, including fees in R
 when initial planned risk was saved. Fees are not slippage and a closed-trade curve is not marked
 account equity. The app also offers optional CSV/BYOD imports, daily reviews and JSON/CSV/SQLite backup.
 

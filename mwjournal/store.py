@@ -408,6 +408,33 @@ class Journal(Workspace):
             state['groups'][name] = {'exclusive': False, 'order': len(state['groups'])}
             tagging.save(db, state)
 
+    def delete_tag(self, id):
+        """Remove a tag nothing uses. A used tag is refused: retire it, so its history keeps its name."""
+        from . import tagging
+        with self.connect() as db:
+            db.execute('BEGIN IMMEDIATE')
+            state = tagging.library(db)
+            if id not in state['tags']:
+                raise ValueError('Unknown tag.')
+            uses = tagging.tag_uses(db, state, id)
+            if uses:
+                raise ValueError(f"{state['tags'][id]['name']} {' and '.join(uses)}. "
+                                 'Retire it instead: it leaves the tag panel and keeps its history.')
+            tagging.save(db, tagging.delete_tag(state, id))
+
+    def delete_tag_group(self, group):
+        """Remove an empty category that nothing names."""
+        from . import tagging
+        with self.connect() as db:
+            db.execute('BEGIN IMMEDIATE')
+            state = tagging.library(db)
+            if group not in state['groups']:
+                raise ValueError('Unknown category.')
+            uses = tagging.group_uses(db, state, group)
+            if uses:
+                raise ValueError(f"{group} {' and '.join(uses)}. Move or delete its tags first.")
+            tagging.save(db, tagging.delete_group(state, group))
+
     def edit_tag(self, id, **changes):
         from . import tagging
         with self.connect() as db:

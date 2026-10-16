@@ -179,3 +179,133 @@ def test_concurrent_group_click_and_notes_merge_and_reordering_is_stable(tmp_pat
     assert tagging.ordered_groups(journal.tag_library())['Setup'][0]['id'] == id
     journal.edit_tag_group('Mindset', move=-100)
     assert next(iter(tagging.ordered_groups(journal.tag_library()))) == 'Mindset'
+
+
+# ---------------------------------------------------------------- starter categories
+
+from mwjournal.tags import LEGACY_CATALOG, STARTERS
+
+
+def stored_library(journal):
+    with journal.connect() as db:
+        row = db.execute("SELECT value FROM journal_meta WHERE key='tag_library'").fetchone()
+    return row[0] if row else None
+
+
+def test_a_new_journal_opens_on_three_editable_starter_categories_stored_once(tmp_path):
+    journal = Journal(tmp_path / 'live.db')
+    assert stored_library(journal) is None              # nothing is written before the library is read
+    library = journal.tag_library()
+    groups = tagging.ordered_groups(library)
+    assert list(groups) == ['Setup', 'Execution', 'Mindset']
+    assert [t['name'] for t in groups['Setup']] == ['Breakout', 'Pullback', 'Reversal', 'Range']
+    assert [t['name'] for t in groups['Execution']] == ['Followed Plan', 'Chased Entry', 'Exited Early',
+                                                        'Let Winner Run', 'Moved Stop']
+    assert [t['name'] for t in groups['Mindset']] == ['Calm', 'Patient', 'FOMO', 'Hesitant', 'Tilted']
+    colours = {group: {t['color'] for t in tags} for group, tags in groups.items()}
+    assert all(len(c) == 1 for c in colours.values()) and len(set.union(*colours.values())) == 3
+    assert stored_library(journal) is not None and library['starters']
+    assert not journal.annotations()                    # offered, never applied
+    assert Journal(journal.path).tag_library() == library
+
+
+def test_starter_tags_can_be_renamed_recoloured_retired_and_deleted_and_never_come_back(tmp_path):
+    journal = Journal(tmp_path / 'live.db')
+    trade = round_trip(journal)
+    calm = tag_id(journal, 'Calm')
+    journal.edit_tag(calm, name='Composed', color='#123456')
+    journal.edit_tag(tag_id(journal, 'Tilted'), retired=True)
+    journal.edit_tag_group('Mindset', name='Psychology')
+    library = journal.tag_library()
+    assert library['tags'][calm]['name'] == 'Composed' and library['tags'][calm]['group'] == 'Psychology'
+    journal.set_trade_tag_group(trade, 'Setup', ['Breakout'])
+    with pytest.raises(ValueError, match='Retire it instead'):
+        journal.delete_tag(tag_id(journal, 'Breakout'))  # used on a trade: history keeps its name
+    with pytest.raises(ValueError, match='holds'):
+        journal.delete_tag_group('Setup')
+    for id, tag in list(journal.tag_library()['tags'].items()):
+        if tag['name'] != 'Breakout':
+            journal.delete_tag(id)
+    for group in ('Execution', 'Psychology'):
+        journal.delete_tag_group(group)
+    assert list(journal.tag_library()['groups']) == ['Setup']
+    assert [t['name'] for t in journal.tag_library()['tags'].values()] == ['Breakout']
+    assert list(Journal(journal.path).tag_library()['groups']) == ['Setup']      # not offered again
+    assert journal.annotations()[trade.id]['tags'] == ['Breakout']
+
+
+def test_an_existing_library_is_never_given_the_starters_or_rewritten(tmp_path):
+    journal = Journal(tmp_path / 'live.db')
+    # What 0.4.0 stored: its hidden suggestions plus a category of the trader's own.
+    old = {'version': 1, 'groups': {}, 'playbooks': {}, 'session_timezone': 'America/Chicago', 'tags': {}}
+    for name, group in {**LEGACY_CATALOG, 'Absorption': 'Orderflow'}.items():
+        old['tags'][tagging.identity(name)] = {'id': tagging.identity(name), 'name': name, 'aliases': [name],
+                                               'group': group, 'retired': False, 'levels': ['trade'],
+                                               'color': '#65CA98', 'order': len(old['tags'])}
+        old['groups'].setdefault(group, {'exclusive': False, 'order': len(old['groups'])})
+    with journal.connect() as db:
+        tagging.save(db, old)
+    before = stored_library(journal)
+    library = journal.tag_library()
+    names = {t['name'] for t in library['tags'].values()}
+    assert names == {*LEGACY_CATALOG, 'Absorption'} and not library.get('starters')
+    assert not names & {'Moved Stop', 'Tilted', 'Followed Plan'}
+    assert stored_library(journal) == before                                    # read, never rewritten
+
+
+@pytest.mark.parametrize('history', ['review', 'day', 'rating'])
+def test_a_journal_with_tag_history_keeps_the_old_suggestions_exactly(tmp_path, history):
+    journal = Journal(tmp_path / 'live.db')
+    trade = round_trip(journal)
+    legacy_id = tagging.identity('Focused')
+    if history == 'review':
+        journal.annotate(trade.id, {'tags': ['My own tag']})
+    elif history == 'day':
+        journal.update_session('2026-10-07:America/New_York', {'day_tag_ids': [legacy_id]})
+    else:
+        with journal.connect() as db:                   # a rating that names an old built-in suggestion
+            db.execute("INSERT INTO journal_meta VALUES('workspace',?)",
+                       ('{"ratings": {"r": {"rules": [{"rules": {"Mindset": ["%s"]}}]}}}' % legacy_id,))
+    library = journal.tag_library()
+    assert not library.get('starters') and legacy_id in library['tags']
+    assert {t['name'] for t in library['tags'].values()} >= set(LEGACY_CATALOG)
+    assert 'Moved Stop' not in {t['name'] for t in library['tags'].values()}
+
+
+def test_live_and_replay_are_offered_their_own_starters(tmp_path):
+    live = Journal(tmp_path / 'live.db')
+    replay = Journal(tmp_path / 'replay.db', dataset='replay')
+    live.delete_tag(tag_id(live, 'Range'))
+    live.add_tag('VWAP reclaim', 'Setup')
+    setup = {t['color'] for t in live.tag_library()['tags'].values() if t['group'] == 'Setup'}
+    assert len(setup) == 1                              # a new tag wears its category's colour
+    assert 'Range' in replay.tag_catalog() and 'VWAP reclaim' not in replay.tag_catalog()
+    assert 'Range' not in live.tag_catalog() and live.tag_catalog()['VWAP reclaim'] == 'Setup'
+
+
+def test_two_first_reads_at_once_store_one_identical_library(tmp_path):
+    for attempt in range(5):                            # a race shows up only now and then: try a few times
+        journal = Journal(tmp_path / f'live-{attempt}.db')
+        barrier = threading.Barrier(6)
+        def read():
+            barrier.wait()
+            return Journal(journal.path).tag_library()
+        with ThreadPoolExecutor(max_workers=6) as pool:
+            results = [f.result() for f in [pool.submit(read) for _ in range(6)]]
+        assert all(r == results[0] for r in results) and results[0]['starters']
+        assert [t['name'] for t in tagging.ordered_groups(results[0])['Setup']] == list(STARTERS[0][2])
+        assert results[0] == journal.tag_library()
+
+
+def test_saving_a_note_or_clicking_a_starter_tag_never_adds_an_empty_category(tmp_path):
+    journal = Journal(tmp_path / 'live.db')
+    trade = round_trip(journal)
+    journal.update_annotation(trade.id, {'notes': 'waited for the retest'})
+    journal.update_annotation(trade.id, {}, add_tags=['Calm'])
+    journal.set_trade_tag_group(trade, 'Setup', ['Pullback'])
+    assert list(tagging.ordered_groups(journal.tag_library())) == ['Setup', 'Execution', 'Mindset']
+    assert 'Other tags' not in journal.tag_library()['groups']
+    journal.update_annotation(trade.id, {}, add_tags=['Absorption'])            # a new tag goes to Other tags
+    assert journal.tag_library()['tags'][tag_id(journal, 'Absorption')]['group'] == 'Other tags'
+    assert 'Other tags' in journal.tag_library()['groups']
+    assert journal.annotations()[trade.id]['notes'] == 'waited for the retest'

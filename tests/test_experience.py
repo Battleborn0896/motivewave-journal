@@ -13,7 +13,7 @@ from mwjournal import tagging
 from mwjournal.metrics import measurements
 from mwjournal.model import instant
 from mwjournal.post_exit import best_post_exit
-from test_app import open_app, press, said, show, widget
+from test_app import display_setting, helped, listed, open_app, press, said, show, widget
 from test_chart import seed_preview
 
 
@@ -72,18 +72,18 @@ def test_tick_policy_uses_ticks_not_platform_reports_and_excludes_reported_captu
 
 def test_accuracy_control_is_distinct_from_units_and_propagates_to_headers_and_analytics(home):
     journal = seed_preview(home)
-    app = open_app()
+    app = open_app('General')
     assert widget(app.selectbox, 'MAE / MFE accuracy').value == 'ticks-only'
+    show(app, 'Trades')
     assert widget(app.metric, 'MAE').value == widget(app.metric, 'MFE').value == '—'
-    assert said(app.caption, 'Candle estimates are excluded')
-    widget(app.selectbox, 'MAE / MFE units').set_value('ticks').run()
+    assert said(app.caption, 'candle estimates are excluded')
+    display_setting(app, 'MAE / MFE units', 'ticks')
     assert widget(app.metric, 'MFE').value == '—'
-    widget(app.selectbox, 'MAE / MFE accuracy').set_value('best-available').run()
+    display_setting(app, 'MAE / MFE accuracy', 'best-available')
     assert not app.exception and widget(app.metric, 'MFE').value == '12.00 ticks'
-    widget(app.selectbox, 'MAE / MFE accuracy').set_value('ticks-only').run()
-    show(app, 'Edge')
-    assert said(app.caption, '0 of 1 closed trades qualify')
-    assert widget(app.metric, 'Net after recorded fees').value == '+242.00'
+    display_setting(app, 'MAE / MFE accuracy', 'ticks-only', back='Edge')
+    assert said(app.caption, '0 of 1 closed trades measured')
+    assert widget(app.metric, 'Net P&L').value == '+$242.00'
     assert journal.best_metric(journal.trades()[0])['precision'] == 'estimated-bars'
 
 
@@ -91,12 +91,13 @@ def test_ticks_survive_unit_change_and_selected_trade_remains_visible_with_list(
     journal = seed_preview(home)
     recorded(journal)
     app = open_app()
-    assert any('Opened (UTC)' in frame.value.columns for frame in app.dataframe)
+    assert listed(app) == [journal.trades()[0].id]
     assert widget(app.metric, 'MFE').value != '—'
-    widget(app.selectbox, 'MAE / MFE units').set_value('points').run()
-    assert widget(app.metric, 'MFE').value == '4.00 pts'
-    widget(app.selectbox, 'MAE / MFE units').set_value('ticks').run()
+    display_setting(app, 'MAE / MFE units', 'points')
+    assert widget(app.metric, 'MFE').value == '4.00 pts' and listed(app) == [journal.trades()[0].id]
+    display_setting(app, 'MAE / MFE units', 'ticks')
     assert widget(app.metric, 'MFE').value == '16.00 ticks'
+    show(app, 'General')
     assert widget(app.selectbox, 'MAE / MFE accuracy').value == 'ticks-only'
 
 
@@ -110,12 +111,12 @@ def test_tag_manager_rename_color_retirement_and_exclusive_group_work_on_existin
     widget(app.text_input, 'Tag name').set_value('Retest')
     widget(app.color_picker, 'Selected tag color').set_value('#123456')
     widget(app.checkbox, 'Available on days').set_value(True)
-    press(app, 'Save tag')
+    press(app, 'Save Tag')
     assert journal.tag_library()['tags'][id]['color'] == '#123456'
     assert 'Retest' in journal.annotations()[trade.id]['tags']
-    widget(app.selectbox, 'Edit group').set_value('Setup').run()
+    widget(app.selectbox, 'Edit category').set_value('Setup').run()
     widget(app.checkbox, 'One choice at a time').set_value(True)
-    press(app, 'Save group')
+    press(app, 'Save Category')
     show(app, 'Trades')
     widget(app.pills, 'Setup').set_value('Pullback').run()
     assert 'Retest' not in journal.annotations()[trade.id]['tags']
@@ -124,7 +125,7 @@ def test_tag_manager_rename_color_retirement_and_exclusive_group_work_on_existin
     show(app, 'Tags')
     widget(app.selectbox, 'Edit tag').set_value(id).run()
     widget(app.checkbox, 'Retired').set_value(True)
-    press(app, 'Save tag')
+    press(app, 'Save Tag')
     assert 'Retest' not in journal.tag_catalog()
     assert not app.exception
 
@@ -138,14 +139,14 @@ def test_day_tags_and_playbook_can_be_clicked_without_retyping_and_daily_notes_d
     app = open_app('Daily review')
     widget(app.date_input, 'Trading day').set_value(dt.date(2026, 10, 7)).run()
     widget(app.pills, 'Mindset').set_value(['Patient']).run()
-    press(app, 'Save daily review')
+    press(app, 'Save Daily Review')
     assert 'Patient' in common.rows_for(journal)[0]['tags']
     show(app, 'Trades')
-    press(app, 'Apply combination')
+    press(app, 'Apply Combination')
     assert common.rows_for(journal)[0]['playbooks'] == ['Calm pullback']
     assert said(app.success, 'Matches: Calm pullback')
     show(app, 'Edge')
-    widget(app.selectbox, 'Compare edge by').set_value('Playbooks').run()
+    widget(app.selectbox, 'Compare by').set_value('Playbooks').run()
     table = next(d.value for d in app.dataframe if 'Playbook' in d.value.columns)
     assert table.iloc[0]['Playbook'] == 'Calm pullback'
 
@@ -153,13 +154,13 @@ def test_day_tags_and_playbook_can_be_clicked_without_retyping_and_daily_notes_d
 def test_dashboard_preferences_persist_per_environment_and_empty_selection_is_rejected(home):
     journal = seed_preview(home)
     app = open_app('Edge')
-    widget(app.multiselect, 'Dashboard sections').set_value(['Compare', 'Overview'])
-    press(app, 'Save dashboard')
+    widget(app.multiselect, 'Tabs, in order').set_value(['Compare', 'Overview'])
+    press(app, 'Save Tabs')
     assert [t.label for t in app.tabs] == ['Compare', 'Overview']
     assert Journal().display_settings()['dashboard_sections'] == ['Compare', 'Overview']
     assert Journal(dataset='replay').display_settings()['dashboard_sections'] == ['Overview', 'Compare', 'MAE / MFE', 'Runners']
-    widget(app.multiselect, 'Dashboard sections').set_value([])
-    press(app, 'Save dashboard')
+    widget(app.multiselect, 'Tabs, in order').set_value([])
+    press(app, 'Save Tabs')
     assert said(app.error, 'at least one')
     assert journal.display_settings()['dashboard_sections'] == ['Compare', 'Overview']
 
@@ -172,11 +173,11 @@ def test_include_any_exclude_filters_and_renamed_aliases_keep_their_identity(hom
     widget(app.multiselect, 'Tags').set_value(['Breakout', 'Patient']).run()
     assert said(app.info, 'Statistics need')
     widget(app.radio, 'Tag match').set_value('Any selected').run()
-    assert widget(app.metric, 'Win rate').value == '100.0%'
+    assert widget(app.metric, 'Win Rate').value == '100.0%'
     id = next(iter(tagging.ids(journal.tag_library(), ['Breakout'])))
     journal.edit_tag(id, name='Renamed')
     app.run()
-    assert widget(app.metric, 'Win rate').value == '100.0%'
+    assert widget(app.metric, 'Win Rate').value == '100.0%'
     widget(app.multiselect, 'Exclude tags').set_value(['Renamed']).run()
     assert said(app.info, 'Statistics need')
 

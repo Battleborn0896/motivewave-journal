@@ -109,8 +109,8 @@ def test_merge_ui_compound_tagging_checklists_and_json_retain_originals(home):
     second(journal)
     app = open_app()
     widget(app.multiselect, 'Original trades to merge').set_value([t.id for t in journal.trades()])
-    press(app, 'Merge selected reviews')
-    assert widget(app.metric, 'Recorded P&L').value == '+292.00'
+    press(app, 'Merge Selected')
+    assert widget(app.metric, 'Recorded P&L').value == '+$292.00'
     widget(app.toggle, 'Show starter examples').set_value(True).run()
     widget(app.pills, 'Mindset').set_value(['Patient']).run()
     view = merging.ReviewJournal(journal)
@@ -123,7 +123,7 @@ def test_merge_ui_compound_tagging_checklists_and_json_retain_originals(home):
     exported = json.loads(files(view)[0][2])
     assert len(exported['trades']) == 1 and len(exported['original_trade_rows']) == 2
     assert len(exported['executions']) == len(journal.executions())
-    press(app, 'Split into original reviews')
+    press(app, 'Split Into Original Trades')
     assert len(merging.ReviewJournal(journal).trades()) == 2
 
 

@@ -237,13 +237,13 @@ def test_checklist_ui_build_run_branch_undo_and_apply_tags(home):
     graph['nodes'][1]['tag_ids'] = ['Patient']
     journal.save_checklist('Plan', graph)
     app = open_app()
-    press(app, 'Start new run')
+    press(app, 'Start New Run')
     press(app, 'Yes — continue my plan')
     assert said(app.success, 'Checklist complete')
-    press(app, 'Undo last answer')
+    press(app, 'Undo Last Answer')
     assert not said(app.success, 'Checklist complete')
     press(app, 'Yes — continue my plan')
-    press(app, 'Apply collected tags')
+    press(app, 'Apply Collected Tags')
     assert 'Patient' in journal.annotations()[journal.trades()[0].id]['tags']
 
 
@@ -251,10 +251,10 @@ def test_dashboard_calendar_navigation_and_widget_save(home):
     journal = seed_preview(home)
     app = open_app('Dashboard')
     widget(app.text_input, 'Page name').set_value('My dashboard')
-    press(app, 'Save page layout')
+    press(app, 'Save Page Layout')
     assert widget(app.selectbox, 'Dashboard page').value in journal.workspace()['dashboards']
     widget(app.selectbox, 'Widget type').set_value('Tag score')
-    press(app, 'Save widget')
+    press(app, 'Save Widget')
     page = journal.workspace()['dashboards'][widget(app.selectbox, 'Dashboard page').value]
     assert page['widgets'][-1]['kind'] == 'Tag score'
     button = next(b for b in app.button if b.label.startswith('7  \n'))
@@ -284,4 +284,4 @@ def test_custom_visualization_scripts_are_opt_in_network_denied_and_do_not_get_a
     app = open_app('Dashboard')
     widget(app.selectbox, 'Dashboard page').set_value(id).run()
     assert said(app.caption, 'Not running')
-    assert any(b.label == 'Run local script' for b in app.button)
+    assert any(b.label == 'Run Local Script' for b in app.button)

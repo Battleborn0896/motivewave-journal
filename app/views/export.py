@@ -8,10 +8,13 @@ import pandas as pd
 import streamlit as st
 
 import common
-from mwjournal import paths, merging
+import theme
+from mwjournal import humanize, paths, merging
 
 CSV_COLUMNS = ('id', 'account', 'symbol', 'direction', 'opened', 'closed', 'entry_price', 'exit_price', 'net', 'r',
                'mae', 'mfe', 'mae_r', 'mfe_r', 'precision', 'setup', 'tags')
+# Beside the UTC columns: the same entry and exit as a person reads them, in the display time zone.
+HUMAN_COLUMNS = ('entry_time', 'exit_time', 'time_zone')
 
 
 def files(journal) -> list[tuple[str, str, object, str]]:
@@ -32,16 +35,26 @@ def files(journal) -> list[tuple[str, str, object, str]]:
                 'sessions': journal.get('sessions'),
                 'linked_protection': list({json.dumps(e.__dict__, sort_keys=True): e.__dict__
                                            for t in original.trades() for e in original.protection_events(t)}.values())}
-    table = pd.DataFrame([{k: r.get(k) for k in CSV_COLUMNS} for r in rows], columns=list(CSV_COLUMNS))
-    return [('Download journal JSON', name + '.json', json.dumps(exported, indent=2, allow_nan=False), 'application/json'),
-            ('Download trades CSV', name + '-trades.csv', table.to_csv(index=False), 'text/csv'),
+    zone = common.display_zone(journal)
+    table = pd.DataFrame([{**{k: r.get(k) for k in CSV_COLUMNS},
+                           'entry_time': humanize.to_zone(r['opened'], zone).strftime('%Y-%m-%d %H:%M:%S'),
+                           'exit_time': humanize.to_zone(r['closed'], zone).strftime('%Y-%m-%d %H:%M:%S') if r.get('closed') else '',
+                           'time_zone': zone} for r in rows], columns=[*CSV_COLUMNS, *HUMAN_COLUMNS])
+    return [('Download Journal JSON', name + '.json', json.dumps(exported, indent=2, allow_nan=False), 'application/json'),
+            ('Download Trades CSV', name + '-trades.csv', table.to_csv(index=False), 'text/csv'),
             # SQLite's own backup, so a reader that is importing right now cannot leave the copy inconsistent.
-            ('Download complete SQLite backup', name + '.sqlite3', journal.backup(), 'application/vnd.sqlite3')]
+            ('Download Full Backup', name + '.sqlite3', journal.backup(), 'application/vnd.sqlite3')]
+
+
+HELP = {'json': 'Every fill, trade, review, tag, playbook and setting. Also keeps every original measurement, '
+                'including excluded estimates.',
+        'csv': 'One row per trade. Times are UTC, with entry and exit also in your display time zone. Excursions '
+               'follow your accuracy setting, in account currency.',
+        'sqlite3': 'A complete copy of the journal database, safe to take while trades are being captured.'}
 
 
 def render(journal, rows) -> None:
-    st.caption('Each file is the whole journal of this environment: every currency, no filters.')
-    st.caption('Trade-summary excursions follow your accuracy policy and remain in account currency. JSON also retains '
-               'every original measurement, including excluded estimates, plus stable tag identities, playbooks and day tags.')
+    theme.section('Export & Backup', 'the whole journal of this environment: every currency, no filters')
     for label, name, content, mime in files(journal):
-        st.download_button(label, content, file_name=name, mime=mime, key=common.key(journal, 'export-' + name))
+        st.download_button(label, content, file_name=name, mime=mime, key=common.key(journal, 'export-' + name),
+                           help=HELP[name.rsplit('.', 1)[-1]])

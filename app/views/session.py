@@ -14,11 +14,13 @@ from mwjournal import tagging
 
 
 def clock_fields(journal, prefix, title, default=None):
-    default = (default or dt.datetime.now(ZoneInfo('America/New_York'))).astimezone(ZoneInfo('America/New_York'))
+    shown = common.display_zone(journal)
+    default = (default or dt.datetime.now(ZoneInfo(shown))).astimezone(ZoneInfo(shown))
     cols = st.columns([1.3, 1, 1.5])
     day = cols[0].date_input(title + ' date', default.date(), key=common.key(journal, prefix + '-date'))
     clock = cols[1].time_input(title + ' time', default.time().replace(tzinfo=None), key=common.key(journal, prefix + '-time'))
-    zone = cols[2].selectbox(title + ' timezone', common.TIMEZONES, key=common.key(journal, prefix + '-zone'))
+    choices = common.timezone_choices(shown)
+    zone = cols[2].selectbox(title + ' time zone', choices, index=choices.index(shown), key=common.key(journal, prefix + '-zone'))
     from mwjournal.model import timestamp
     try:
         return timestamp(dt.datetime.combine(day, clock).isoformat(), zone)
@@ -28,8 +30,8 @@ def clock_fields(journal, prefix, title, default=None):
 
 
 def render(journal, rows):
-    theme.section('Live session' if journal.dataset == 'live' else 'Replay session', 'plan · check in · review without placing orders')
-    timer, drafts = st.tabs(['Session & timer', 'Pre-trade drafts'])
+    theme.section('Live Session' if journal.dataset == 'live' else 'Replay Session')
+    timer, drafts = st.tabs(['Session & Timer', 'Pre-Trade Drafts'])
     with timer:
         active = [t for t in journal.trades() if not t.closed]
         left, right = st.columns([1, 1.5])
@@ -42,11 +44,12 @@ def render(journal, rows):
                                      key=common.key(journal, 'session-position'))
                 tag_controls.render(journal, trade)
             else:
-                st.info('No captured open position. You can prepare a draft or run a checklist without creating a fake trade.')
+                st.info('No open position right now. You can still prepare a draft or run a checklist.')
             state = journal.workspace()
             events = sorted(state['checkins'].values(), key=lambda e: e['at'], reverse=True)[:30]
             if events:
-                st.dataframe([{'Time (UTC)': e['at'], 'Group': e['group'],
+                zone = common.display_zone(journal)
+                st.dataframe([{'Time': common.moment(e['at'], zone), 'Group': e['group'],
                                'Tags': ', '.join(tagging.names(journal.tag_library(), e['tag_ids'])),
                                'Trade': e['trade_id'] or 'Session'} for e in events], hide_index=True, height=230)
     with drafts:
@@ -67,28 +70,29 @@ def timer_panel(journal, active):
         journal.save_preferences(timer_minutes=interval, timer_groups=watched)
     key = common.key(journal, 'session-timer')
     running = st.session_state.get(key)
-    cols = st.columns(4)
-    if cols[0].button('Start timer', key=key + '-start'):
+    cols = [*st.columns(2), *st.columns(2)]            # two by two: four in a row do not fit beside the tags
+    if cols[0].button('Start Timer', key=key + '-start'):
         st.session_state[key] = {'next': time.monotonic() + interval * 60, 'ack': []}
         running = st.session_state[key]
-    if cols[1].button('Resume timer' if running and running.get('paused') else 'Pause timer', key=key + '-pause', disabled=not running):
+    if cols[1].button('Resume Timer' if running and running.get('paused') else 'Pause Timer', key=key + '-pause', disabled=not running):
         if running.get('paused'):
             running.update(next=time.monotonic() + running['remaining'], paused=False)
         else:
             running.update(remaining=max(0, running['next'] - time.monotonic()), paused=True)
-    if cols[2].button('Reset interval', key=key + '-reset', disabled=not running):
+    if cols[2].button('Reset Interval', key=key + '-reset', disabled=not running):
         st.session_state[key] = {'next': time.monotonic() + interval * 60, 'ack': []}
         running = st.session_state[key]
-    if cols[3].button('Stop timer', key=key + '-stop', disabled=not running):
+    if cols[3].button('Stop Timer', key=key + '-stop', disabled=not running):
         st.session_state.pop(key, None)
         running = None
     if not running:
-        st.caption('Timer off · no sound, background notification or recording · never auto-starts.')
+        st.caption('Timer off', help='The timer has no sound, background notification or recording, and never '
+                                     'starts by itself.')
         return
     remaining = int(running['remaining']) if running.get('paused') else max(0, int(running['next'] - time.monotonic()))
     st.metric('Next check-in', f'{remaining // 60:02d}:{remaining % 60:02d}')
     if running.get('paused'):
-        st.caption('Paused · check-ins remain saved · resume when ready')
+        st.caption('Paused', help='Check-ins already made stay saved. Resume when ready.')
         return
     if remaining:
         return
@@ -104,24 +108,25 @@ def timer_panel(journal, active):
     for group in due:
         options = [t['name'] for t in tagging.ordered_groups(library)[group]]
         choice = st.pills(group, options, key=key + '-check-' + group)
-        if choice and st.button('Save ' + group + ' check-in', key=key + '-save-' + group):
+        if choice and st.button('Save ' + group + ' Check-In', key=key + '-save-' + group):
             journal.record_checkin(group, [choice], trade_id=target)
             running['ack'].append(group)
             st.rerun(scope='fragment')
 
 
 def draft_panel(journal, rows):
-    st.caption('A draft is a plan, not a fill. Automatic attachment requires an exact provider/account/contract and an explicit '
-               'platform-clock window. Only trades captured after arming qualify. Ambiguous matches attach nothing. '
-               'Existing reviewed groups, notes and risk take precedence.')
     scopes = sorted({(r['provider'], r['account'], r['symbol']) for r in rows})
     if scopes:
-        scope = st.selectbox('Next-trade source', scopes, format_func=lambda x: ' · '.join(x), key=common.key(journal, 'draft-scope'))
+        scope = st.selectbox('Next-trade source', scopes, format_func=lambda x: ' · '.join(x), key=common.key(journal, 'draft-scope'),
+                             help='A draft is a plan, not a fill. It attaches its tags, note and risk to the next trade '
+                                  'captured on this exact provider, account and contract inside the time window. Only '
+                                  'trades captured after arming qualify; an ambiguous match attaches nothing; anything '
+                                  'already reviewed on the trade wins.')
         latest = max(instant for instant in (pd.Timestamp(r['opened']).to_pydatetime() for r in rows))
         with st.form(common.key(journal, 'draft-form')):
             name = st.text_input('Draft name', 'Next setup', max_chars=80)
             start = clock_fields(journal, 'draft-start', 'Window starts', latest if journal.dataset == 'replay' else None)
-            end = clock_fields(journal, 'draft-end', 'Window ends', (latest if journal.dataset == 'replay' else dt.datetime.now(ZoneInfo('America/New_York'))) + dt.timedelta(minutes=30))
+            end = clock_fields(journal, 'draft-end', 'Window ends', (latest if journal.dataset == 'replay' else dt.datetime.now(dt.timezone.utc)) + dt.timedelta(minutes=30))
             library = journal.tag_library()
             tags = []
             for group, choices in tagging.ordered_groups(library).items():
@@ -131,7 +136,7 @@ def draft_panel(journal, rows):
                 tags.extend([values] if isinstance(values, str) else values or [])
             risk = st.number_input('Planned total risk · 0 leaves unknown', min_value=0., value=0.)
             notes = st.text_area('Pre-trade note', height=90)
-            if st.form_submit_button('Arm this scoped draft', type='primary'):
+            if st.form_submit_button('Arm Draft', type='primary'):
                 try:
                     journal.save_draft(name, provider=scope[0], account=scope[1], symbol=scope[2], start=start, end=end,
                                         tags=tags, notes=notes, risk=risk)
@@ -142,12 +147,14 @@ def draft_panel(journal, rows):
         st.info('Capture a trade first so the app knows your exact provider, account and contract. No source is guessed.')
     drafts = journal.workspace()['drafts']
     if drafts:
-        st.dataframe([{'Plan': d['name'], 'Account': d['account'], 'Contract': d['symbol'], 'From': d['start'],
-                       'Until': d['end'], 'State': d['state'], 'Trade': d['trade_id']} for d in drafts.values()], hide_index=True)
+        zone = common.display_zone(journal)
+        st.dataframe([{'Plan': d['name'], 'Account': d['account'], 'Contract': d['symbol'],
+                       'From': common.moment(d['start'], zone, seconds=False), 'Until': common.moment(d['end'], zone, seconds=False),
+                       'State': d['state'], 'Trade': d['trade_id']} for d in drafts.values()], hide_index=True)
         active = [id for id, d in drafts.items() if d['state'] in ('armed', 'ambiguous', 'needs review')]
         if active:
             id = st.selectbox('Cancel draft', active, format_func=lambda id: drafts[id]['name'])
-            if st.button('Cancel automatic attachment', key=common.key(journal, 'cancel-draft')):
+            if st.button('Cancel Draft', key=common.key(journal, 'cancel-draft')):
                 journal.cancel_draft(id)
                 st.rerun()
 

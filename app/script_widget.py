@@ -59,9 +59,9 @@ def render(journal, rows, widget, key):
     armed = key + '-approved-script'
     st.caption('Custom statistics worker · two-second limit · no DOM / files / account IDs / network. '
                'Return text or a numeric line/bar series. Review your code before running it.')
-    with st.expander('Review script'):
+    with st.expander('Review Script'):
         st.code(widget.get('code') or STARTER, language='javascript')
-    if st.button('Run local script', key=key + '-run'):
+    if st.button('Run Local Script', key=key + '-run'):
         st.session_state[armed] = signature
     if st.session_state.get(armed) == signature:
         if hasattr(st, 'iframe'):

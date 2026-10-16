@@ -1,9 +1,17 @@
-"""Edge: what the closed trades say about setups, tags, timing and exits. Descriptive, never a forecast."""
+"""Stats: the headline numbers first, then charts of what the closed trades say. Descriptive, never a forecast.
+
+One row holds the page title, Filters and Customize; the numbers come straight after it. The equity
+curve counts trades along the bottom (1, 2, 3, ...) so nights and weekends take no room; a toggle
+puts it on the clock instead, in the display time zone.
+"""
 
 from __future__ import annotations
 
+import itertools
+
 import pandas as pd
 import plotly.express as px
+import plotly.graph_objects as go
 import streamlit as st
 
 import common
@@ -15,41 +23,34 @@ from mwjournal.model import instrument_market
 from mwjournal import units
 
 SEGMENTS = ['Market', 'Exact contract', 'Entry hour', 'Weekday', 'Direction', 'Followed my plan', 'Process rating']
-LABELS = {'closed': 'Closed (UTC)', 'net': 'Net P&L', 'mae': 'MAE', 'mfe': 'MFE', 'max_qty': 'Size',
+SECTIONS = ['Overview', 'Compare', 'MAE / MFE', 'Runners']
+AXES = {'trade': 'By Trade', 'time': 'By Date'}
+LABELS = {'closed': 'Exit', 'net': 'Net P&L', 'mae': 'MAE', 'mfe': 'MFE', 'max_qty': 'Size',
           'precision': 'Measured from', 'symbol': 'Instrument', 'setup': 'Setup', 'giveback': 'Giveback'}
+COMPARE_HELP = ('Start with Trades, the sample size, then Average Trade, the net result per trade after recorded '
+                'fees. A trade with several tags counts in each, so tag rows overlap. Average R uses only trades '
+                'with a saved planned risk. These describe your recorded trades, not proof of an edge: small '
+                'samples mislead.')
 
 
 def render(journal, rows) -> None:
-    theme.section('Analytics', 'your results, then the choices behind them')
-    with st.popover('Analytics filters'):
+    every = [r for r in rows if r['status'] == 'closed' and r['net'] is not None]
+    heading, filter_col, custom_col = st.columns([5, 1, 1], vertical_alignment='center')
+    with filter_col.popover('Filters', width='stretch',
+                            help='Narrow the stats by market, date, account, tag, playbook or rating.'):
         rows = common.filter_rows(journal, rows)
-    with st.popover('Customize dashboard'):
-        with st.form(common.key(journal, 'dashboard-preferences')):
-            sections = st.multiselect('Dashboard sections · ordered', ['Overview', 'Compare', 'MAE / MFE', 'Runners'],
-                                       default=journal.display_settings()['dashboard_sections'])
-            st.caption('Remove a section to hide it. Re-add it to move it to the end. Saved separately for Live and Replay.')
-            if st.form_submit_button('Save dashboard'):
-                try:
-                    journal.set_dashboard_sections(sections)
-                    st.rerun()
-                except ValueError as exc:
-                    st.error(str(exc))
-    if st.button('Refresh trades', key=common.key(journal, 'edge-refresh')):
-        st.rerun()
+    with custom_col.popover('Customize', width='stretch', help='Choose which tabs Stats shows, and their order.'):
+        customize(journal)
     closed = [r for r in rows if r['status'] == 'closed' and r['net'] is not None]
+    with heading:
+        count = f'{len(closed)} closed trade{"" if len(closed) == 1 else "s"}'
+        theme.section('Stats', f'{len(closed)} of {len(every)} closed trades' if len(closed) != len(every) else count)
     if not closed:
         st.info('Statistics need at least one closed round trip with a known multiplier.')
         return
     stat = summary(closed)
-    cols = st.columns(4)
-    cols[0].metric('Net after recorded fees', money(stat['net']), help='Total result of the closed trades in your filters.')
-    cols[1].metric('Average profit / trade', money(stat['expectancy']),
-                   help='Total net result divided by the number of closed trades. Often called expectancy.')
-    cols[2].metric('Win rate', f"{stat['win_rate']:.1f}%", help='Percentage of closed trades with positive net P&L.')
-    cols[3].metric('Largest drawdown', f"{stat['drawdown']:,.2f}",
-                   help='Largest drop from a peak in cumulative CLOSED-trade P&L; not open-position/account drawdown.')
-    st.caption(f"{stat['count']} closed trades · results in {closed[0]['currency']} · "
-               'the unit selector changes excursions, not actual profit/loss.')
+    currency = closed[0]['currency']
+    tiles(stat, currency)
     sections = journal.display_settings()['dashboard_sections']
     panels = dict(zip(sections, st.tabs(sections, key=common.key(journal, 'analytics-tabs'))))
     frame = pd.DataFrame(closed).sort_values('closed')
@@ -64,79 +65,209 @@ def render(journal, rows) -> None:
             excursion(journal, closed)
     if 'Runners' in panels:
         with panels['Runners']:
-            st.markdown('### Was there room to hold my final exit longer?')
-            st.caption('A separate hindsight hypothesis after exit—not the MAE/MFE of the trade you actually took.')
+            st.markdown('### Was There Room to Hold Longer?',
+                        help='A separate hindsight check of the prices after your final exit. It is not the '
+                             'MAE / MFE of the trade you actually took.')
             runner_controls.edge_panel(journal, closed)
 
 
-def overview(journal, closed, stat, frame):
-        st.markdown('### How did I do?')
-        st.caption('Your cumulative results before and after recorded fees. A rising line means profits are accumulating.')
-        frame['Gross equity'] = frame.gross.cumsum()
-        frame['Net equity'] = frame.net.cumsum()
-        chart(journal, px.line(frame, x='closed', y=['Gross equity', 'Net equity'], markers=True,
-                               labels={**LABELS, 'value': f'Closed-trade P&L ({closed[0]["currency"]})', 'variable': 'Basis'},
-                               title='Cumulative closed-trade results'), 'equity')
-        show_costs(journal, closed, stat)
-        with st.expander('Profit and loss distribution'):
-            chart(journal, px.histogram(frame, x='net', nbins=min(30, max(5, len(frame))), labels=LABELS,
-                                        title='How often each trade outcome occurred'), 'outcomes')
+def customize(journal) -> None:
+    with st.form(common.key(journal, 'dashboard-preferences'), border=False):
+        sections = st.multiselect('Tabs, in order', SECTIONS, default=journal.display_settings()['dashboard_sections'],
+                                  help='Remove a tab to hide it; add it again to put it at the end. '
+                                       'Saved separately for Live and Replay.')
+        if st.form_submit_button('Save Tabs'):
+            try:
+                journal.set_dashboard_sections(sections)
+                st.rerun()
+            except ValueError as exc:
+                st.error(str(exc))
 
+
+def tone(value) -> str:
+    return 'positive' if value is not None and value > 0 else 'negative' if value is not None and value < 0 else 'flat'
+
+
+def tiles(stat, currency) -> None:
+    """The five numbers a trader looks for first, each explained on hover."""
+    with st.container(key='stat-tiles'):
+        cols = st.columns(5, gap='small')
+        with cols[0].container(key='tile-net-' + tone(stat['net'])):
+            st.metric('Net P&L', money(stat['net'], currency), border=True,
+                      help='The total result of the closed trades in your filters, after recorded fees.')
+        cols[1].metric('Win Rate', f"{stat['win_rate']:.1f}%", border=True,
+                       help='The share of closed trades with a positive net result.')
+        with cols[2].container(key='tile-average-' + tone(stat['expectancy'])):
+            st.metric('Average Trade', money(stat['expectancy'], currency), border=True,
+                      help='Net P&L divided by the number of closed trades, often called expectancy.')
+        cols[3].metric('Profit Factor', f"{stat['profit_factor']:.2f}" if stat['profit_factor'] is not None else '—',
+                       border=True, help='Everything won divided by everything lost. Shows — until there is a losing trade.')
+        cols[4].metric('Largest Drawdown', money(stat['drawdown'], currency, signed=False), border=True,
+                       help='The largest drop from a peak in the running total of closed trades. Not the drawdown '
+                            'of an open position or of the account.')
+
+
+# ---------------------------------------------------------------- the equity curve
+
+def progress_chart(rows, lines, zone, *, axis='trade', currency=None, value=None, height=320) -> go.Figure:
+    """A running total with one point per closed trade, in exit order.
+
+    axis='trade' numbers the trades 1, 2, 3 along the bottom, so a night or a weekend takes no room;
+    axis='time' places each one at its exit time in the display time zone. `lines` are (name, values,
+    colour); the first carries the trade's date, time and result when hovered. `value` writes one
+    trade's result; it defaults to money in `currency`.
+    """
+    value = value or (lambda v: money(v, currency))
+    numbers = list(range(1, len(rows) + 1))
+    by_trade = axis == 'trade'
+    x = numbers if by_trade else common.wall_clock([r['closed'] for r in rows], zone)
+    when = [common.moment(r['closed'], zone, seconds=False) for r in rows]
+    figure = go.Figure()
+    for index, (name, values, colour) in enumerate(lines):
+        values = list(values)
+        if index == 0:
+            first = [f'{w} · {r["symbol"]}' if by_trade else f'Trade {n} · {r["symbol"]}'
+                     for n, w, r in zip(numbers, when, rows)]
+            data = [[f, value(r.get('value', r.get('net'))), value(v)] for f, r, v in zip(first, rows, values)]
+            template = '%{customdata[0]}<br>This trade %{customdata[1]}<br>' + name + ' %{customdata[2]}<extra></extra>'
+        else:
+            data = [[value(v)] for v in values]
+            template = name + ' %{customdata[0]}<extra></extra>'
+        figure.add_trace(go.Scatter(x=x, y=values, name=name, customdata=data, hovertemplate=template,
+                                    mode='lines+markers' if len(rows) <= 80 else 'lines',
+                                    line=dict(color=colour, width=2 if index == 0 else 1.5,
+                                              dash='solid' if index == 0 else 'dot'),
+                                    marker=dict(size=5)))
+    figure.add_hline(y=0, line_color=theme.BASELINE, line_width=1)
+    if by_trade:
+        # From half a trade before the first to half after the last: no empty 'trade 0' at the start.
+        figure.update_xaxes(title_text='Trade number', tickformat=',d', range=[.5, max(len(rows), 1) + .5],
+                            **({'dtick': 1} if len(rows) <= 20 else {}))
+        try:
+            figure.update_xaxes(unifiedhovertitle=dict(text='Trade %{x}'))     # the hover box's first line
+        except ValueError:
+            pass                           # an older Plotly: that line is the bare trade number
+    else:
+        figure.update_xaxes(title_text=f'Exit time · {zone}', hoverformat='%a, %b %-d, %-I:%M %p')
+    if currency is not None:
+        theme.money_axis(figure, currency, [v for _, values, _ in lines for v in values])
+    figure.update_layout(height=height, showlegend=len(lines) > 1, legend_title_text='',
+                         margin=dict(l=10, r=10, t=30 if len(lines) > 1 else 10, b=10))
+    return figure
+
+
+def axis_toggle(key: str, *, label_visibility='collapsed') -> str:
+    """By Trade or By Date. The choice is kept under its own key for the session, so it is still there
+    after a visit to another page (Streamlit forgets the value of a widget a page does not draw)."""
+    chosen = key + '-chosen'
+    st.session_state[key] = st.session_state.get(chosen) if st.session_state.get(chosen) in AXES else 'trade'
+
+    def remember():
+        st.session_state[chosen] = st.session_state.get(key) or 'trade'
+
+    choice = st.segmented_control('Equity curve axis', list(AXES), format_func=AXES.get, required=True, key=key,
+                                  on_change=remember, label_visibility=label_visibility,
+                                  help='By Trade puts trades side by side, so nights and weekends take no room. '
+                                       'By Date places each trade at its exit time in your display time zone.')
+    return choice or 'trade'
+
+
+def overview(journal, closed, stat, frame):
+    zone = common.display_zone(journal)
+    currency = closed[0]['currency']
+    title, toggle = st.columns([3, 1.4], vertical_alignment='center')
+    title.markdown('### Equity Curve', help='The running total of your closed trades: net after recorded fees, '
+                                            'and gross before them. A rising line means profits are adding up.')
+    with toggle:
+        axis = axis_toggle(common.key(journal, 'equity-axis'))
+    ordered = sorted(closed, key=lambda r: r['closed'])
+    figure = progress_chart(ordered, [('Net total', list(itertools.accumulate(r['net'] for r in ordered)), theme.SERIES[0]),
+                                      ('Gross total', list(itertools.accumulate(r['net'] if r.get('gross') is None else r['gross']
+                                                                                for r in ordered)), theme.MUTED)],
+                            zone, axis=axis, currency=currency)
+    chart(journal, figure, 'equity', keep_layout=True)
+    show_costs(closed, stat)
+    st.markdown('### Trade Results', help='How often each net result occurred, one bar per range of results.')
+    outcomes = px.histogram(frame, x='net', nbins=min(30, max(5, len(frame))), labels=LABELS)
+    outcomes.update_traces(hovertemplate='%{x}<br>%{y} trades<extra></extra>', marker_color=theme.SERIES[0])
+    outcomes.update_layout(yaxis_title='Trades', bargap=.05)
+    theme.money_axis(outcomes, currency, frame.net, axis='xaxis')
+    chart(journal, outcomes, 'outcomes', height=240)
+
+
+def show_costs(closed, stat):
+    """Gross, fees and R in one row of small numbers, each explained on hover."""
+    costs = cost_summary(closed)
+    currency = closed[0]['currency']
+    with st.container(key='cost-tiles'):
+        cols = st.columns(4)
+        cols[0].metric('Gross P&L', money(costs['gross'], currency),
+                       help='The result before recorded commissions and fees.')
+        cols[1].metric('Fees', money(costs['fees'], currency, signed=False),
+                       help='Recorded commissions and fees: gross minus net. This is not an estimate of slippage. '
+                            'Missing fees are not proven zero, and platform fees can be estimates.')
+        cols[2].metric('Fees Per Trade', money(costs['fee_per_trade'], currency, signed=False),
+                       help='Recorded fees divided by the number of closed trades.')
+        r_help = (f"Across {stat['risk_recorded']} trades with a saved planned risk." if stat['expectancy_r'] is not None
+                  else 'Needs a planned risk saved on the trade, under Notes.')
+        if costs['fee_per_r'] is not None:
+            r_help += f" Recorded fees average {costs['fee_per_r']:.3f}R across {costs['risk_recorded']} trades."
+        cols[3].metric('Average R', f"{stat['expectancy_r']:+.2f}R" if stat['expectancy_r'] is not None else '—',
+                       help=r_help)
+    if costs['unverified_fees']:
+        count = costs['unverified_fees']
+        st.caption(f":orange[⚠ Fees not confirmed on {count} trade{'' if count == 1 else 's'}]",
+                   help='The platform did not confirm the commission on these trades, or reported only an estimate. '
+                        'Net P&L and fees may be off by the difference.')
+
+
+# ---------------------------------------------------------------- the other tabs
 
 def excursion(journal, closed):
-        st.markdown('### How far did trades move against me or in my favour?')
-        unit = common.excursion_unit(journal)
-        st.caption(units.description(unit))
-        shown = pd.DataFrame(common.display_excursion_rows(journal, closed))
-        measured = shown[shown.display_mfe.notna() & shown.display_mae.notna()].copy()
-        st.caption(f'{len(measured)} of {len(closed)} closed trades qualify under your accuracy and unit settings. '
-                   'Unavailable observations are excluded, never counted as zero.')
-        if measured.empty:
-            st.info('No MAE/MFE values are available in the selected units. Prices are required; '
-                    'R also needs planned risk, and ticks need a known tick size.')
-        else:
-            measured['giveback'] = (measured.mfe - measured.gross).clip(lower=0)
-            label = units.suffix(unit, closed[0]['currency'])
-            labels = {**LABELS, 'display_mae': f'Against me · MAE ({label})',
-                      'display_mfe': f'In my favour · MFE ({label})', 'display_precision': 'Measurement quality',
-                      'giveback': f'Giveback ({closed[0]["currency"]})'}
-            chart(journal, px.scatter(measured, x='display_mae', y='display_mfe', color='display_precision', size='max_qty',
-                                      labels=labels, hover_data=['symbol', 'net', 'setup', 'giveback'],
-                                      title='One dot per measured trade'), 'excursions')
-            st.caption('Left is less adverse movement; up is more favourable movement. Colour indicates data quality, not a win/loss.')
-            st.caption('Giveback = peak gross position P&L minus final gross P&L, always in account currency. Estimates '
-                       'and platform measurements stay visibly separate; this is not a guaranteed alternative exit.')
-            if unit in ('points', 'ticks'):
-                st.caption('Use Markets above to compare one instrument at a time; points/ticks are not equally valuable across markets.')
-
-
-def show_costs(journal, closed, stat):
-    with st.expander('Fees, profit factor and risk details'):
-        costs = cost_summary(closed)
-        cols = st.columns(3)
-        cols[0].metric('Gross before recorded fees', money(costs['gross']))
-        cols[1].metric('Recorded fee drag', f"{costs['fees']:,.2f}")
-        cols[2].metric('Fees / closed trade', f"{costs['fee_per_trade']:,.2f}" if costs['fee_per_trade'] is not None else '—')
-        if stat['profit_factor'] is not None:
-            st.caption(f"Profit factor {stat['profit_factor']:.2f} · total winning P&L ÷ absolute total losing P&L.")
-        if stat['expectancy_r'] is not None:
-            st.caption(f"Average result {stat['expectancy_r']:+.2f}R across {stat['risk_recorded']} trades with saved planned risk.")
-        if costs['fee_per_r'] is not None:
-            st.caption(f"Recorded fees average {costs['fee_per_r']:.3f}R across {costs['risk_recorded']} trades with planned initial risk.")
-        st.caption('Gross minus net is recorded commissions/fees, not an estimate of slippage. Missing fees '
-                   'are not proven zero; native fees may be platform estimates. These are closed-trade results, not marked account equity.')
-        if costs['unverified_fees']:
-            st.warning(f"{costs['unverified_fees']} trades have missing or unverified fees; net results and fee drag may be incomplete.")
+    unit = common.excursion_unit(journal)
+    currency = closed[0]['currency']
+    st.markdown('### How Far Did Trades Move?', help=(
+        units.description(unit) + ' Left is less movement against you; up is more movement in your favour. '
+        'Colour shows how the move was measured, not a win or loss. Giveback = peak gross position P&L minus '
+        'final gross P&L, always in account currency; it is not a guaranteed alternative exit.'
+        + (' Points and ticks are not worth the same in every market: filter to one market at a time.'
+           if unit in ('points', 'ticks') else '')))
+    shown = pd.DataFrame(common.display_excursion_rows(journal, closed))
+    measured = shown[shown.display_mfe.notna() & shown.display_mae.notna()].copy()
+    st.caption(f'{len(measured)} of {len(closed)} closed trades measured',
+               help='Only trades with a price path that meets your MAE / MFE accuracy and unit settings (Setup → '
+                    'Display). Unavailable values are left out, never counted as zero.')
+    if measured.empty:
+        st.info('No MAE / MFE values in these units yet. They need recorded prices; R also needs a planned risk, '
+                'and ticks need a known tick size.')
+        return
+    measured['giveback'] = (measured.mfe - measured.gross).clip(lower=0)
+    measured['Net P&L'] = [money(v, currency) for v in measured.net]
+    measured['Giveback'] = [money(v, currency, signed=False) for v in measured.giveback]
+    label = units.suffix(unit, currency)
+    labels = {**LABELS, 'display_mae': f'Against me · MAE ({label})',
+              'display_mfe': f'In my favour · MFE ({label})', 'display_precision': 'Measured from'}
+    figure = px.scatter(measured, x='display_mae', y='display_mfe', color='display_precision', size='max_qty',
+                        labels=labels, hover_data={'symbol': True, 'Net P&L': True, 'setup': True, 'Giveback': True,
+                                                   'max_qty': True},
+                        title='One dot per measured trade')
+    if unit == 'currency':
+        values = [*measured.display_mae, *measured.display_mfe]
+        theme.money_axis(figure, currency, values, axis='xaxis')
+        theme.money_axis(figure, currency, values)
+    chart(journal, figure, 'excursions')
 
 
 def comparisons(journal, closed):
-    st.markdown('### What worked best in my recorded trades?')
+    st.markdown('### What Worked Best?', help=COMPARE_HELP)
     options = [*SEGMENTS, 'Tags', 'Setups', 'Playbooks']
-    field = st.selectbox('Compare edge by', options, index=options.index('Tags'), key=common.key(journal, 'edge-segment'))
+    field = st.columns([1, 2])[0].selectbox('Compare by', options, index=options.index('Tags'),
+                                            key=common.key(journal, 'edge-segment'),
+                                            help='Times use your display time zone.')
     if field in ('Tags', 'Setups', 'Playbooks'):
         grouped_rows = grouped(closed, {'Tags': 'tags', 'Setups': 'setup', 'Playbooks': 'playbooks'}[field])
     else:
-        timezone = st.selectbox('Analysis timezone', common.TIMEZONES, key=common.key(journal, 'edge-tz'))
+        timezone = common.display_zone(journal)
         segmented = []
         for row in closed:
             opened = pd.Timestamp(row['opened']).tz_convert(timezone)
@@ -146,18 +277,25 @@ def comparisons(journal, closed):
                      'Process rating': str(row.get('rating', 'Unreviewed'))}[field]
             segmented.append({**row, 'segment': value})
         grouped_rows = grouped(segmented, 'segment')
+    table = compare_table(grouped_rows, field, closed[0]['currency'])
+    st.dataframe(table, hide_index=True, width='stretch', height=min(430, 36 + 35 * len(table.data)))
+
+
+def compare_table(grouped_rows, field, currency):
+    """The comparison as a table: money reads '+$810.02', Average R '+0.50R' or '—' without a planned
+    risk, and every number still sorts as a number."""
     columns = {'group': field.rstrip('s') if field in ('Tags', 'Setups', 'Playbooks') else field, 'count': 'Trades',
-               'net': 'Net P&L', 'win_rate': 'Win %', 'expectancy': 'Average / trade',
-               'avg_win': 'Average winner', 'avg_loss': 'Average loser', 'expectancy_r': 'Average R',
-               'risk_recorded': 'Trades with risk'}
-    table = pd.DataFrame(grouped_rows)[list(columns)].rename(columns=columns)
-    st.dataframe(table, hide_index=True, width='stretch', height=min(430, 36 + 35 * len(table)))
-    st.caption('Start with Trades (sample size), then Average / trade (net after recorded fees). '
-               'A multi-tag trade appears in each tag, so tag counts overlap. Average R uses only trades with saved risk.')
-    st.caption('These describe your recorded sample—not proof of a repeatable edge. Small samples can be misleading.')
+               'net': 'Net P&L', 'win_rate': 'Win %', 'expectancy': 'Average Trade',
+               'avg_win': 'Average Winner', 'avg_loss': 'Average Loser', 'expectancy_r': 'Average R',
+               'risk_recorded': 'Trades With Risk'}
+    table = pd.DataFrame(grouped_rows, columns=list(columns)).rename(columns=columns)
+    table['Average R'] = pd.to_numeric(table['Average R'], errors='coerce')
+    styled = common.money_table(table, currency, results=('Net P&L', 'Average Trade', 'Average Winner', 'Average Loser'))
+    return styled.format(lambda v: '—' if v is None or v != v else f'{v:+.2f}R', subset=['Average R'])
 
 
-def chart(journal, figure, name: str) -> None:
-    # Room above the plot for both the title and the legend row, which otherwise print over each other.
-    figure.update_layout(height=320, legend_title_text='', margin_t=64)
+def chart(journal, figure, name: str, *, height=320, keep_layout=False) -> None:
+    if not keep_layout:
+        # Room above the plot for both the title and the legend row, which otherwise print over each other.
+        figure.update_layout(height=height, legend_title_text='', margin_t=64 if figure.layout.title.text else 24)
     st.plotly_chart(figure, width='stretch', config=theme.PLOTLY_CONFIG, key=common.key(journal, 'edge-' + name))

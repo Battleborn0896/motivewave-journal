@@ -14,10 +14,10 @@ from pathlib import Path
 
 import streamlit as st
 
-from mwjournal import Journal
+from mwjournal import Journal, paths
 from mwjournal.metrics import measurements
 from mwjournal.model import Trade, instant, instrument_market, point_value
-from mwjournal import units, tagging
+from mwjournal import humanize, units, tagging
 from mwjournal.sync import DEFAULT_CONNECTION
 
 VIEWS = ('Trades', 'Edge', 'Import', 'Connection', 'Daily review', 'Export')
@@ -29,7 +29,15 @@ TOOLS = ('Connection', 'Tags', 'Ratings', 'Journals', 'General', 'Import', 'Expo
 VIEW_KEY = 'journal-view'
 TOOL_KEY = 'journal-settings-page'
 MAPPING_KEY = 'journal-import-mapping'      # the column mapping of the last CSV previewed in Import
-TIMEZONES = ['America/New_York', 'America/Chicago', 'America/Los_Angeles', 'UTC']
+# The first four keep their places: older selectors default to the first one.
+TIMEZONES = ['America/New_York', 'America/Chicago', 'America/Los_Angeles', 'UTC',
+             'America/Denver', 'America/Phoenix', 'America/Anchorage', 'Pacific/Honolulu', 'America/Toronto',
+             'America/Vancouver', 'America/Mexico_City', 'America/Sao_Paulo', 'Europe/London', 'Europe/Dublin',
+             'Europe/Lisbon', 'Europe/Paris', 'Europe/Berlin', 'Europe/Madrid', 'Europe/Rome', 'Europe/Amsterdam',
+             'Europe/Zurich', 'Europe/Stockholm', 'Europe/Warsaw', 'Europe/Athens', 'Europe/Istanbul',
+             'Europe/Moscow', 'Africa/Johannesburg', 'Asia/Dubai', 'Asia/Kolkata', 'Asia/Singapore',
+             'Asia/Hong_Kong', 'Asia/Shanghai', 'Asia/Tokyo', 'Asia/Seoul', 'Australia/Perth',
+             'Australia/Brisbane', 'Australia/Sydney', 'Pacific/Auckland']
 PRECISION = {'platform-reported': 'Platform reported', 'observed-ticks': 'Observed ticks',
              'estimated-bars': 'OHLC estimate', 'proxy-estimate': 'Proxy estimate',
              'replay-simulated': 'Replay simulated / source unverified', 'pending': 'Waiting for data'}
@@ -59,6 +67,8 @@ def go(view: str):
 def navigation(view: str) -> dict:
     if view in TOOLS:
         return {VIEW_KEY: 'Settings', TOOL_KEY: view}
+    if view == 'Setup':                     # the first Setup page: status, the three steps, display settings
+        return {VIEW_KEY: 'Settings', TOOL_KEY: 'Setup'}
     return {VIEW_KEY: 'Analytics' if view == 'Edge' else view}
 
 
@@ -73,13 +83,126 @@ def stamp(journal):
         return None
 
 
-def money(value) -> str:
-    return '—' if value is None else f'{value:+,.2f}'
+def changes(journal):
+    """Moves whenever the background watcher changes what the trade list shows: a new fill, a fill
+    the platform described again, a linked order, a multiplier or a trade's first measurement."""
+    try:
+        with journal.connect() as db:
+            return tuple(db.execute('SELECT (SELECT count(*) FROM executions), '
+                                    '(SELECT total(length(payload)) FROM executions), (SELECT count(*) FROM metrics), '
+                                    '(SELECT count(*) FROM protection), (SELECT count(*) FROM instruments)').fetchone())
+    except sqlite3.Error:
+        return None
 
 
-def amount(value) -> str:
-    """A magnitude such as MAE or MFE: never negative, so it carries no sign."""
-    return '—' if value is None else f'{value:,.2f}'
+# ---------------------------------------------------------------- how things are written
+# Every page formats money and time through these, so the journal reads one way everywhere.
+
+def money(value, currency='USD', *, signed=True, decimals=2) -> str:
+    """A result with its sign first: '+$810.02', '-$152.48'. signed=False for an amount that is not
+    a result, such as fees: '$8.00'. decimals=0 for a tight space such as a calendar cell: '+$810'."""
+    return humanize.money(value, currency, signed=signed, decimals=decimals)
+
+
+def amount(value, currency=None) -> str:
+    """A magnitude such as MAE or MFE, which carries no sign: '$375.00' in a currency, '375.00' in
+    any other unit."""
+    if currency is not None:
+        return humanize.money(value, currency, signed=False)
+    return humanize.number(value)
+
+
+def md(text: str) -> str:
+    """Text for a Markdown element (caption, markdown, metric): two '$' would start a formula."""
+    return str(text).replace('$', '\\$')
+
+
+def display_zone(journal=None) -> str:
+    """The one time zone every time is shown in: the choice saved in Setup → Display,
+    else this computer's own zone. Stored times stay UTC."""
+    try:
+        chosen = journal.workspace()['preferences'].get('display_timezone') if journal is not None else None
+    except (sqlite3.Error, ValueError, KeyError):
+        chosen = None
+    return chosen if chosen and humanize.valid_zone(chosen) else humanize.local_zone()
+
+
+def set_display_zone(journal, zone: str) -> None:
+    """Saves the display time zone for this journal and for both environments, so Live and Replay
+    always show the same clock."""
+    journal.save_preferences(display_timezone=zone)
+    for dataset in paths.DATASETS:
+        try:
+            other = Journal(dataset=dataset)
+            if other.path != getattr(journal, 'path', None):
+                other.save_preferences(display_timezone=zone)
+        except (ValueError, OSError, sqlite3.Error):
+            pass                               # that journal cannot be opened; it keeps its own setting
+
+
+def timezone_choices(*include) -> list[str]:
+    """TIMEZONES plus this computer's zone and any zone already in use, so a saved choice is listed."""
+    return list(dict.fromkeys([*TIMEZONES, humanize.local_zone(), *[z for z in include if z and humanize.valid_zone(z)]]))
+
+
+def zone_label(zone: str) -> str:
+    """'America/Los_Angeles · this computer' for the local zone, else the zone's own name."""
+    return zone + (' · this computer' if zone == humanize.local_zone() else '')
+
+
+def moment(value, zone: str, *, seconds=True) -> str:
+    """'Oct 15, 11:52:42 AM' in the zone. The year is added when it is not this year."""
+    return humanize.moment(value, zone, seconds=seconds)
+
+
+def clock(value, zone: str, *, seconds=False) -> str:
+    """'11:52 AM' in the zone."""
+    return humanize.clock(value, zone, seconds=seconds)
+
+
+def day_label(value, zone: str, *, weekday=False) -> str:
+    """'Oct 15' or 'Thu, Oct 15' for a time in the zone or for a date."""
+    return humanize.date_label(value, zone, weekday=weekday)
+
+
+def span(opened, closed, zone: str) -> str:
+    """'Oct 15 · 11:52 AM to 12:01 PM · 8m 56s'; an open trade reads '... · Still Open'."""
+    return humanize.span(opened, closed, zone)
+
+
+def duration(seconds) -> str:
+    """'45s', '8m 56s', '1h 05m', '2d 3h'."""
+    return humanize.duration(seconds)
+
+
+def local_day(value, zone: str):
+    """The calendar date of a stored time in the zone."""
+    return humanize.to_zone(value, zone).date()
+
+
+def wall_clock(values, zone: str) -> list:
+    """Stored times as naive wall-clock datetimes in the zone: chart axes print exactly that."""
+    return humanize.wall_clock(values, zone)
+
+
+def money_column(label: str, currency='USD', **options):
+    """A dataframe column for an amount that is not a result, such as a fee: '$8.00', '-$2.00'.
+    It stays a number, so it sorts as one, and any other column keeps its own precision."""
+    preset = {'USD': 'dollar', 'EUR': 'euro', 'JPY': 'yen'}.get(str(currency).upper())
+    return st.column_config.NumberColumn(label, format=preset or f'%.2f {currency}', **options)
+
+
+def money_table(frame, currency='USD', *, results=()):
+    """A table for st.dataframe whose result columns read '+$810.02' / '-$152.48' while the numbers
+    underneath still sort as numbers. Other numbers show two decimals, so keep prices out of it."""
+    import pandas as pd
+    frame = frame if isinstance(frame, pd.DataFrame) else pd.DataFrame(frame)
+    formats = {name: (lambda v: money(v, currency)) for name in results if name in frame}
+    if not formats:
+        return frame
+    others = [name for name in frame.columns if name not in formats]
+    styled = frame.style.format(precision=2, na_rep='—', thousands=',', subset=others) if others else frame.style
+    return styled.format(formats, subset=list(formats))
 
 
 def unit_selector(journal):
@@ -107,8 +230,11 @@ def excursion_unit(journal):
 
 
 def excursion_amount(value, unit, currency='USD'):
-    if value is None or unit == 'currency':
-        return amount(value)
+    """MAE / MFE in the chosen unit: '$375.00', '3.00 pts', '12.00 ticks', '1.25R'."""
+    if value is None:
+        return '—'
+    if unit == 'currency':
+        return amount(value, currency)
     return amount(value) + ('' if unit == 'r' else ' ') + units.suffix(unit, currency)
 
 
@@ -176,16 +302,15 @@ def display_excursion_rows(journal, rows):
 
 def excursion_help(journal, trade, metric, risk):
     unit = excursion_unit(journal)
-    st.caption(units.description(unit))
     if unit == 'r' and not units.positive(risk):
-        st.info('R needs your initial total risk. Set it once in Notes & plan → Initial planned risk.')
+        st.info('R needs your initial total risk. Set it once under Notes → Initial planned risk.')
     if unit == 'ticks' and units.tick_size(trade.symbol, journal.display_settings()['tick_sizes']) is None:
-        with st.popover('Set tick size for ' + trade.symbol):
+        with st.popover('Set Tick Size for ' + trade.symbol):
             with st.form(key(journal, 'tick-size-' + trade.id)):
                 size = st.number_input('Minimum price increment', min_value=0., value=0., step=.000001, format='%.8f',
                                         help='Use the confirmed minimum price increment for this exact contract; '
                                              'this starting value is not an inferred specification.')
-                if st.form_submit_button('Save tick size'):
+                if st.form_submit_button('Save Tick Size'):
                     if size <= 0:
                         st.error('Enter a confirmed tick size greater than zero.')
                         return
@@ -205,6 +330,7 @@ def rows_for(journal) -> list[dict]:
     from mwjournal import journals
     aliases = journals.registry(getattr(journal, 'capture_journal', journal))['account_aliases']
     import json
+    zone = display_zone(journal)
     rows = []
     for trade in journal.trades():
         a = annotations.get(trade.id, {})
@@ -224,7 +350,9 @@ def rows_for(journal) -> list[dict]:
                      'precision': PRECISION.get(m.get('precision'), 'Waiting for data'),
                      'r': trade.net / risk if trade.net is not None and risk else None,
                      'mae_r': m['mae'] / risk if m.get('mae') is not None and risk else None,
-                     'mfe_r': m['mfe'] / risk if m.get('mfe') is not None and risk else None})
+                     'mfe_r': m['mfe'] / risk if m.get('mfe') is not None and risk else None,
+                     # The calendar day of entry in the display time zone: what date filters compare.
+                     'entry_day': local_day(trade.opened, zone).isoformat()})
     return rows
 
 
@@ -257,20 +385,23 @@ def filter_rows(journal, rows: list[dict]) -> list[dict]:
                              placeholder='All markets · expiries grouped',
                              help='NQZ6, NQM6 and other NQ expiries share NQ. Micros stay separate. '
                                   'Charts and MAE/MFE still use the exact traded contract.')
-    dates = [instant(r['opened']).date() for r in rows]
+    zone = display_zone(journal)
+    days = {r['id']: local_day(r['opened'], zone) for r in rows}
+    dates = list(days.values())
     # The span is part of the key: a trade on a new day widens the filter instead of hiding behind
     # the range that was right yesterday.
-    period = c2.date_input('Entry dates (UTC)', (min(dates), max(dates)),
-                           key=key(journal, f'filter-dates-{min(dates)}-{max(dates)}'))
-    with st.expander('More filters'):
+    period = c2.date_input('Entry dates', (min(dates), max(dates)),
+                           key=key(journal, f'filter-dates-{min(dates)}-{max(dates)}'),
+                           help=f'Calendar days in your display time zone, {zone}.')
+    with st.expander('More Filters'):
         c1, c2, c3 = st.columns(3)
         accounts = c1.multiselect('Accounts', sorted({r['account'] for r in rows}), key=key(journal, 'filter-accounts'))
         symbols = c2.multiselect('Exact contracts', sorted({r['symbol'] for r in rows}), key=key(journal, 'filter-symbols'))
         available_tags = {t for r in rows for t in r['tags']}
         # A removed tag can still be an active filter; do not silently broaden the list on return.
         available_tags.update(st.session_state.get(key(journal, 'filter-tags'), []))
-        tags = c3.multiselect('Tags · require all selected', sorted(available_tags),
-                              key=key(journal, 'filter-tags'))
+        tags = c3.multiselect('Tags', sorted(available_tags), key=key(journal, 'filter-tags'),
+                              help='Trades with all of these tags, or any of them: choose under Tag match.')
         match = c3.radio('Tag match', ['All selected', 'Any selected'], horizontal=True, key=key(journal, 'filter-tag-match'))
         excluded = c3.multiselect('Exclude tags', sorted(available_tags), key=key(journal, 'filter-exclude-tags'))
         library = journal.tag_library()
@@ -292,7 +423,7 @@ def filter_rows(journal, rows: list[dict]) -> list[dict]:
             and (not accounts or r['account'] in accounts) and (not symbols or r['symbol'] in symbols)
             and tagged(r) and (not direction or r['direction'] in direction)
             and (not rating or r.get('rating') in rating) and (not isinstance(period, (tuple, list)) or len(period) < 2
-            or period[0] <= instant(r['opened']).date() <= period[1])]
+            or period[0] <= days.get(r['id'], local_day(r['opened'], zone)) <= period[1])]
 
 
 def multiplier_form(journal, form_key: str, symbol: str | None = None) -> None:
@@ -326,7 +457,7 @@ def multiplier_form(journal, form_key: str, symbol: str | None = None) -> None:
                                format='%.6f', key=key(journal, form_key + '-tick-' + suggested),
                                help='One minimum price increment, not its dollar value. Zero leaves it unchanged. '
                                     'ES/MES/NQ/MNQ are detected automatically. Other contracts need a confirmed size.')
-        if st.form_submit_button('Set multiplier and recalculate'):
+        if st.form_submit_button('Set Multiplier and Recalculate'):
             if not symbol.strip():
                 st.error('Name the instrument.')
                 return
@@ -378,7 +509,7 @@ def link_state(profile: dict | None, status: dict | None, *, worker_error: str |
     """
     status = status or {}
     if profile is None:
-        return Link('Needs Attention', 'critical', 'No bridge file is being watched. Choose one under Advanced.')
+        return Link('Needs Attention', 'critical', 'No bridge file is being watched. Choose one under Bridge File below.')
     if not profile.get('enabled'):
         return Link('Paused', 'neutral', 'Capture is switched off. Nothing is read until it is switched on again.')
     if worker_error:

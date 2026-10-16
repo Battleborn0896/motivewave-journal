@@ -16,6 +16,7 @@ from streamlit.testing.v1 import AppTest
 
 import common
 import runtime
+from views import setup
 from mwjournal import Execution, Journal, PriceSample, paths
 from mwjournal.importers import apply_preview, preview_bridge
 from mwjournal.metrics import measurements
@@ -61,12 +62,24 @@ def open_review(app):
 
 
 def show(app, view):
+    """Open a view the way a person does: its page in the sidebar, then, for a page under Setup, its
+    button on Setup's first page."""
     route = common.navigation(view)
     app.segmented_control(key=common.VIEW_KEY).set_value(route[common.VIEW_KEY]).run()
-    if view in common.TOOLS:
-        app.selectbox(key=common.TOOL_KEY).set_value(view).run()
     assert not app.exception
+    if route[common.VIEW_KEY] == 'Settings':
+        if app.session_state[common.TOOL_KEY] != setup.HOME:
+            app.button(key='setup-back').click().run()        # already on Setup, on another of its pages
+        page = setup.page_for(view)
+        if page != setup.HOME:
+            app.button(key='setup-open-' + page).click().run()
+        assert not app.exception and app.session_state[common.TOOL_KEY] == page
     return open_review(app) if view == 'Trades' else app
+
+
+def setup_page(app):
+    """The Setup page on screen."""
+    return app.session_state[common.TOOL_KEY]
 
 
 def widget(widgets, label):
@@ -79,12 +92,43 @@ def press(app, label):
     return app
 
 
+def listed(app, scope='live'):
+    """The trade ids in the trade list, top to bottom: each row is a button keyed by its trade."""
+    return [b.key[len('pick-'):-len('-' + scope)] for b in app.button
+            if b.key and b.key.startswith('pick-') and b.key.endswith('-' + scope)]
+
+
+def pick(app, trade_id, scope='live'):
+    """Click a trade's row in the list."""
+    app.button(key=f'pick-{trade_id}-{scope}').click().run()
+    assert not app.exception
+    return app
+
+
+def chosen(app, scope='live'):
+    """The trade open on the right."""
+    return app.session_state[f'selected-trade-{scope}']
+
+
 def states(block):
     return re.findall(r"data-state='([^']+)'", ' '.join(m.value for m in block.markdown))
 
 
 def said(elements, text):
     return any(text in e.value for e in elements)
+
+
+def helped(elements, text):
+    """The text is in the ? tooltip of one of the elements."""
+    return any(text in (getattr(e.proto, 'help', '') or '') for e in elements)
+
+
+def display_setting(app, label, value, back='Trades'):
+    """Change one display setting where it lives, on Setup, then go back to the page that shows it."""
+    show(app, 'General')
+    widget(app.selectbox, label).set_value(value).run()
+    assert not app.exception
+    return show(app, back)
 
 
 def heartbeat(status='connected', *, age=0, mode='live', detail='Read-only capture'):
@@ -119,18 +163,18 @@ def status_of(dataset='live'):
 def landmarks(app, view, empty):
     """Something only this view draws, so 'no exception' cannot hide a view that drew nothing."""
     if view == 'Trades':
-        return said(app.info, 'No trades yet') if empty else any(s.label == 'Review a trade' for s in app.selectbox)
+        return said(app.info, 'No trades yet') if empty else bool(listed(app))
     if view == 'Edge':
-        return said(app.info, 'Statistics need') if empty else any(m.label == 'Win rate' for m in app.metric)
+        return said(app.info, 'Statistics need') if empty else any(m.label == 'Win Rate' for m in app.metric)
     if view == 'Import':
         return any(s.label == 'Import format' for s in app.selectbox) and len(app.file_uploader) == 2
     if view == 'Connection':
         return (any(t.label == 'Capture enabled' for t in app.toggle) and len(states(app.main)) == 1
                 and any(c.value == str(paths.bridge_file(Journal().dataset)) for c in app.main.code))
     if view == 'Daily review':
-        return any(b.label == 'Save daily review' for b in app.button)
-    return [b.label for b in app.download_button] == ['Download journal JSON', 'Download trades CSV',
-                                                    'Download complete SQLite backup']
+        return any(b.label == 'Save Daily Review' for b in app.button)
+    return [b.label for b in app.download_button] == ['Download Journal JSON', 'Download Trades CSV',
+                                                    'Download Full Backup']
 
 
 # ---------------------------------------------------------------- every view
@@ -151,12 +195,21 @@ def test_every_view_renders_with_an_empty_journal(view):
 
 
 @pytest.mark.parametrize('view', VIEWS)
-def test_chart_library_notice_and_its_link_are_in_the_sidebar_of_every_view(view):
+def test_the_sidebar_holds_only_the_switch_the_pages_and_the_badge_on_every_view(view):
     app = open_app(view)
-    notice = [c.value for c in app.sidebar.caption if CREDIT in c.value]
+    assert [r.label for r in app.sidebar.radio] == ['Trading environment']
+    assert [s.key for s in app.sidebar.segmented_control] == [common.VIEW_KEY]
+    assert not app.sidebar.selectbox and not app.sidebar.expander and not app.sidebar.caption
+    assert not app.sidebar.get('popover')
+    assert states(app.sidebar) and [b.key for b in app.sidebar.button] == ['connection-badge-open']
+
+
+def test_chart_library_notice_data_folder_and_independence_are_on_setup():
+    app = open_app('General')
+    notice = [c.value for c in app.main.caption if CREDIT in c.value]
     assert len(notice) == 1 and '(https://www.tradingview.com/)' in notice[0]
-    assert said(app.sidebar.caption, 'not affiliated with or endorsed by MotiveWave')
-    assert said(app.sidebar.caption, str(paths.data_home()))
+    assert said(app.main.caption, 'not affiliated with or endorsed by MotiveWave')
+    assert said(app.main.caption, str(paths.data_home()))
 
 
 @pytest.mark.parametrize('view', VIEWS)
@@ -168,29 +221,31 @@ def test_replay_environment_views_render_separately(view):
     assert said(app.info, 'Replay journal')
     assert app.segmented_control(key=common.VIEW_KEY).value == common.navigation(view)[common.VIEW_KEY]
     if view == 'Trades':
-        assert widget(app.selectbox, 'Review a trade').value == replay.trades()[0].id
+        assert listed(app, 'replay') == [replay.trades()[0].id] and chosen(app, 'replay') == replay.trades()[0].id
     if view == 'Connection':
         assert any(c.value == str(paths.bridge_file('replay')) for c in app.main.code)
     assert not Journal().executions()
     app.radio(key='journal-environment').set_value('Live').run()
     assert not app.exception and not said(app.info, 'Replay journal')
-    assert not any(s.label == 'Review a trade' for s in app.selectbox)
+    assert not listed(app, 'replay') and not listed(app, 'live')
 
 
 def test_view_switcher_always_shows_a_view_and_empty_journal_shortcuts_open_theirs():
     app = open_app()
-    press(app, 'Import my executions')
+    assert not app.main.expander                    # nothing to unfold on an empty journal: two buttons
+    press(app, 'Import Old Trades')
     assert app.segmented_control(key=common.VIEW_KEY).value == 'Settings'
-    assert app.selectbox(key=common.TOOL_KEY).value == 'Import'
+    assert setup_page(app) == 'Import'
     # Clicking the selected view again clears a segmented control. AppTest cannot click one empty, so
     # the cleared state is set directly: the journal keeps showing the view it was on.
     app.session_state[common.VIEW_KEY] = None
     app.run()
     assert not app.exception and landmarks(app, 'Import', True)
     show(app, 'Trades')
-    press(app, 'Connect the study')
+    press(app, 'Open Setup')                        # the three steps, not the diagnostics
     assert app.segmented_control(key=common.VIEW_KEY).value == 'Settings'
-    assert app.selectbox(key=common.TOOL_KEY).value == 'Connection'
+    assert setup_page(app) == setup.HOME and said(app.markdown, '1 · Install the Study')
+    assert said(app.markdown, '2 · Add It to Your Chart')
 
 
 def test_a_journal_from_a_newer_version_is_refused_with_a_message_not_a_crash(home):
@@ -218,15 +273,15 @@ def test_empty_journal_then_a_review_is_saved():
     widget(app.text_input, 'Setup / playbook').set_value('Failed breakout')
     widget(app.text_area, 'Review notes').set_value('Waited for the retest.').run()
     widget(app.text_input, 'Category name').set_value('Psychology')
-    press(app, 'Create category')
+    press(app, 'Create Category')
     widget(app.selectbox, 'Tag category').set_value('Psychology').run()
-    widget(app.text_input, 'Tag name').set_value('Calm')
-    press(app, 'Create and apply tag')
+    widget(app.text_input, 'Tag name').set_value('Steady')
+    press(app, 'Create and Apply Tag')
     widget(app.selectbox, 'Tag category').set_value('Psychology').run()
     widget(app.text_input, 'Tag name').set_value('A+')
-    press(app, 'Create and apply tag')
+    press(app, 'Create and Apply Tag')
     annotation = journal.annotations()[journal.trades()[0].id]
-    assert annotation['setup'] == 'Failed breakout' and annotation['tags'] == ['A+', 'Calm']
+    assert annotation['setup'] == 'Failed breakout' and annotation['tags'] == ['A+', 'Steady']
     assert annotation['notes'] == 'Waited for the retest.' and annotation.get('initial_risk') is None
     assert widget(app.text_input, 'Setup / playbook').value == 'Failed breakout'
 
@@ -236,7 +291,7 @@ def test_full_recorded_path_and_runner_controls_render_without_claiming_missing_
     app = open_app()
     widget(app.checkbox, 'Show/export full recorded trade path').set_value(True).run()
     assert not app.exception
-    assert any(b.label == 'Download full recorded P&L path CSV' for b in app.download_button)
+    assert any(b.label == 'Download Full Path CSV' for b in app.download_button)
     widget(app.selectbox, 'Look after exit').set_value(120).run()
     assert not app.exception and said(app.caption, 'Partial or gapped horizon')
     show(app, 'Edge')
@@ -264,7 +319,7 @@ def test_measured_trade_risk_and_bidask_variants_render():
     assert not app.exception
     assert widget(app.metric, 'MAE / planned risk').value == '1.25R'
     show(app, 'Edge')
-    widget(app.selectbox, 'Compare edge by').set_value('Followed my plan').run()
+    widget(app.selectbox, 'Compare by').set_value('Followed my plan').run()
     assert not app.exception
 
 
@@ -276,12 +331,12 @@ def test_chart_renders_and_planned_protection_persists_with_tags(home):
     assert said(app.main.caption, CREDIT)           # under the chart too, for a closed sidebar
     widget(app.text_input, 'Planned stop-loss').set_value('4997.75')
     widget(app.text_input, 'Planned take-profit').set_value('5006')
-    press(app, 'Save plan')
+    press(app, 'Save Plan')
     annotation = journal.annotations()[journal.trades()[0].id]
     assert annotation['planned_stop'] == 4997.75 and annotation['planned_target'] == 5006
     assert annotation['tags'] == ['PAPER FIXTURE', 'breakout']
     widget(app.text_input, 'Planned stop-loss').set_value('not-a-price')
-    press(app, 'Save plan')
+    press(app, 'Save Plan')
     assert said(app.error, 'must be a number')
     assert journal.annotations()[journal.trades()[0].id]['planned_stop'] == 4997.75
     assert any(t.label == 'Executions' for t in app.tabs)      # the rest of the workspace is still drawn
@@ -295,13 +350,11 @@ def test_changing_trade_switches_chart_and_review_without_mixing_annotations(hom
                               '2026-10-07T14:12:00Z', execution_id='new-exit'), {})])
     trades = journal.trades()
     app = open_app()
-    selector = widget(app.selectbox, 'Review a trade')
-    assert selector.value == trades[-1].id
-    selector.set_value(trades[0].id).run()
-    assert not app.exception
+    assert chosen(app) == trades[-1].id and listed(app) == [trades[-1].id, trades[0].id]   # newest first
+    pick(app, trades[0].id)
+    assert chosen(app) == trades[0].id
     assert widget(app.text_input, 'Setup / playbook').value == 'VISUAL TEST ONLY'
-    widget(app.selectbox, 'Review a trade').set_value(trades[-1].id).run()
-    assert not app.exception
+    pick(app, trades[-1].id)
     assert widget(app.text_input, 'Setup / playbook').value == ''
 
 
@@ -312,9 +365,9 @@ def test_filters_narrow_the_list_and_say_so_when_nothing_matches(home):
                     (Execution('motivewave', 'second', 'NQZ6', 'sell', 1, 20010, '2026-10-08T14:12:00Z',
                               execution_id='n2'), {})])
     app = open_app(review=False)
-    assert len(widget(app.selectbox, 'Review a trade').options) == 2
+    assert len(listed(app)) == 2
     widget(app.multiselect, 'Markets').set_value(['NQ']).run()
-    assert not app.exception and len(widget(app.selectbox, 'Review a trade').options) == 1
+    assert not app.exception and len(listed(app)) == 1
     widget(app.multiselect, 'Tags').set_value(['breakout']).run()
     assert not app.exception and said(app.info, 'No trades match these filters')
     assert not said(app.info, 'No trades yet')
@@ -330,16 +383,16 @@ def test_rollover_filters_group_markets_but_keep_micro_contracts_separate(home):
     app = open_app(review=False)
     assert widget(app.multiselect, 'Markets').options == ['ES', 'MES', 'MNQ', 'NQ']
     widget(app.multiselect, 'Markets').set_value(['NQ']).run()
-    assert not app.exception and len(widget(app.selectbox, 'Review a trade').options) == 2
+    assert not app.exception and len(listed(app)) == 2
     assert {r['symbol'] for r in common.rows_for(journal) if r['market'] == 'NQ'} == {'NQZ6', 'NQM7'}
     widget(app.multiselect, 'Exact contracts').set_value(['NQM7']).run()
-    assert len(widget(app.selectbox, 'Review a trade').options) == 1
+    assert len(listed(app)) == 1
     widget(app.multiselect, 'Exact contracts').set_value([]).run()
     widget(app.multiselect, 'Markets').set_value(['MNQ']).run()
-    assert len(widget(app.selectbox, 'Review a trade').options) == 1
+    assert len(listed(app)) == 1
     show(app, 'Edge')
     assert widget(app.multiselect, 'Markets').value == ['MNQ']
-    assert widget(app.selectbox, 'Compare edge by').options[:2] == ['Market', 'Exact contract']
+    assert widget(app.selectbox, 'Compare by').options[:2] == ['Market', 'Exact contract']
 
 
 def test_simple_navigation_and_optional_controls_do_not_remove_reviews(home):
@@ -348,17 +401,20 @@ def test_simple_navigation_and_optional_controls_do_not_remove_reviews(home):
     assert app.segmented_control(key=common.VIEW_KEY).options == [common.NAV_LABELS.get(v, v) for v in common.PRIMARY_VIEWS]
     assert not any(s.label == 'Settings page' for s in app.selectbox)
     assert any(m.label == 'MAE' for m in app.metric)  # review is visible alongside the list immediately
-    assert all(not e.proto.expanded for e in app.expander if e.label == 'More filters')
-    assert list(app.dataframe[0].value.columns) == [
-        'Opened (UTC)', 'Contract', 'Side', 'Net P&L', 'Status']
+    assert all(not e.proto.expanded for e in app.expander if e.label == 'More Filters')
+    assert listed(app) and said(app.markdown, "class='mwj-day'")      # a scannable list, not a table
+    assert not app.dataframe or not any('Opened (UTC)' in d.value.columns for d in app.dataframe)
     open_review(app)
     assert widget(app.metric, 'MAE').value != '—' and widget(app.metric, 'MFE').value != '—'
     assert [t.label for t in app.tabs] == [
-        'Chart & tags', 'Notes', 'More', 'MAE / MFE', 'Executions', 'Runner', 'Checklists']
-    assert any(b.proto.popover.label == 'Chart settings' for b in app.get('popover'))
+        'Chart & Tags', 'Notes', 'More', 'MAE / MFE', 'Executions', 'Runner', 'Checklists']
+    assert [b.proto.popover.label for b in app.main.get('popover')][:2] == ['Filters', 'Options']
+    assert not any(b.proto.popover.label in ('Chart settings', 'More', 'Trade filters') for b in app.get('popover'))
+    assert not any(s.label == 'Review a trade' for s in app.selectbox)
+    assert not any(b.label.startswith('Refresh') for b in app.button)
     assert any(s.label == 'Markets' for s in app.multiselect)  # filters live in a popover, not above the chart
     show(app, 'Connection')
-    assert app.selectbox(key=common.TOOL_KEY).value == 'Connection'
+    assert setup_page(app) == 'Connection'
     assert not any(button.label == 'Arm recording' for button in app.button)
     assert not any('FFmpeg' in field.label for field in app.text_input)
 
@@ -366,13 +422,13 @@ def test_simple_navigation_and_optional_controls_do_not_remove_reviews(home):
 def test_a_trade_on_a_later_day_is_not_hidden_by_the_date_range_of_the_day_before(home):
     journal = seed_preview(home)
     app = open_app(review=False)
-    assert len(widget(app.selectbox, 'Review a trade').options) == 1
+    assert len(listed(app)) == 1
     journal.ingest([(Execution('motivewave', 'paper', 'ESZ6', 'buy', 1, 5010, '2026-10-08T14:10:00Z',
                               execution_id='next-day'), {})])
     app.run()
     assert not app.exception
-    assert len(widget(app.selectbox, 'Review a trade').options) == 2
-    assert widget(app.selectbox, 'Review a trade').value == journal.trades()[0].id      # the selection is kept
+    assert len(listed(app)) == 2
+    assert chosen(app) == journal.trades()[0].id      # the selection is kept
 
 
 def test_currencies_are_never_mixed_and_the_choice_appears_only_when_there_are_two():
@@ -389,12 +445,12 @@ def test_currencies_are_never_mixed_and_the_choice_appears_only_when_there_are_t
     open_review(app)
     choice = widget(app.sidebar.selectbox, 'Journal currency')
     assert choice.options == ['EUR', 'USD'] and choice.value == 'EUR'
-    assert widget(app.metric, 'Recorded P&L').value == '+100.00'
+    assert widget(app.metric, 'Recorded P&L').value == '+€100.00'
     choice.set_value('USD').run()
     open_review(app)
-    assert not app.exception and widget(app.metric, 'Recorded P&L').value == '+242.00'
+    assert not app.exception and widget(app.metric, 'Recorded P&L').value == '+$242.00'
     show(app, 'Edge')
-    assert widget(app.metric, 'Net after recorded fees').value == '+242.00'       # not 342 of mixed money
+    assert widget(app.metric, 'Net P&L').value == '+$242.00'       # not 342 of mixed money
 
 
 def test_unknown_instrument_gets_its_multiplier_where_the_trade_is_shown():
@@ -405,9 +461,9 @@ def test_unknown_instrument_gets_its_multiplier_where_the_trade_is_shown():
     app = open_app()
     assert said(app.warning, 'XYZ has no dollars-per-point multiplier')
     widget(app.number_input, 'Currency per price point').set_value(10.)
-    press(app, 'Set multiplier and recalculate')
+    press(app, 'Set Multiplier and Recalculate')
     assert journal.trades()[0].net == 30
-    assert widget(app.metric, 'Recorded P&L').value == '+30.00' and not said(app.warning, 'multiplier')
+    assert widget(app.metric, 'Recorded P&L').value == '+$30.00' and not said(app.warning, 'multiplier')
 
 
 # ---------------------------------------------------------------- edge
@@ -415,11 +471,11 @@ def test_unknown_instrument_gets_its_multiplier_where_the_trade_is_shown():
 def test_edge_separates_gross_results_fees_and_planned_risk(home):
     seed_preview(home)
     app = open_app('Edge')
-    assert widget(app.metric, 'Gross before recorded fees').value == '+250.00'
-    assert widget(app.metric, 'Recorded fee drag').value == '8.00'
-    assert widget(app.metric, 'Fees / closed trade').value == '8.00'
-    assert said(app.caption, 'Recorded fees average 0.040R')
-    assert said(app.caption, 'not an estimate of slippage')
+    assert widget(app.metric, 'Gross P&L').value == '+$250.00'
+    assert widget(app.metric, 'Fees').value == '$8.00'
+    assert widget(app.metric, 'Fees Per Trade').value == '$8.00'
+    assert helped(app.metric, 'Recorded fees average 0.040R')
+    assert helped(app.metric, 'not an estimate of slippage')
 
 def test_edge_draws_excursions_for_captured_trades_nobody_has_reviewed(home):
     """Automatic capture produces measured trades with no setup, tags or risk; the statistics must not need them."""
@@ -436,8 +492,8 @@ def test_edge_draws_excursions_for_captured_trades_nobody_has_reviewed(home):
                               execution_id='n2'), {})])
     assert not journal.annotations()
     app = open_app('Edge')
-    assert widget(app.metric, 'Win rate').value == '50.0%'
-    assert said(app.main.caption, 'Giveback = ')
+    assert widget(app.metric, 'Win Rate').value == '50.0%'
+    assert helped(app.markdown, 'Giveback = ')
     assert len(app.get('plotly_chart')) == 3
 
 
@@ -449,15 +505,15 @@ def test_csv_fills_are_mapped_previewed_and_imported_once():
     assert not app.exception
     assert next(s for s in app.selectbox if s.label == 'price').value == 'Avg Price'
     assert said(app.markdown, '2 records ready')
-    press(app, 'Import into my journal')
+    press(app, 'Import Into My Journal')
     assert said(app.success, 'Imported 2 new executions')
     journal = Journal()
     trade = journal.trades()[0]
     assert trade.closed and trade.net == 96 and trade.provider == 'csv'
-    press(app, 'Import into my journal')
+    press(app, 'Import Into My Journal')
     assert said(app.success, 'Skipped 2 existing fills') and len(journal.executions()) == 2
     show(app, 'Trades')
-    assert widget(app.selectbox, 'Review a trade').value == trade.id
+    assert chosen(app) == trade.id and listed(app) == [trade.id]
 
 
 def test_csv_with_a_missing_required_column_is_an_error_message():
@@ -471,12 +527,12 @@ def test_price_csv_import_calculates_excursions():
     journal = Journal()
     trade = round_trip(journal)
     app = open_app('Import')
-    widget(app.text_input, 'Export timezone').set_value('UTC')
+    widget(app.text_input, 'Export time zone').set_value('UTC')
     widget(app.selectbox, 'Price file resolution').set_value(60)
     prices = 'Date,Time,Open,High,Low,Close,Volume\n' + ''.join(
         f'2026-10-07,14:0{m}:00,5000,5004,4999,5002,123\n' for m in range(4))
     widget(app.file_uploader, 'Prices CSV').upload('bars.csv', prices.encode(), 'text/csv').run()
-    press(app, 'Import prices and calculate')
+    press(app, 'Import Prices')
     assert said(app.success, '4 prices')
     assert journal.price_sources('ESZ6') == ['my-data']
     assert journal.best_metric(trade)['precision'] == 'estimated-bars'
@@ -487,7 +543,7 @@ def test_bridge_file_import_by_hand_refuses_the_other_environment():
     widget(app.selectbox, 'Import format').set_value('bridge')
     widget(app.file_uploader, 'Executions').upload('replay.ndjson', lines([fill('a')]).encode(), 'text/plain').run()
     assert not app.exception and said(app.error, 'other trading environment')
-    assert widget(app.button, 'Import into my journal').disabled
+    assert widget(app.button, 'Import Into My Journal').disabled
     assert not Journal().executions()
 
 
@@ -497,16 +553,16 @@ def test_manual_fill_keeps_the_time_that_was_typed_and_is_measured_against_store
     app = open_app('Import')
     widget(app.text_input, 'Fill timestamp').set_value('2026-10-07T10:00:23-04:00')
     widget(app.number_input, 'Fill price').set_value(5000.25)
-    press(app, 'Record fill')
+    press(app, 'Record Fill')
     assert said(app.success, 'Recorded 1 new fill')
     recorded = journal.executions()[0]
     assert recorded.ts == '2026-10-07T14:00:23+00:00' and recorded.price == 5000.25 and recorded.provider == 'manual'
     widget(app.text_input, 'Fill timestamp').set_value('yesterday at ten')
-    press(app, 'Record fill')
+    press(app, 'Record Fill')
     assert said(app.error, 'Invalid timestamp') and len(journal.executions()) == 1
     widget(app.text_input, 'Fill timestamp').set_value('2026-10-07T14:02:10Z')
     widget(app.selectbox, 'Side').set_value('sell')
-    press(app, 'Record fill')
+    press(app, 'Record Fill')
     trade = journal.trades()[0]
     assert trade.closed and journal.best_metric(trade)['precision'] == 'estimated-bars'
 
@@ -517,10 +573,10 @@ def test_daily_review_opens_on_the_latest_trading_day_and_is_saved(home):
     journal = seed_preview(home)
     app = open_app('Daily review')
     assert widget(app.date_input, 'Trading day').value == dt.date(2026, 10, 7)
-    assert said(app.markdown, '1 closed trades')
+    assert widget(app.metric, 'Trades').value == '1' and widget(app.metric, 'Net P&L').value == '+$242.00'
     widget(app.checkbox, 'I had a plan').set_value(True)
     widget(app.text_area, 'What I learned').set_value('Sized correctly.')
-    press(app, 'Save daily review')
+    press(app, 'Save Daily Review')
     saved = journal.get('sessions')['2026-10-07:America/New_York']
     assert saved['planned'] and saved['notes'] == 'Sized correctly.' and saved['date'] == '2026-10-07'
     app.run()
@@ -555,10 +611,12 @@ def test_nothing_is_typed_the_app_watches_the_default_bridge_and_waits_for_the_s
         assert Journal(dataset=dataset).get('profiles') == {DEFAULT_CONNECTION: {
             'path': str(paths.bridge_file(dataset)), 'mode': 'bridge', 'enabled': True}}
     assert not paths.bridge_file().exists()
-    assert any(e.label == 'Install the study' and e.proto.expanded for e in app.expander)
-    assert any(b.label == 'Install MotiveWave study' for b in app.button)
-    assert said(app.markdown, 'Journal → MotiveWave Journal')
     assert any(c.value == str(paths.bridge_file('live')) for c in app.main.code)
+    show(app, 'Setup')                              # the three steps are on Setup's first page
+    assert states(app.main) == ['Waiting For Study'] and said(app.main.markdown, 'Follow the three steps below')
+    assert any(b.label == 'Install MotiveWave Study' for b in app.button)
+    assert said(app.markdown, 'Journal → MotiveWave Journal')
+    assert not any(str(paths.bridge_file('live')) in m.value for m in [*app.main.markdown, *app.main.code])
 
 
 def shape(app):
@@ -576,9 +634,14 @@ def test_connection_turns_connected_once_the_study_writes_a_fresh_heartbeat():
     assert not app.exception
     assert states(app.main) == ['Connected'] and states(app.sidebar) == ['Connected']
     assert said(app.main.markdown, 'Connected · study 0.1.0')
+    assert not said(app.sidebar.markdown, 'study 0.1.0')      # too wide for the sidebar badge; Setup shows it
     assert said(app.main.markdown, 'The study says: Read-only capture · workspace paper')
     assert not said(app.sidebar.markdown, 'has not appeared yet')
-    assert not any(e.label == 'Install the study' and e.proto.expanded for e in app.expander)
+    connected = shape(app)
+    show(app, 'Setup')
+    assert said(app.main.markdown, '✓ Done') and not any(b.label == 'Install MotiveWave Study' for b in app.button)
+    show(app, 'Connection')
+    assert shape(app) == connected
     # The status redraws itself in the browser every few seconds. Seen in a real browser: when such a
     # redraw has fewer elements than the one before, the old ones can stay on screen. So every state
     # draws the same elements and only their text changes.
@@ -590,6 +653,9 @@ def test_connection_turns_connected_once_the_study_writes_a_fresh_heartbeat():
     app.run()
     assert states(app.main) == ['Needs Attention'] and said(app.main.markdown, '1 damaged lines')
     assert shape(app) == waiting
+    show(app, 'Setup')                              # one line saying what to do, without the raw error
+    assert states(app.main) == ['Needs Attention'] and said(app.main.markdown, 'Open Data → Connection')
+    assert not said(app.main.markdown, 'Unsupported MotiveWave version')
 
 
 def test_trades_the_study_writes_show_up_without_any_setup():
@@ -606,14 +672,14 @@ def test_trades_the_study_writes_show_up_without_any_setup():
     app.run()
     open_review(app)
     assert not app.exception
-    assert widget(app.metric, 'Recorded P&L').value == '+96.00'
+    assert widget(app.metric, 'Recorded P&L').value == '+$96.00'
     assert widget(app.selectbox, 'Chart price source').value == 'motivewave-bars:1m'
-    assert widget(app.metric, 'Maximum adverse excursion').value == '50.00'      # a magnitude: no sign
+    assert widget(app.metric, 'Maximum adverse excursion').value == '$50.00'      # a magnitude: no sign
     assert len(Journal().executions()) == 2 and len(Journal(dataset='replay').executions()) == 1
     app.radio(key='journal-environment').set_value('Replay').run()
     assert not app.exception and states(app.sidebar) == ['Connected']
     open_review(app)
-    assert widget(app.metric, 'Realised P&L').value == '-2.00'       # an open position: its entry fee so far
+    assert widget(app.metric, 'Realised P&L').value == '-$2.00'       # an open position: its entry fee so far
 
 
 def test_group_tag_clicks_autosave_and_preserve_legacy_tags_and_plan(home):
@@ -635,7 +701,7 @@ def test_group_tag_clicks_autosave_and_preserve_legacy_tags_and_plan(home):
     assert not any(b.label == 'Save review' for b in app.button)
     app.run()
     assert widget(app.pills, 'Setup').value == ['Pullback']
-    assert 'Opened (UTC)' in app.dataframe[0].value.columns  # list and tagging remain together
+    assert listed(app) == [trade.id]  # list and tagging remain together
     open_review(app)
     assert widget(app.pills, 'Mindset').value == ['Patient']
 
@@ -651,13 +717,13 @@ def test_new_tag_and_copy_tags_preserve_notes_and_are_available_on_other_trades(
     widget(app.selectbox, 'Tag category').set_value('＋ New category').run()
     widget(app.text_input, 'Tag name').set_value('VWAP reclaim')
     widget(app.text_input, 'New category name').set_value('My setups')
-    press(app, 'Create and apply tag')
+    press(app, 'Create and Apply Tag')
     assert widget(app.pills, 'My setups').value == ['VWAP reclaim']
-    press(app, 'Apply copied tags')
+    press(app, 'Apply Copied Tags')
     assert set(journal.annotations()[target.id]['tags']) == {'VWAP reclaim', 'breakout', 'PAPER FIXTURE'}
     assert journal.annotations()[target.id]['notes'] == 'Do not overwrite this.'
     assert journal.annotations()[donor.id]['notes'] == 'Synthetic fixture, not an actual account trade.'
-    widget(app.selectbox, 'Review a trade').set_value(donor.id).run()
+    pick(app, donor.id)
     assert 'VWAP reclaim' in widget(app.pills, 'My setups').options
     assert widget(app.pills, 'My setups').value == []
 
@@ -668,9 +734,9 @@ def test_return_from_detail_preserves_market_filters_and_tag_removal_does_not_ju
     widget(app.multiselect, 'Markets').set_value(['ES']).run()
     widget(app.multiselect, 'Tags').set_value(['breakout']).run()
     open_review(app)
-    selected = widget(app.selectbox, 'Review a trade').value
+    selected = chosen(app)
     widget(app.pills, 'Other tags').set_value(['PAPER FIXTURE']).run()
-    assert widget(app.selectbox, 'Review a trade').value == selected
+    assert chosen(app) == selected
     assert 'breakout' not in journal.annotations()[selected]['tags']
     app.run()
     assert widget(app.multiselect, 'Markets').value == ['ES']
@@ -694,7 +760,7 @@ def test_connection_needs_attention_shows_the_error_the_study_reported():
     app.run()
     assert states(app.main) == ['Needs Attention'] and states(app.sidebar) == ['Needs Attention']
     assert said(app.main.markdown, 'Unsupported MotiveWave version')
-    assert said(app.sidebar.markdown, 'Unsupported MotiveWave version')
+    assert not said(app.sidebar.markdown, 'Unsupported MotiveWave version')    # the badge is one word
 
 
 def test_capture_can_be_paused_and_resumed_from_the_connection_view():
@@ -716,14 +782,14 @@ def test_advanced_watches_a_different_bridge_file_in_both_environments(home):
     app = open_app('Connection')
     other = home / 'elsewhere' / 'mw.ndjson'
     widget(app.text_input, 'Live bridge file').set_value('relative/mw.ndjson')
-    press(app, 'Watch this file')
+    press(app, 'Watch This File')
     assert said(app.error, 'full path')
     widget(app.text_input, 'Live bridge file').set_value(str(other.with_name('mw.replay.ndjson')))
-    press(app, 'Watch this file')
+    press(app, 'Watch This File')
     assert said(app.error, 'That is a replay file')
     assert Journal().get('profiles')[DEFAULT_CONNECTION]['path'] == str(paths.bridge_file())
     widget(app.text_input, 'Live bridge file').set_value(str(other))
-    press(app, 'Watch this file')
+    press(app, 'Watch This File')
     assert Journal().get('profiles')[DEFAULT_CONNECTION] == {'path': str(other), 'mode': 'bridge', 'enabled': True}
     assert Journal(dataset='replay').get('profiles')[DEFAULT_CONNECTION]['path'] == str(other.with_name('mw.replay.ndjson'))
     assert any(c.value == str(other) for c in app.main.code) and states(app.main) == ['Waiting For Study']
@@ -734,7 +800,7 @@ def test_advanced_watches_a_different_bridge_file_in_both_environments(home):
     assert states(app.main) == ['Connected']
     paths.bridge_file().parent.mkdir()
     paths.bridge_file().write_text('')                             # the default file exists but the study is not writing it
-    press(app, 'Use the default file')
+    press(app, 'Use the Default File')
     assert Journal().get('profiles')[DEFAULT_CONNECTION]['path'] == str(paths.bridge_file())
     assert Journal(dataset='replay').get('profiles')[DEFAULT_CONNECTION]['path'] == str(paths.bridge_file('replay'))
     assert states(app.main) == ['Waiting For Study']               # the other file's heartbeat no longer counts
@@ -746,14 +812,14 @@ def test_another_watched_csv_can_be_added_paused_and_removed(home):
     app = open_app('Connection')
     widget(app.text_input, 'Name').set_value('worker')
     widget(app.text_input, 'File to watch').set_value(str(exported))
-    press(app, 'Add this file')
+    press(app, 'Add This File')
     assert said(app.error, 'not in use') and list(Journal().get('profiles')) == [DEFAULT_CONNECTION]
     widget(app.text_input, 'Name').set_value('Broker export')
     widget(app.text_input, 'File to watch').set_value(str(home / 'missing.csv'))
-    press(app, 'Add this file')
+    press(app, 'Add This File')
     assert said(app.error, 'existing file')
     widget(app.text_input, 'File to watch').set_value(str(exported))
-    press(app, 'Add this file')
+    press(app, 'Add This File')
     assert Journal().get('profiles')['Broker export']['mode'] == 'executions'
     wait_until(lambda: len(Journal().executions()) == 2)
     app.run()
@@ -785,7 +851,7 @@ def test_connection_view_sets_an_instrument_multiplier():
     app = open_app('Connection')
     assert widget(app.selectbox, 'Instrument').value == 'XYZ'
     widget(app.number_input, 'Currency per price point').set_value(2.5)
-    press(app, 'Set multiplier and recalculate')
+    press(app, 'Set Multiplier and Recalculate')
     assert journal.trades()[0].net == 7.5
 
 
@@ -794,27 +860,28 @@ def test_excursion_unit_picker_updates_detail_list_plot_and_persists_without_rew
     trade = journal.trades()[0]
     before = journal.best_metric(trade)
     reviews = journal.annotations()
-    app = open_app()
+    app = open_app('General')
     assert widget(app.selectbox, 'MAE / MFE units').options == [
         'Dollars / account currency', 'Points', 'Ticks', 'R · planned risk']
-    widget(app.selectbox, 'MAE / MFE units').set_value('points').run()
-    assert not app.exception
+    display_setting(app, 'MAE / MFE units', 'points')
     assert widget(app.metric, 'MFE').value == '3.00 pts'
     path = next(json.loads(x.proto.spec) for x in app.get('plotly_chart') if 'Price move' in x.proto.spec)
     assert path['layout']['yaxis']['title']['text'].endswith('(pts)')
     assert common.display_excursion_rows(journal, common.rows_for(journal))[0]['display_mfe'] == pytest.approx(3)
-    assert said(app.caption, 'MAE / MFE in pts')
+    assert 'held average entry' in widget(app.metric, 'MAE').help     # the unit is explained on hover
     open_review(app)
-    widget(app.selectbox, 'MAE / MFE units').set_value('ticks').run()
+    display_setting(app, 'MAE / MFE units', 'ticks')
     assert widget(app.metric, 'MFE').value == '12.00 ticks'
-    widget(app.selectbox, 'MAE / MFE units').set_value('r').run()
+    display_setting(app, 'MAE / MFE units', 'r')
     assert widget(app.metric, 'MFE').value == '1.25R'
-    widget(app.selectbox, 'MAE / MFE units').set_value('currency').run()
-    assert widget(app.metric, 'MFE').value == '250.00'
+    display_setting(app, 'MAE / MFE units', 'currency')
+    assert widget(app.metric, 'MFE').value == '$250.00'
+    path = next(json.loads(x.proto.spec) for x in app.get('plotly_chart') if 'Gross position P&L' in x.proto.spec)
+    assert path['layout']['yaxis']['tickformat'].startswith('$')        # its axis reads like every other amount
     assert journal.best_metric(trade) == before
     assert journal.annotations() == reviews
-    widget(app.selectbox, 'MAE / MFE units').set_value('points').run()
-    fresh = open_app(review=False)
+    display_setting(app, 'MAE / MFE units', 'points')
+    fresh = open_app('General')
     assert widget(fresh.selectbox, 'MAE / MFE units').value == 'points'
     fresh.radio(key='journal-environment').set_value('Replay').run()
     assert widget(fresh.selectbox, 'MAE / MFE units').value == 'currency'
@@ -832,18 +899,18 @@ def test_missing_risk_and_unknown_tick_size_show_unavailable_with_one_time_setup
     for metric in measurements(trade, [sample], 'custom'):
         journal.record_metric(trade, metric)
     app = open_app()
-    widget(app.selectbox, 'MAE / MFE units').set_value('r').run()
+    display_setting(app, 'MAE / MFE units', 'r')
     assert widget(app.metric, 'MFE').value == '—' and said(app.info, 'R needs your initial total risk')
-    assert any(b.label == 'Recalculate from stored prices' for b in app.button)
-    widget(app.selectbox, 'MAE / MFE units').set_value('ticks').run()
+    assert any(b.label == 'Recalculate From Stored Prices' for b in app.button)
+    display_setting(app, 'MAE / MFE units', 'ticks')
     assert widget(app.metric, 'MFE').value == '—'
     widget(app.number_input, 'Minimum price increment').set_value(.5)
-    press(app, 'Save tick size')
+    press(app, 'Save Tick Size')
     assert widget(app.metric, 'MFE').value == '6.00 ticks'
     assert journal.display_settings()['tick_sizes'] == {'CUSTOM': .5}
     show(app, 'Export')
     from views import export
-    payload = json.loads(next(content for label, _, content, _ in export.files(journal) if label == 'Download journal JSON'))
+    payload = json.loads(next(content for label, _, content, _ in export.files(journal) if label == 'Download Journal JSON'))
     assert payload['display_settings']['tick_sizes'] == {'CUSTOM': .5}
     assert payload['trades'][0]['mfe'] == 6  # original total currency, not relabelled price units
 
@@ -860,8 +927,8 @@ def test_old_price_metrics_backfill_for_display_but_platform_only_dollars_are_no
     journal.record_metric(trade, report)
     assert journal.best_metric(trade)['mfe'] == 9999
     app = open_app()
-    assert widget(app.metric, 'MFE').value == '9,999.00'
-    widget(app.selectbox, 'MAE / MFE units').set_value('points').run()
+    assert widget(app.metric, 'MFE').value == '$9,999.00'
+    display_setting(app, 'MAE / MFE units', 'points')
     assert widget(app.metric, 'MFE').value == '3.00 pts'
     assert said(app.caption, 'OHLC estimate')
     assert journal.best_metric(trade)['mfe'] == 9999
@@ -879,12 +946,12 @@ def test_analytics_is_question_based_and_selected_units_change_only_excursion_ax
     seed_preview(home)
     app = open_app('Edge')
     assert [t.label for t in app.tabs] == ['Overview', 'Compare', 'MAE / MFE', 'Runners']
-    assert widget(app.metric, 'Average profit / trade').value == '+242.00'
-    assert widget(app.selectbox, 'Compare edge by').value == 'Tags'
-    table = next(d.value for d in app.dataframe if 'Average / trade' in d.value.columns)
+    assert widget(app.metric, 'Average Trade').value == '+$242.00'
+    assert widget(app.selectbox, 'Compare by').value == 'Tags'
+    table = next(d.value for d in app.dataframe if 'Average Trade' in d.value.columns)
     assert 'Trades' in table.columns and 'Tag' in table.columns
-    widget(app.selectbox, 'MAE / MFE units').set_value('ticks').run()
-    assert not app.exception and widget(app.metric, 'Net after recorded fees').value == '+242.00'
+    display_setting(app, 'MAE / MFE units', 'ticks', back='Edge')
+    assert not app.exception and widget(app.metric, 'Net P&L').value == '+$242.00'
     excursion = next(json.loads(x.proto.spec) for x in app.get('plotly_chart') if 'One dot per measured trade' in x.proto.spec)
     assert excursion['layout']['xaxis']['title']['text'] == 'Against me · MAE (ticks)'
     assert excursion['layout']['yaxis']['title']['text'] == 'In my favour · MFE (ticks)'
@@ -896,7 +963,7 @@ def test_reuse_tag_groups_and_instruments_with_no_extra_name_typing(home):
     assert not any(x.label == 'New group name' for x in app.text_input)
     widget(app.selectbox, 'Tag category').set_value('Other tags').run()
     widget(app.text_input, 'Tag name').set_value('VWAP reclaim')
-    press(app, 'Create and apply tag')
+    press(app, 'Create and Apply Tag')
     assert journal.tag_catalog()['VWAP reclaim'] == 'Other tags'
     assert 'VWAP reclaim' in widget(app.pills, 'Other tags').value
     show(app, 'Connection')
@@ -907,7 +974,7 @@ def test_reuse_tag_groups_and_instruments_with_no_extra_name_typing(home):
     assert widget(app.number_input, 'Tick size').value == 0
     widget(app.text_input, 'Other instrument symbol').set_value('CUSTOM')
     widget(app.number_input, 'Currency per price point').set_value(2)
-    press(app, 'Set multiplier and recalculate')
+    press(app, 'Set Multiplier and Recalculate')
     assert 'CUSTOM' not in journal.display_settings()['tick_sizes']
 
 

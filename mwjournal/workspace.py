@@ -74,7 +74,8 @@ def validate_filter(value, library):
 def filter_sample(rows, rule):
     def matches(row):
         tags = set(row.get('tag_ids', []))
-        day = instant(row['opened']).date().isoformat()
+        # Rows from the app carry their entry day in the display time zone; others fall back to UTC.
+        day = row.get('entry_day') or instant(row['opened']).date().isoformat()
         numbers = {'score': row.get('tag_score', 0), 'net': row.get('net'), 'r': row.get('r'),
                    'mae': row.get('mae'), 'mfe': row.get('mfe'), 'quantity': row.get('max_qty'),
                    'duration': (instant(row['closed']) - instant(row['opened'])).total_seconds() / 60 if row.get('closed') else None}

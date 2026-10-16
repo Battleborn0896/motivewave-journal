@@ -120,7 +120,7 @@ final class JournalApp: NSObject, NSApplicationDelegate, WKNavigationDelegate, W
 
     @objc private func about() {
         NSApp.orderFrontStandardAboutPanel(options: [NSApplication.AboutPanelOptionKey.applicationName: appName,
-            .applicationVersion: "0.4.0", .credits: NSAttributedString(string:
+            .applicationVersion: "0.4.1", .credits: NSAttributedString(string:
                 "Local-first MotiveWave journal. Native macOS window with an embedded journal interface.\n"
                 + "Distribution builds include their own local journal backend.\n"
                 + "Capture comes from the read-only MotiveWave study; the app has no screen recorder.")])

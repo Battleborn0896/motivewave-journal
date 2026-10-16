@@ -16,11 +16,11 @@ STOPS = {'original': 'Original/planned stop', 'at-exit': 'Recorded stop at exit'
 def trade_panel(journal, trade, annotation):
     if not trade.closed:
         return
-    with st.expander('Could I have let this trade run?'):
-        st.caption('Hypothesis: hold only the FINAL exit quantity longer; earlier partial exits are unchanged. '
-                   'A later price peak is hindsight potential, not an achievable exit or a backtested stop strategy.')
+    with st.expander('Could I Have Let This Trade Run?'):
         minutes = st.selectbox('Look after exit', HORIZONS, index=1, format_func=lambda n: f'{n} minutes',
-                               key=common.key(journal, 'runner-horizon-' + trade.id))
+                               key=common.key(journal, 'runner-horizon-' + trade.id),
+                               help='Holds only the final exit quantity longer; earlier partial exits are unchanged. '
+                                    'A later peak is hindsight, not an exit you could have made or a tested stop rule.')
         stop_mode = st.selectbox('Runner stop rule', list(STOPS), format_func=STOPS.get,
                                   key=common.key(journal, 'runner-stop-' + trade.id))
         result = best_post_exit(journal, trade, minutes, annotation.get('initial_risk'), stop_mode=stop_mode)
@@ -35,29 +35,31 @@ def trade_panel(journal, trade, annotation):
                                       multiplier=trade.point_value, quantity=result.get('exit_qty'))
         peak_label = common.excursion_amount(convert(result['extra_mfe']), unit, trade.currency)
         if result['extra_mfe_upper'] != result['extra_mfe']:
-            peak_label += ' – ' + common.excursion_amount(convert(result['extra_mfe_upper']), unit, trade.currency)
-        c1.metric('Extra peak before stop/cutoff', peak_label)
+            peak_label += ' to ' + common.excursion_amount(convert(result['extra_mfe_upper']), unit, trade.currency)
+        c1.metric('Extra peak before stop/cutoff', common.md(peak_label))
         c2.metric('Adverse move after exit', common.excursion_amount(convert(result['extra_mae']), unit, trade.currency))
         horizon = convert(result['horizon_extra'])
-        c3.metric('Extra at horizon', common.money(horizon) if unit == 'currency' else common.excursion_amount(horizon, unit))
-        st.caption('Runner excursions in ' + units.suffix(unit, trade.currency) + ' · final exit quantity only.')
+        c3.metric('Extra at horizon', common.money(horizon, trade.currency) if unit == 'currency'
+                  else common.excursion_amount(horizon, unit))
         if result['extra_mfe_r'] is not None:
-            st.caption(f"Additional peak {result['extra_mfe_r']:.2f}R · adverse {result['extra_mae_r']:.2f}R · "
-                       'uses the original planned total risk as denominator.')
+            st.caption(f"Extra peak {result['extra_mfe_r']:.2f}R · adverse {result['extra_mae_r']:.2f}R",
+                       help='Divided by the total risk you planned before entry.')
         if result['minutes_to_peak'] is not None:
-            st.caption(f"Observed peak around {result['minutes_to_peak']:.2f} minutes after exit. "
-                       'For bars this identifies the peak candle, not its exact timing.')
+            st.caption(f"Peak about {result['minutes_to_peak']:.1f} minutes after exit",
+                       help='With candles this finds the peak candle, not the exact moment.')
         st.caption(f"{result['precision']} · {result['coverage']} · final exit quantity {result['exit_qty']:g}")
+        zone = common.display_zone(journal)
         st.caption(f"Stop {result['stop_price']} · {result['stop_source']} · {result['termination']}"
-                   + (f" at {result['stop_ts']}" if result['stop_ts'] else ''))
+                   + (f" at {common.moment(result['stop_ts'], zone)}" if result['stop_ts'] else ''))
         for note in result['notes']:
             st.caption(note)
         path = pd.DataFrame(result['path'])
         if path.empty:
             return
         figure = go.Figure()
-        figure.add_scatter(x=path.ts, y=[convert(v) for v in path.high], name='Additional gross upper bound', line_color=theme.UP)
-        figure.add_scatter(x=path.ts, y=[convert(v) for v in path.low], name='Additional gross lower bound', line_color=theme.DOWN)
+        times = common.wall_clock(path.ts, zone)
+        figure.add_scatter(x=times, y=[convert(v) for v in path.high], name='Additional gross upper bound', line_color=theme.UP)
+        figure.add_scatter(x=times, y=[convert(v) for v in path.low], name='Additional gross lower bound', line_color=theme.DOWN)
         figure.add_hline(y=0)
         figure.update_layout(height=260, yaxis_title=f'Extra hypothetical excursion ({units.suffix(unit, trade.currency)})')
         st.plotly_chart(figure, width='stretch', config=theme.PLOTLY_CONFIG,
@@ -65,11 +67,11 @@ def trade_panel(journal, trade, annotation):
 
 
 def edge_panel(journal, rows):
-    with st.expander('Which tags have room for runners?'):
-        st.caption('Compare the same post-exit horizon across trades. Tick observations, OHLC estimates and '
-                   'simulated replay are grouped separately. Incomplete windows are excluded, not treated as zero.')
+    with st.expander('Which Tags Have Room for Runners?'):
         minutes = st.selectbox('Runner comparison horizon', HORIZONS, index=1, format_func=lambda n: f'{n} minutes',
-                               key=common.key(journal, 'runner-edge-horizon'))
+                               key=common.key(journal, 'runner-edge-horizon'),
+                               help='The same time after exit for every trade. Ticks, candle estimates and simulated '
+                                    'replay are grouped separately; incomplete windows are left out, not counted as zero.')
         stop_mode = st.selectbox('Runner comparison stop', list(STOPS), format_func=STOPS.get,
                                  key=common.key(journal, 'runner-edge-stop'))
         winners = st.checkbox('Only winning trades', value=True, key=common.key(journal, 'runner-winners'))
@@ -97,19 +99,22 @@ def edge_panel(journal, rows):
                                                multiplier=row.get('point_value'), quantity=row.get('exit_qty'))
         groups = runner_groups(results, group)
         excluded = sum(r['coverage'] not in ('window-observed', 'stop-observed') or r.get('extra_mfe') is None for r in results)
-        st.caption(f'{len(results)} selected trades · {excluded} excluded for missing/partial coverage, ambiguous stop bars or unavailable units. '
-                   'A multi-tag trade contributes to each tag, so group samples overlap.')
+        st.caption(f'{len(results)} selected trades · {excluded} left out',
+                   help='Left out: missing or partial price coverage, a stop and peak in the same candle, or a unit '
+                        'that cannot be measured. A trade with several tags counts in each, so groups overlap.')
         if groups:
             label = units.suffix(unit, results[0]['currency'])
             table = pd.DataFrame(groups).rename(columns={
                 'group': labels[group], 'avg_extra_peak': f'Average extra peak ({label})',
                 'avg_adverse_after_exit': f'Average adverse move ({label})', 'count': 'Trades'})
-            st.dataframe(table, hide_index=True, width='stretch')
+            money = {name: common.money_column(name, results[0]['currency']) for name in table.columns
+                     if unit == 'currency' and name.startswith('Average')}
+            st.dataframe(table, hide_index=True, width='stretch', column_config=money)
         else:
             st.info('No comparable completed windows yet. Keep price capture running after exits. '
                     'The study now defaults to continuous chart ticks; older position-gated settings need enough After Exit time. '
                     'R also needs saved initial risk; ticks need a known tick size.')
-        st.caption('Additional 1R reached counts only prices BEFORE the selected stop touch or the fixed cutoff. '
-                   'A stop touch is not a guaranteed executable fill, and dynamic trailing rules are not modeled. '
-                   'Do not add hindsight peaks to expectancy. Small tag samples can overfit; use '
-                   'these to choose hypotheses, then validate a fixed exit/stop rule on unseen trades.')
+        st.caption('Hindsight to test, not profit you missed',
+                   help='Only prices before the stop is touched or the cutoff count. A stop touch is not a guaranteed '
+                        'fill, and trailing stops are not modelled. Do not add these peaks to your expectancy: pick '
+                        'a fixed exit rule from them, then check it on trades you have not looked at yet.')
