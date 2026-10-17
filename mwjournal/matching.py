@@ -11,6 +11,10 @@ from dataclasses import asdict
 from .model import ENTRY_MISSING, EXIT_MISSING, NO_FILL_PRICE, Execution, Trade, digest, instant, point_value
 
 FLAT = 1e-9
+# Commission rates are set in MotiveWave, so the fee the study reports is the fee, $0 included.
+# Every study fill carries this source label; it names where the fill came from, not a problem.
+PLATFORM = 'motivewave-native:'
+STUDY_SOURCE = ('MotiveWave internal capture', 'fees may be estimated')
 
 
 def _flag(trade: Trade, text: str):
@@ -18,12 +22,21 @@ def _flag(trade: Trade, text: str):
         trade.flags.append(text)
 
 
+def _quality_notes(fill: Execution, platform: bool) -> list[str]:
+    if fill.quality == 'execution':
+        return []
+    if not platform:
+        return [fill.quality]
+    return [part for part in (p.strip() for p in fill.quality.split(';')) if part and part not in STUDY_SOURCE]
+
+
 def _leg(trade: Trade, fill: Execution, take: float, entry: bool):
     """The part of one fill this trade takes, with its share of the fee and what it says about quality."""
     fee = fill.commission * take / fill.qty
-    if fill.quality != 'execution':
-        _flag(trade, fill.quality)
-    if not fill.commission_known:
+    platform = fill.provider.startswith(PLATFORM)
+    for note in _quality_notes(fill, platform):
+        _flag(trade, note)
+    if not fill.commission_known and not platform:
         _flag(trade, 'fees not provided')
     if not fill.execution_id:
         _flag(trade, 'no execution ID')

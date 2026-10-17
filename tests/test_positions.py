@@ -233,11 +233,12 @@ def test_zero_price_is_no_price_for_every_writer_and_never_a_profit(tmp_path):
               native('b', 'sell', 2, 0, '2026-10-07T14:01:00Z', 'p', None),
               native('c', 'buy', 1, 99, '2026-10-07T14:02:00Z', 'p', None)]
     assert [t.incomplete for t in match(fills(events))] == [[NO_FILL_PRICE], [NO_FILL_PRICE]]
-    # The study's own wording for such a fill travels as a flag beside the reason.
+    # The study's wording for such a fill keeps only the real problem as a flag beside the reason;
+    # its source label and the fee wording are not warnings (MotiveWave's fee is the fee).
     labelled = native('z', 'buy', 1, 0, '2026-10-07T16:00:00Z', 'r', True, price_known=False,
                       quality=PLAIN + '; platform reported no fill price')
     trade, = match(fills([labelled]))
-    assert trade.incomplete == [NO_FILL_PRICE] and labelled['quality'] in trade.flags and trade.status == 'incomplete'
+    assert trade.incomplete == [NO_FILL_PRICE] and trade.flags == [NO_FILL_PRICE] and trade.status == 'incomplete'
     assert trade.closed is None                               # still a position the platform holds open
 
 

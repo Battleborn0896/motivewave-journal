@@ -44,7 +44,8 @@ def test_java_bridge_to_journal_trade_chart_and_excursions(
     assert trade.gross == gross and trade.net == net and trade.commission == 5
     metric = journal.best_metric(trade)
     assert (metric['mae'], metric['mfe'], metric['precision']) == (mae, mfe, precision)
-    assert 'fees not provided' in trade.flags   # native fees remain labelled estimates
+    assert 'fees not provided' not in trade.flags   # MotiveWave's commission is the fee
+    assert not any('fees may be estimated' in flag for flag in trade.flags)
     protection = journal.protection_events(trade)
     assert [event.state for event in protection] == (
         ['working', 'working', 'cancelled'] if dataset == 'live' else ['working', 'filled'])

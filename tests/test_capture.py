@@ -58,7 +58,8 @@ def test_native_watcher_deduplicates_restart_and_matches_only_own_replay_prices(
     assert journal.price_sources(trade.symbol, trade) == ['motivewave-replay:run-a:ticks']
     metric = journal.best_metric(trade)
     assert metric['mae'] == 50 and metric['mfe'] == 150 and metric['precision'] == 'observed-ticks'
-    assert 'fees not provided' in trade.flags
+    assert 'fees not provided' not in trade.flags   # MotiveWave's commission is the fee
+    assert 'MotiveWave internal capture; fees may be estimated' not in trade.flags
     # Simulate study reload: same identity, not a new provider/run.
     with path.open('a') as fh:
         fh.write(lines([fill('a'), fill('b', 'sell', 5002, ts='2022-01-03T14:32:00Z')]))
@@ -276,3 +277,26 @@ def test_gap_in_one_tick_stream_or_one_instrument_does_not_mark_another(tmp_path
     assert not journal.capture_gaps('motivewave-ticks:history', symbol='ESZ6', **window)
     assert journal.capture_gaps('motivewave-ticks:history', symbol='nqz6', **window)[0]['dropped'] == 9
     assert journal.capture_gaps('motivewave-ticks', symbol='ESZ6', **window)[0]['dropped'] == 3   # names no instrument
+
+
+def test_motivewave_fees_are_the_fee_even_at_zero_and_its_source_label_is_not_a_warning():
+    # Commission rates are set in MotiveWave; what it reports is the fee. Only real problems stay flagged.
+    from mwjournal import Execution
+    from mwjournal.matching import match
+    plain = 'MotiveWave internal capture; fees may be estimated'
+
+    def native(id, side, minute, quality=plain):
+        return Execution('motivewave-native:workspace:live', 'paper', 'ESZ6', side, 1, 5000 + minute,
+                         f'2022-01-03T14:3{minute}:00Z', execution_id=id, commission=0,
+                         commission_known=False, point_value=50, quality=quality)
+
+    trade, = match([native('a', 'buy', 0), native('b', 'sell', 1, plain + '; account currency assumed from the instrument')])
+    assert trade.commission == 0 and trade.net == 50
+    assert trade.flags == ['account currency assumed from the instrument']
+
+    def imported(id, side, minute):
+        return Execution('csv', 'paper', 'ESZ6', side, 1, 5000, f'2022-01-03T14:3{minute}:00Z',
+                         execution_id=id, commission_known=False)
+
+    other, = match([imported('c', 'buy', 0), imported('d', 'sell', 1)])
+    assert 'fees not provided' in other.flags   # an import without a fee column still says so

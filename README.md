@@ -7,6 +7,13 @@ Live/paper and replay have separate databases. No routine CSV export/import is r
 MotiveWave Journal is an independent open-source project. It is not affiliated with, endorsed by or
 supported by MotiveWave Software.
 
+## What's new in 0.4.2: fees come from MotiveWave
+
+Commission rates are set in MotiveWave, and the journal now takes the fee MotiveWave reports for
+each fill as the fee, including $0. Trades captured by the study no longer carry a "Data quality"
+warning or a "Fees not confirmed" line because of it; real problems (a missing fill price, an
+assumed account currency) are still shown. Imported fills without a fee column are still marked.
+
 ## What's new in 0.4.1: simpler screens
 
 0.4.1 changes how the journal looks and where things are, not what it can do. Existing journals,
@@ -335,7 +342,8 @@ copy the live bridge path shown in Connection into the study's File setting.
 
 Currency MAE/MFE are non-negative magnitudes of **gross realised plus open-position P&L** across
 the holding window, including scale-ins/outs. Fees are excluded from excursions; recorded fees
-reduce net trade P&L. Native fees may be platform estimates. Stops/targets require an explicit
+reduce net trade P&L. Fees are whatever MotiveWave reports for each fill: set commission rates in MotiveWave, and a
+fill MotiveWave reports with no commission counts as $0. Stops/targets require an explicit
 order/position link; a saved planned level is labelled separately from a captured order.
 
 ## Verify

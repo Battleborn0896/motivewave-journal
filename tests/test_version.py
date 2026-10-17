@@ -23,4 +23,4 @@ def test_the_app_version_is_the_same_everywhere_it_is_declared():
 def test_the_study_keeps_its_own_version():
     java = (ROOT / 'study' / 'src' / 'main' / 'java' / 'org' / 'mwjournal' / 'study' / 'JournalPaths.java')
     assert 'CONNECTOR_VERSION = "0.3.2"' in java.read_text(encoding='utf-8')
-    assert paths.VERSION == '0.4.1'
+    assert paths.VERSION == '0.4.2'

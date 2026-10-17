@@ -107,7 +107,7 @@ All optional fields remain backward compatible, and files written by study 0.1 t
 
 | `quality` | When |
 |---|---|
-| `MotiveWave internal capture; fees may be estimated` | Every fill (unchanged since 0.1). |
+| `MotiveWave internal capture; fees may be estimated` | Every fill (unchanged since 0.1). The app treats it as the source name, not a warning, and uses MotiveWave's commission as the fee. |
 | `…; account currency assumed from the instrument` | With `currency_assumed`. |
 | `…; platform reported no fill price` | With `price_known: false`. |
 
