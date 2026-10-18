@@ -12,6 +12,16 @@ Charts 4.2.3, unmodified, under the Apache License 2.0. The licence text is in
 
 TradingView Lightweight Charts™, Copyright (c) 2025 TradingView, Inc. https://www.tradingview.com/
 
+## IBM Plex Sans
+
+`app/static/fonts/IBMPlexSans-Regular.woff2`, `IBMPlexSans-Italic.woff2`, `IBMPlexSans-Medium.woff2`,
+`IBMPlexSans-SemiBold.woff2` and `IBMPlexSans-Bold.woff2` are IBM Plex Sans, unmodified, from IBM's
+official release (`@ibm/plex-sans` 1.1.0), under the SIL Open Font License, Version 1.1. The licence
+text is in `app/static/fonts/IBM-Plex-Sans-LICENSE.txt`. The app serves these files from the user's own
+computer; it does not fetch them from the internet.
+
+Copyright © 2017 IBM Corp. with Reserved Font Name "Plex".
+
 ## MotiveWave SDK
 
 The study in `study/` compiles against `mwave_sdk.jar`, which ships with MotiveWave and is not

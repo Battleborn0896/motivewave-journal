@@ -33,7 +33,7 @@ VIEWS.update(Tags=tag_settings, Ratings=ratings, Journals=journal_settings, Gene
 ENVIRONMENTS = {'Live': 'live', 'Replay': 'replay'}
 SHOWN_KEY, SEEN_KEY = 'journal-view-shown', 'journal-seen'
 
-st.set_page_config(page_title=paths.APP_NAME, page_icon=':material/candlestick_chart:', layout='wide',
+st.set_page_config(page_title=paths.APP_NAME, page_icon=theme.ICON, layout='wide',
                    initial_sidebar_state='expanded')
 theme.apply()
 

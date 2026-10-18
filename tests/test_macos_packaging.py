@@ -133,8 +133,9 @@ def test_release_validation_rejects_python_or_absolute_launcher(tmp_path):
     resources = app / "Contents" / "Resources"
     (app / "Contents" / "MacOS").mkdir(parents=True)
     (app / "Contents" / "MacOS" / "MotiveWaveJournal").touch()
-    (resources / "journal" / "app").mkdir(parents=True)
-    (resources / "journal" / "app" / "app.py").touch()
+    for name in release.load_desktop_builder().REQUIRED_FILES:      # the source, its settings and fonts
+        (resources / "journal" / name).parent.mkdir(parents=True, exist_ok=True)
+        (resources / "journal" / name).touch()
     (app / "Contents" / "Info.plist").touch()
     launcher = resources / "launcher.json"
     launcher.write_text('{"python":"/developer/venv/bin/python","project":"journal","port":8600}')
@@ -154,3 +155,16 @@ def test_macho_magic_detection_is_pure_and_handles_fat_binaries(tmp_path, magic)
     text = tmp_path / "text"
     text.write_text("not executable code")
     assert not release.is_macho(text)
+
+
+def test_base_app_without_the_bundled_fonts_is_incomplete(tmp_path):
+    app = tmp_path / release.APP_NAME
+    resources = app / "Contents" / "Resources"
+    (app / "Contents" / "MacOS").mkdir(parents=True)
+    (app / "Contents" / "MacOS" / "MotiveWaveJournal").touch()
+    (app / "Contents" / "Info.plist").touch()
+    (resources / "journal" / "app").mkdir(parents=True)
+    (resources / "journal" / "app" / "app.py").touch()
+    (resources / "launcher.json").write_text("{}", encoding="utf-8")
+    with pytest.raises(release.ReleaseError, match="IBMPlexSans-Regular.woff2"):
+        release.validate_app(app)

@@ -3,6 +3,9 @@
 A Tradecraft-inspired workspace: charcoal planes, yellow navigation, green/red outcomes and
 colour-coded tag groups. Signs, labels and selected outlines carry meaning alongside colour.
 .streamlit/config.toml carries the same colours for Streamlit's own widgets.
+
+One typeface everywhere: IBM Plex Sans, from the bundled files (mwjournal/fonts.py). Numbers that sit in
+columns (amounts, times, prices, metric tiles) use its tabular figures so they line up.
 """
 
 from __future__ import annotations
@@ -14,6 +17,8 @@ import re
 import plotly.graph_objects as go
 import plotly.io as pio
 import streamlit as st
+
+from mwjournal import fonts
 
 # ---------------------------------------------------------------- tokens
 
@@ -35,8 +40,17 @@ DOWN = '#E16E6B'
 SERIES = ['#60A9E8', '#ED9B55', '#45BF89', '#E2CF32', '#DA83B4', '#85BD72', '#AF92DF', '#E16E6B']
 STATUS = {'good': UP, 'warning': '#E2CF32', 'critical': DOWN, 'neutral': MUTED}
 TAG_COLOURS = {'Setup': '#65CA98', 'Execution': '#EBAB66', 'Mindset': '#BD9DE8', 'Other tags': '#73B6EB'}
-FONT = '-apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", Inter, system-ui, sans-serif'
-MONO = 'ui-monospace, "SF Mono", "JetBrains Mono", Menlo, Consolas, "Roboto Mono", monospace'
+FONT = fonts.STACK         # IBM Plex Sans, with system fallbacks only until the bundled files load
+TABULAR = 'font-variant-numeric:tabular-nums'   # figures of one width, for numbers that line up
+
+# The browser tab's icon: the Mac app's icon (desktop/macos/Main.swift), three yellow candles on charcoal.
+# Written into the page as an SVG, because a Material icon here makes the browser fetch it from Google.
+ICON = ('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024">'
+        f'<rect x="55" y="55" width="914" height="914" rx="210" fill="{PAGE}"/><g fill="{ACCENT}">'
+        + ''.join(f'<rect x="{x}" y="{1024 - high}" width="98" height="{high - low}" rx="16"/>'
+                  f'<rect x="{x + 44}" y="{1024 - high - 66}" width="10" height="{high - low + 132}" rx="5"/>'
+                  for x, low, high in ((260, 250, 520), (440, 370, 680), (620, 500, 800)))
+        + '</g></svg>')
 
 # ---------------------------------------------------------------- page chrome
 
@@ -69,7 +83,7 @@ html, body, [data-testid="stAppViewContainer"], .stApp {{ background:{PAGE}; fon
 [class*="st-key-journal-calendar"] [data-testid="stVerticalBlock"] {{ gap:4px; }}
 [class*="st-key-journal-calendar"] [data-testid="stHorizontalBlock"] {{ gap:4px; }}
 [class*="st-key-journal-calendar"] button {{ padding:2px !important; min-height:34px !important; height:34px; }}
-[class*="st-key-journal-calendar"] button p {{ font-size:10px; line-height:12px;
+[class*="st-key-journal-calendar"] button p {{ font-size:10px; line-height:12px; {TABULAR};
     white-space:normal; margin:0 !important; overflow:visible; text-overflow:clip; }}
 /* The label's paragraph is inline, so its lines take the container's height: keep both lines inside the cell. */
 [class*="st-key-journal-calendar"] button [data-testid="stMarkdownContainer"] {{ font-size:10px; line-height:12px; }}
@@ -80,7 +94,8 @@ h1, h2, h3 {{ font-family:{FONT}; letter-spacing:-0.01em; }}
 h3 {{ font-size:15px !important; font-weight:600 !important; color:{INK} !important; }}
 [data-testid="stMarkdownContainer"] p {{ color:{INK_2}; }}
 [data-testid="stCaptionContainer"] {{ color:{MUTED} !important; }}
-[data-testid="stMetricValue"] {{ font-family:{MONO}; font-size:25px; }}
+[data-testid="stMetricValue"] {{ font-family:{FONT}; font-size:25px; {TABULAR}; }}
+[data-testid="stMetricDelta"] {{ {TABULAR}; }}
 [data-testid="stTabs"] [data-baseweb="tab-list"] {{ gap:18px; }}
 [data-testid="stTabs"] [data-baseweb="tab"] {{ font-family:{FONT}; font-size:13px; padding:8px 0; }}
 .st-key-trade-review-workspace, .st-key-trade-review-workspace [data-testid="stVerticalBlock"] {{ gap:8px; }}
@@ -109,25 +124,29 @@ h3 {{ font-size:15px !important; font-weight:600 !important; color:{INK} !import
 [class*="st-key-setup-group-"] [data-testid="stVerticalBlock"] {{ gap:8px; }}
 div[data-testid="stExpander"] details {{ background:{SURFACE}; border:1px solid {BORDER}; border-radius:6px; }}
 div[role="radiogroup"] label p {{ font-size:13px; }}
-[data-testid="stButtonGroup"] button {{ font-family:{MONO}; font-size:12.5px; border-radius:4px; }}
+[data-testid="stButtonGroup"] button {{ font-family:{FONT}; font-size:12.5px; border-radius:4px; {TABULAR}; }}
 .stButton button, .stFormSubmitButton button, .stDownloadButton button, .stLinkButton a {{ border-radius:4px; }}
 [data-testid="stBaseButton-primary"], [data-testid="stBaseButton-primaryFormSubmit"] {{
     background:{ACCENT} !important; border:1px solid {ACCENT} !important; color:{SIDEBAR} !important; }}
 [data-testid="stBaseButton-primary"] p, [data-testid="stBaseButton-primaryFormSubmit"] p {{ color:inherit !important; }}
 [data-testid="stBaseButton-primary"]:hover, [data-testid="stBaseButton-primaryFormSubmit"]:hover {{
     background:#F0DD4B !important; }}
-input, textarea {{ font-family:{MONO} !important; }}
-.mwj-brand {{ font-family:{MONO}; font-size:12px; font-weight:700; letter-spacing:.06em; text-transform:uppercase;
+input, textarea {{ font-family:{FONT} !important; }}
+input {{ {TABULAR}; }}
+/* Plotly's own boxes default to Open Sans; its axis numbers line up like a chart platform's price axis. */
+.js-plotly-plot .plotly, .js-plotly-plot .plotly div, .plotly-notifier {{ font-family:{FONT} !important; }}
+.js-plotly-plot .plotly text {{ {TABULAR} !important; }}
+.mwj-brand {{ font-family:{FONT}; font-size:12px; font-weight:700; letter-spacing:.06em; text-transform:uppercase;
              color:{ACCENT}; margin:2px 0 0; }}
 .mwj-brand-sub {{ color:{MUTED}; font-size:12px; margin:2px 0 10px; }}
-.mwj-section {{ display:flex; align-items:center; gap:10px; margin:18px 0 8px; color:{INK}; font-family:{MONO};
+.mwj-section {{ display:flex; align-items:center; gap:10px; margin:18px 0 8px; color:{INK}; font-family:{FONT};
                font-size:12px; font-weight:700; letter-spacing:.12em; text-transform:uppercase; }}
 .mwj-section:before {{ content:''; width:3px; height:12px; background:{ACCENT}; }}
 .mwj-section:after {{ content:''; flex:1; height:1px; background:{BORDER}; }}
 .mwj-section .hint {{ font-family:{FONT}; text-transform:none; letter-spacing:0; font-weight:400; color:{MUTED};
                      font-size:12.5px; }}
 .mwj-chip {{ display:inline-flex; align-items:center; gap:7px; padding:2px 9px; border-radius:3px;
-            font-family:{MONO}; font-size:11.5px; font-weight:650; letter-spacing:.04em; white-space:nowrap; }}
+            font-family:{FONT}; font-size:11.5px; font-weight:650; letter-spacing:.04em; white-space:nowrap; }}
 .mwj-chip:before {{ content:''; width:7px; height:7px; border-radius:50%; background:currentColor; }}
 .mwj-chip.big {{ font-size:14px; padding:5px 12px; }}
 .mwj-status-note {{ color:{INK_2}; font-size:12.5px; line-height:1.45; margin:6px 0 0; }}
@@ -249,18 +268,19 @@ def money_axis(figure, currency='USD', values=(), *, axis='yaxis') -> None:
 
 def register_template() -> None:
     if TEMPLATE not in pio.templates:
-        # Axis numbers in monospace, like a chart platform's price axis.
+        # Every text in IBM Plex Sans; theme.CSS gives the axis numbers tabular figures.
         axis = dict(gridcolor=HAIRLINE, gridwidth=1, linecolor=BASELINE, zerolinecolor=BASELINE, zerolinewidth=1,
-                    tickfont=dict(family=MONO, color=MUTED, size=10.5), title=dict(font=dict(color=MUTED, size=11)),
+                    tickfont=dict(family=FONT, color=MUTED, size=10.5),
+                    title=dict(font=dict(family=FONT, color=MUTED, size=11)),
                     showspikes=True, spikecolor=BASELINE, spikethickness=1, spikedash='solid', spikemode='across')
         pio.templates[TEMPLATE] = go.layout.Template(layout=dict(
             font=dict(family=FONT, color=INK_2, size=12),
             paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)', colorway=SERIES,
             xaxis={**axis, 'showgrid': False}, yaxis=axis, hovermode='x unified', dragmode='pan',
-            hoverlabel=dict(bgcolor=PAGE, bordercolor=BASELINE, font=dict(family=MONO, color=INK, size=11.5)),
-            legend=dict(orientation='h', x=0, y=1.02, yanchor='bottom', font=dict(color=INK_2, size=11),
-                        bgcolor='rgba(0,0,0,0)'),
+            hoverlabel=dict(bgcolor=PAGE, bordercolor=BASELINE, font=dict(family=FONT, color=INK, size=11.5)),
+            legend=dict(orientation='h', x=0, y=1.02, yanchor='bottom', font=dict(family=FONT, color=INK_2, size=11),
+                        title=dict(font=dict(family=FONT, color=INK_2, size=11)), bgcolor='rgba(0,0,0,0)'),
             margin=dict(l=10, r=10, t=36, b=10),
-            title=dict(font=dict(color=INK, size=12.5, family=MONO), x=0, xanchor='left', y=0.98),
+            title=dict(font=dict(color=INK, size=12.5, family=FONT), x=0, xanchor='left', y=0.98),
         ), data=dict(scatter=[go.Scatter(line=dict(width=2))]))
     pio.templates.default = 'plotly_dark+' + TEMPLATE

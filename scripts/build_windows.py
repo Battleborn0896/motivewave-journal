@@ -20,6 +20,18 @@ APP_NAME = "MotiveWave Journal"
 ZIP_NAME = "MotiveWave-Journal-Windows-x64"
 SOURCE_DIRECTORIES = ("app", "mwjournal", ".streamlit", "docs")
 SOURCE_FILES = ("README.md", "LICENSE", "THIRD_PARTY_NOTICES.md")
+# The bundled typeface (IBM Plex Sans, app/static/fonts) and the settings that serve it. Without them the
+# app would draw in fallback fonts, so no package ships without them.
+REQUIRED_FILES = (
+    "app/app.py",
+    ".streamlit/config.toml",
+    "app/static/fonts/IBM-Plex-Sans-LICENSE.txt",
+    "app/static/fonts/IBMPlexSans-Regular.woff2",
+    "app/static/fonts/IBMPlexSans-Italic.woff2",
+    "app/static/fonts/IBMPlexSans-Medium.woff2",
+    "app/static/fonts/IBMPlexSans-SemiBold.woff2",
+    "app/static/fonts/IBMPlexSans-Bold.woff2",
+)
 
 
 def require_study_jar(jar: Path = STUDY_JAR) -> Path:
@@ -47,6 +59,9 @@ def copy_payload(root: Path, destination: Path, *, jar: Path | None = None) -> P
         if not source.is_file():
             raise FileNotFoundError(f"Required journal distribution file is missing: {source}")
         shutil.copy2(source, project / name)
+    missing = [name for name in REQUIRED_FILES if not (project / name).is_file()]
+    if missing:
+        raise FileNotFoundError("The journal source is incomplete; missing: " + ", ".join(missing))
     packaged_jar = project / "study" / "build" / "libs" / "motivewave-journal.jar"
     packaged_jar.parent.mkdir(parents=True)
     shutil.copy2(jar, packaged_jar)
@@ -143,6 +158,10 @@ def build(python: Path, output: Path) -> tuple[Path, Path]:
             raise RuntimeError(f"PyInstaller completed but the launcher is missing: {executable}")
         if not bundled_jar.is_file():
             raise RuntimeError(f"PyInstaller completed but the study JAR is missing: {bundled_jar}")
+        bundled = built_app / "_internal" / "journal"
+        missing = [name for name in REQUIRED_FILES if not (bundled / name).is_file()]
+        if missing:
+            raise RuntimeError("PyInstaller completed but the journal is missing: " + ", ".join(missing))
         os.rename(built_app, app)
 
     created = Path(shutil.make_archive(str(output / ZIP_NAME), "zip", root_dir=output, base_dir=APP_NAME))

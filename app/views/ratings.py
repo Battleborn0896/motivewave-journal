@@ -11,7 +11,7 @@ def render(journal, rows):
                   'and your own 1 to 5 stars stay separate. Show a rating with a Rating widget on a dashboard.')
     library = journal.tag_library()
     models = journal.workspace()['ratings']
-    selected = st.selectbox('Rating system', [None, *models], format_func=lambda id: models[id]['name'] if id else '＋ New system',
+    selected = st.selectbox('Rating system', [None, *models], format_func=lambda id: models[id]['name'] if id else '+ New system',
                              key=common.key(journal, 'rating-model'))
     definition = models.get(selected, {})
     rules_key = common.key(journal, 'rating-draft-' + str(selected))

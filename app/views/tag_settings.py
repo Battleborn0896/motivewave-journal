@@ -56,7 +56,7 @@ def render(journal, rows):
     with books_tab:
         books = library['playbooks']
         choice = st.selectbox('Edit playbook', ['＋ New playbook', *books],
-                              format_func=lambda id: books[id]['name'] if id in books else id,
+                              format_func=lambda id: books[id]['name'] if id in books else '+ New playbook',
                               key=common.key(journal, 'edit-playbook'))
         old = books.get(choice, {})
         with st.form(common.key(journal, 'playbook-editor-' + choice)):

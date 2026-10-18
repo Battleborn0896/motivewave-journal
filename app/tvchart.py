@@ -29,7 +29,9 @@ NY = 'America/New_York'
 def _theme() -> dict:
     return {'surface': theme.SURFACE, 'grid': theme.HAIRLINE, 'border': theme.BASELINE, 'muted': theme.MUTED,
             'ink': theme.INK, 'ink2': theme.INK_2, 'crosshair': theme.MUTED, 'label': theme.SURFACE_2,
-            'up': theme.UP, 'down': theme.DOWN, 'price': theme.PRICE, 'mono': theme.MONO,
+            'up': theme.UP, 'down': theme.DOWN, 'price': theme.PRICE,
+            # IBM Plex Sans, which components/tvchart/index.html loads itself and waits for before drawing.
+            'font': theme.FONT,
             # Candles wear TradingView's own colours, so a chart reads like the one traders know.
             'candleUp': '#089981', 'candleDown': '#F23645',
             'watermark': 'rgba(255,255,255,0.045)'}

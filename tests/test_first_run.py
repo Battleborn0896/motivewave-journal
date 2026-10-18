@@ -51,7 +51,7 @@ def test_a_first_trade_opens_on_clickable_starter_tags_with_nothing_to_set_up():
     assert not said(app.info, 'Start by creating a category')
     assert not any(t.label == 'Show starter examples' for t in app.toggle)    # nothing hidden to reveal
     labels = [p.proto.popover.label for p in app.main.get('popover')]
-    assert '＋ Category' in labels and '＋ Tag' in labels                       # still there, but secondary
+    assert '+ Category' in labels and '+ Tag' in labels                       # still there, but secondary
     widget(app.pills, 'Mindset').set_value(['Calm']).run()                      # one click applies and saves
     assert journal.annotations()[trade.id]['tags'] == ['Calm']
     widget(app.pills, 'Mindset').set_value([]).run()                            # a second click removes it

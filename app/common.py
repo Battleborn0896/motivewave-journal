@@ -435,6 +435,7 @@ def multiplier_form(journal, form_key: str, symbol: str | None = None) -> None:
     fixed_symbol = symbol is not None
     if not fixed_symbol:
         choice = st.selectbox('Instrument', [*(symbols or ['ESZ6']), '＋ Other instrument'],
+                              format_func=lambda s: '+ Other instrument' if s == '＋ Other instrument' else s,
                               key=key(journal, form_key + '-instrument'))
         if choice != '＋ Other instrument':
             suggested = choice

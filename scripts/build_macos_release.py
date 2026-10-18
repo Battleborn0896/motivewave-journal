@@ -194,11 +194,13 @@ def load_desktop_builder():
 
 
 def validate_app(app: Path) -> None:
+    journal = app / "Contents" / "Resources" / "journal"
     required = [
         app / "Contents" / "Info.plist",
         app / "Contents" / "MacOS" / "MotiveWaveJournal",
         app / "Contents" / "Resources" / "launcher.json",
-        app / "Contents" / "Resources" / "journal" / "app" / "app.py",
+        # The app's source with its settings and bundled fonts (IBM Plex Sans).
+        *(journal / name for name in load_desktop_builder().REQUIRED_FILES),
     ]
     missing = [str(path) for path in required if not path.is_file()]
     if missing:

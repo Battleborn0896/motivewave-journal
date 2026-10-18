@@ -12,6 +12,17 @@ struct Configuration: Decodable {
     let port: Int
 }
 
+/// IBM Plex Sans for the startup page, read from the bundled journal (journal/app/static/fonts) and
+/// written into the page, which is shown before the local backend that serves the fonts is running.
+func startupFontFaces() -> String {
+    guard let fonts = Bundle.main.resourceURL?.appendingPathComponent("journal/app/static/fonts") else { return "" }
+    return [("IBMPlexSans-Regular.woff2", 400), ("IBMPlexSans-Bold.woff2", 700)].compactMap { file, weight in
+        guard let data = try? Data(contentsOf: fonts.appendingPathComponent(file)) else { return nil }
+        return "@font-face{font-family:'IBM Plex Sans';font-style:normal;font-weight:\(weight);"
+            + "src:url(data:font/woff2;base64,\(data.base64EncodedString())) format('woff2')}"
+    }.joined()
+}
+
 func makeIcon(_ directory: String) throws {
     let folder = URL(fileURLWithPath: directory, isDirectory: true)
     try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
@@ -120,7 +131,7 @@ final class JournalApp: NSObject, NSApplicationDelegate, WKNavigationDelegate, W
 
     @objc private func about() {
         NSApp.orderFrontStandardAboutPanel(options: [NSApplication.AboutPanelOptionKey.applicationName: appName,
-            .applicationVersion: "0.4.2", .credits: NSAttributedString(string:
+            .applicationVersion: "0.4.3", .credits: NSAttributedString(string:
                 "Local-first MotiveWave journal. Native macOS window with an embedded journal interface.\n"
                 + "Distribution builds include their own local journal backend.\n"
                 + "Capture comes from the read-only MotiveWave study; the app has no screen recorder.")])
@@ -143,7 +154,8 @@ final class JournalApp: NSObject, NSApplicationDelegate, WKNavigationDelegate, W
         if starting { return }
         starting = true
         web.loadHTMLString("""
-            <html><body style="background:#151617;color:#E8E8E5;font:16px -apple-system;padding:40px">
+            <html><head><style>\(startupFontFaces())</style></head>
+            <body style="background:#151617;color:#E8E8E5;font:16px 'IBM Plex Sans',-apple-system,sans-serif;padding:40px">
             <h2>MotiveWave Journal</h2><p>Starting your local journal…</p>
             <p>Waiting for the local study-data reader.</p></body></html>
             """, baseURL: nil)

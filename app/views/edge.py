@@ -216,7 +216,8 @@ def show_costs(closed, stat):
                        help=r_help)
     if costs['unverified_fees']:
         count = costs['unverified_fees']
-        st.caption(f":orange[⚠ Fees not confirmed on {count} trade{'' if count == 1 else 's'}]",
+        # A Material warning icon: IBM Plex Sans has no '⚠', so the browser drew it in another font.
+        st.caption(f":orange[:material/warning: Fees not confirmed on {count} trade{'' if count == 1 else 's'}]",
                    help='The platform did not confirm the commission on these trades, or reported only an estimate. '
                         'Net P&L and fees may be off by the difference.')
 

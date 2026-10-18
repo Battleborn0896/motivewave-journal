@@ -13,7 +13,8 @@ py -3.11 -m venv .venv-windows-build
 
 The prebuilt study must exist at
 `study\build\libs\motivewave-journal.jar` before the build starts. The builder
-stops with a clear error if it is missing.
+stops with a clear error if it is missing, and also if the bundled IBM Plex Sans
+fonts (`app\static\fonts`) or `.streamlit\config.toml` are missing.
 
 Artifacts are written to `build\windows`:
 

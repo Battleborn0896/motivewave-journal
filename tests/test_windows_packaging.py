@@ -32,6 +32,9 @@ def fake_source(root: Path, *, with_jar: bool = True) -> Path:
         (target / "ignored.pyc").write_bytes(b"cache")
     for filename in builder.SOURCE_FILES:
         (root / filename).write_text(filename)
+    for name in builder.REQUIRED_FILES:              # the app, its settings and the bundled fonts
+        (root / name).parent.mkdir(parents=True, exist_ok=True)
+        (root / name).write_bytes(b"required")
     jar = root / "study" / "build" / "libs" / "motivewave-journal.jar"
     if with_jar:
         jar.parent.mkdir(parents=True)
@@ -49,6 +52,17 @@ def test_payload_contains_source_and_prebuilt_study_jar(tmp_path):
     assert not (project / "app" / "ignored.pyc").exists()
     assert (project / "study" / "build" / "libs" / jar.name).read_bytes() == b"prebuilt study"
     assert (project / "LICENSE").is_file()
+    assert (project / "app" / "static" / "fonts" / "IBMPlexSans-Regular.woff2").read_bytes() == b"required"
+    assert (project / ".streamlit" / "config.toml").is_file()
+
+
+def test_payload_without_the_bundled_fonts_fails(tmp_path):
+    source = tmp_path / "source"
+    source.mkdir()
+    jar = fake_source(source)
+    (source / "app" / "static" / "fonts" / "IBMPlexSans-Italic.woff2").unlink()
+    with pytest.raises(FileNotFoundError, match="IBMPlexSans-Italic.woff2"):
+        builder.copy_payload(source, tmp_path / "payload", jar=jar)
 
 
 def test_missing_study_jar_fails_with_actionable_message(tmp_path):
@@ -78,6 +92,7 @@ def test_backend_arguments_are_loopback_headless_and_do_not_arm_recording(tmp_pa
     assert "--server.port=9123" in arguments
     assert "--server.headless=true" in arguments
     assert "--global.developmentMode=false" in arguments
+    assert "--server.enableStaticServing=true" in arguments      # serves the bundled fonts in app/static
     assert "arm" not in joined and "record" not in joined and "media" not in joined
 
 

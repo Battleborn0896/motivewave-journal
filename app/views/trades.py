@@ -80,6 +80,8 @@ CSS = f"""
 .mwj-title b {{ font-weight:650; }}
 .mwj-title .when {{ color:{theme.INK_2}; }}
 .mwj-legend span {{ font-size:13px; }}
+.mwj-legend .mwj-dot {{ display:inline-block; width:8px; height:8px; border-radius:50%; margin:0 5px 1px 0;
+    vertical-align:middle; }}
 .st-key-trade-review-workspace [data-testid="stMetricValue"] {{ font-size:21px; }}
 </style>
 """
@@ -533,7 +535,8 @@ def chart_panel(journal, trade, annotation: dict, zone) -> None:
                      precision=4 if trade.symbol.startswith(('6', 'Z')) else 2,
                      watermark=trade.symbol, timezone=zone, trade_overlays=overlays,
                      visible_range={'from': candles[0]['time'], 'to': max(candles[-1]['time'], candles[0]['time'] + 60)})
-        legend = ' '.join(f"<span style='color:{colour}'>●</span> {name}" for name, colour in
+        # Drawn dots rather than '●', which IBM Plex Sans does not have.
+        legend = ' '.join(f"<span class='mwj-dot' style='background:{colour}'></span>{name}" for name, colour in
                           (('Entry', ENTRY), ('Exit', EXIT), ('Stop', STOP), ('Target', TARGET)))
         st.caption(f"<span class='mwj-legend'>{legend}</span> · {common.CREDIT}", unsafe_allow_html=True,
                    help='Hover an arrow for its exact fill. Scroll to zoom, drag to pan, double-click to reset. '

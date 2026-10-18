@@ -34,6 +34,10 @@ jobs:
           $listing = tar -tf $zip
           if (!($listing -match 'MotiveWave Journal.exe$')) { throw "ZIP is missing the launcher" }
           if (!($listing -match 'motivewave-journal.jar$')) { throw "ZIP is missing the study JAR" }
+          if (!($listing -match 'journal/\.streamlit/config\.toml$')) { throw "ZIP is missing the Streamlit settings" }
+          foreach ($font in 'Regular', 'Italic', 'Medium', 'SemiBold', 'Bold') {
+            if (!($listing -match ('app/static/fonts/IBMPlexSans-{0}\.woff2$' -f $font))) { throw "ZIP is missing IBM Plex Sans $font" }
+          }
       - uses: actions/upload-artifact@v4
         with:
           name: MotiveWave-Journal-Windows-x64

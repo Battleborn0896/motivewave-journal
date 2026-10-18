@@ -1,5 +1,6 @@
 # MotiveWave Journal's Streamlit settings, read when the app is started from the repository root
 # (run.sh, or: streamlit run app/app.py). The colours repeat app/theme.py for Streamlit's own widgets.
+# The desktop launchers pass the font and static-serving settings as flags as well (mwjournal/fonts.py).
 
 [theme]
 base = "dark"
@@ -7,10 +8,47 @@ primaryColor = "#E2CF32"
 backgroundColor = "#151617"
 secondaryBackgroundColor = "#1D1E1F"
 textColor = "#E8E8E5"
+# One typeface for everything, code included: IBM Plex Sans, from the bundled files in app/static/fonts
+# (SIL Open Font License 1.1). Nothing is fetched from the internet.
+font = "IBM Plex Sans"
+headingFont = "IBM Plex Sans"
+codeFont = "IBM Plex Sans"
+
+[[theme.fontFaces]]
+family = "IBM Plex Sans"
+url = "app/static/fonts/IBMPlexSans-Regular.woff2"
+weight = 400
+style = "normal"
+
+[[theme.fontFaces]]
+family = "IBM Plex Sans"
+url = "app/static/fonts/IBMPlexSans-Italic.woff2"
+weight = 400
+style = "italic"
+
+[[theme.fontFaces]]
+family = "IBM Plex Sans"
+url = "app/static/fonts/IBMPlexSans-Medium.woff2"
+weight = 500
+style = "normal"
+
+[[theme.fontFaces]]
+family = "IBM Plex Sans"
+url = "app/static/fonts/IBMPlexSans-SemiBold.woff2"
+weight = 600
+style = "normal"
+
+[[theme.fontFaces]]
+family = "IBM Plex Sans"
+url = "app/static/fonts/IBMPlexSans-Bold.woff2"
+weight = 700
+style = "normal"
 
 [server]
 # A trade journal is personal: answer on this computer only, not to the rest of the network.
 address = "localhost"
+# Serves app/static (the bundled fonts) at /app/static/.
+enableStaticServing = true
 
 [browser]
 gatherUsageStats = false

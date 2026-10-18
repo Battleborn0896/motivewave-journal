@@ -119,7 +119,7 @@ def customize(journal, rows, page_id, page):
         st.rerun()
     widgets = page['widgets']
     selected = st.selectbox('Edit widget', ['new', *range(len(widgets))],
-                             format_func=lambda i: '＋ Add a widget' if i == 'new' else widgets[i]['title'],
+                             format_func=lambda i: '+ Add a widget' if i == 'new' else widgets[i]['title'],
                              key=common.key(journal, 'widget-edit-' + page_id))
     old = widgets[selected] if selected != 'new' else {}
     with st.form(common.key(journal, 'widget-form-' + page_id + '-' + str(selected))):

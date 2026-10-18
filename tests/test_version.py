@@ -14,6 +14,7 @@ def test_the_app_version_is_the_same_everywhere_it_is_declared():
     with open(ROOT / 'desktop' / 'macos' / 'Info.plist', 'rb') as source:
         plist = plistlib.load(source)
     assert plist['CFBundleShortVersionString'] == paths.VERSION
+    assert plist['CFBundleVersion'] == paths.VERSION.split('.', 1)[1]          # 0.4.3 -> 4.3
     swift = (ROOT / 'desktop' / 'macos' / 'Main.swift').read_text(encoding='utf-8')
     assert f'.applicationVersion: "{paths.VERSION}"' in swift
     template = (ROOT / '.github' / 'ISSUE_TEMPLATE' / 'bug_report.yml').read_text(encoding='utf-8')
@@ -23,4 +24,4 @@ def test_the_app_version_is_the_same_everywhere_it_is_declared():
 def test_the_study_keeps_its_own_version():
     java = (ROOT / 'study' / 'src' / 'main' / 'java' / 'org' / 'mwjournal' / 'study' / 'JournalPaths.java')
     assert 'CONNECTOR_VERSION = "0.3.2"' in java.read_text(encoding='utf-8')
-    assert paths.VERSION == '0.4.2'
+    assert paths.VERSION == '0.4.3'

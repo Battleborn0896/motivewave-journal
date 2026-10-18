@@ -7,6 +7,7 @@ is not part of the desktop journal.
 from __future__ import annotations
 
 import argparse
+import json
 import os
 from pathlib import Path
 import socket
@@ -19,6 +20,18 @@ import urllib.request
 
 APP_NAME = "MotiveWave Journal"
 DEFAULT_PORT = 8600
+# The journal's one typeface, from the bundled journal/app/static/fonts. The same settings as
+# .streamlit/config.toml and mwjournal/fonts.py (tests keep the three identical), passed as flags so the
+# backend serves and uses the fonts even if it does not read that file. Kept here rather than imported
+# so this launcher stays self-contained.
+FONT_FAMILY = "IBM Plex Sans"
+FONT_FACES = (
+    ("IBMPlexSans-Regular.woff2", 400, "normal"),
+    ("IBMPlexSans-Italic.woff2", 400, "italic"),
+    ("IBMPlexSans-Medium.woff2", 500, "normal"),
+    ("IBMPlexSans-SemiBold.woff2", 600, "normal"),
+    ("IBMPlexSans-Bold.woff2", 700, "normal"),
+)
 
 
 def bundle_root() -> Path:
@@ -56,6 +69,19 @@ def health_bytes(url: str, *, timeout: float = 1.0) -> bytes:
         return response.read(64)
 
 
+def font_arguments() -> list[str]:
+    """Static serving on and every Streamlit font set to the bundled IBM Plex Sans."""
+    faces = [{"family": FONT_FAMILY, "url": f"app/static/fonts/{file}", "weight": weight, "style": style}
+             for file, weight, style in FONT_FACES]
+    return [
+        "--server.enableStaticServing=true",
+        f"--theme.font={FONT_FAMILY}",
+        f"--theme.headingFont={FONT_FAMILY}",
+        f"--theme.codeFont={FONT_FAMILY}",
+        "--theme.fontFaces=" + json.dumps(faces, separators=(",", ":")),
+    ]
+
+
 def streamlit_arguments(project: Path, port: int) -> list[str]:
     """Arguments used by the private backend process."""
     return [
@@ -70,6 +96,7 @@ def streamlit_arguments(project: Path, port: int) -> list[str]:
         "--server.enableXsrfProtection=true",
         "--global.developmentMode=false",
         "--server.enableCORS=true",
+        *font_arguments(),
     ]
 
 

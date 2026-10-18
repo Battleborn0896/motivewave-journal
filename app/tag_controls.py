@@ -117,14 +117,14 @@ def render(journal, trade):
         st.markdown('### Tags', help='Click a tag to apply it, click again to remove it. Changes save at once. '
                                      f'Day tags follow the trading day in {library["session_timezone"]}.')
         if not groups:
-            st.info('No tag categories yet. Use ＋ Category below to make one.')
+            st.info('No tag categories yet. Use + Category below to make one.')
         with st.container(key='tag-cards-' + trade.id):
             for group, names in groups.items():
                 exclusive = library['groups'][group]['exclusive']
                 with st.container(key=theme.tag_group_key(group)):
                     if not names:
                         st.markdown(f"<div class='mwj-card-title'>{html.escape(group)}</div>", unsafe_allow_html=True)
-                        st.caption('No tags yet · ＋ Tag adds one')
+                        st.caption('No tags yet · + Tag adds one')
                         continue
                     group_key = common.key(journal, f'tag-group-{trade.id}-{group}')
                     values = [t for t in tagging.names(library, chosen) if t in names]
@@ -136,7 +136,8 @@ def render(journal, trade):
                                                              'resolves them.' if conflict else '') if exclusive else None)
         rating_key = common.key(journal, 'rating-' + trade.id)
         st.pills('Process rating', [1, 2, 3, 4, 5], default=annotation.get('rating'), key=rating_key,
-                 format_func=lambda n: f'{n}★', on_change=save_field,
+                 # A Material star icon: IBM Plex Sans has no '★', so the browser drew it in another font.
+                 format_func=lambda n: f'{n} :material/star:', on_change=save_field,
                  args=(journal, trade.id, 'rating', rating_key), help='How well you followed your process, 1 to 5.')
         with st.container(horizontal=True, gap='small'):
             _creation_tools(journal, trade, groups)
@@ -176,8 +177,8 @@ def render(journal, trade):
 
 
 def _creation_tools(journal, trade, groups):
-    """'＋ Category' and '＋ Tag' as small text buttons beside the panel title."""
-    with st.popover('＋ Category', type='tertiary', help='Make a new tag category, such as Orderflow.'):
+    """'+ Category' and '+ Tag' as small text buttons beside the panel title."""
+    with st.popover('+ Category', type='tertiary', help='Make a new tag category, such as Orderflow.'):
         with st.form(common.key(journal, 'new-category-' + trade.id), clear_on_submit=True, border=False):
             name = st.text_input('Category name', max_chars=40, placeholder='Orderflow')
             if st.form_submit_button('Create Category', type='primary'):
@@ -186,8 +187,11 @@ def _creation_tools(journal, trade, groups):
                     st.rerun()
                 except ValueError as exc:
                     st.error(str(exc))
-    with st.popover('＋ Tag', type='tertiary', help='Make a new tag and apply it to this trade.'):
+    with st.popover('+ Tag', type='tertiary', help='Make a new tag and apply it to this trade.'):
+        # The choice keeps a full-width plus, which no category name typed as '+ New category' can match;
+        # it is shown with '+', which IBM Plex Sans draws.
         choice = st.selectbox('Tag category', [*groups, '＋ New category'], index=0,
+                              format_func=lambda g: '+ New category' if g == '＋ New category' else g,
                               key=common.key(journal, 'new-tag-group-' + trade.id))
         with st.form(common.key(journal, 'new-tag-' + trade.id), clear_on_submit=True, border=False):
             name = st.text_input('Tag name', max_chars=64, placeholder='Absorption at lows')

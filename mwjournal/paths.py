@@ -23,7 +23,7 @@ from pathlib import Path
 APP_NAME = 'MotiveWave Journal'
 # The app's version. pyproject.toml, desktop/macos/Info.plist and desktop/macos/Main.swift say the same;
 # tests/test_version.py checks. The study has its own version (study/.../JournalPaths.java).
-VERSION = '0.4.2'
+VERSION = '0.4.3'
 ENV = 'MWJ_HOME'
 DATASETS = ('live', 'replay')
 

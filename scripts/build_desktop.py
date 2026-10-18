@@ -15,6 +15,33 @@ import sys
 import tempfile
 
 ROOT = Path(__file__).resolve().parent.parent
+SOURCE_DIRECTORIES = ('app', 'mwjournal', '.streamlit', 'docs')
+SOURCE_FILES = ('README.md', 'LICENSE', 'THIRD_PARTY_NOTICES.md')
+# The bundled typeface (IBM Plex Sans, app/static/fonts) and the settings that serve it. Without them the
+# app would draw in fallback fonts, so no build ships without them.
+REQUIRED_FILES = (
+    'app/app.py',
+    '.streamlit/config.toml',
+    'app/static/fonts/IBM-Plex-Sans-LICENSE.txt',
+    'app/static/fonts/IBMPlexSans-Regular.woff2',
+    'app/static/fonts/IBMPlexSans-Italic.woff2',
+    'app/static/fonts/IBMPlexSans-Medium.woff2',
+    'app/static/fonts/IBMPlexSans-SemiBold.woff2',
+    'app/static/fonts/IBMPlexSans-Bold.woff2',
+)
+
+
+def copy_source(destination: Path, root: Path = ROOT) -> Path:
+    """The journal's source tree inside the app: the code, its settings, the fonts and the notices."""
+    for name in SOURCE_DIRECTORIES:
+        shutil.copytree(root / name, destination / name,
+                        ignore=shutil.ignore_patterns('__pycache__', '*.pyc', '.DS_Store'))
+    for name in SOURCE_FILES:
+        shutil.copy2(root / name, destination / name)
+    missing = [name for name in REQUIRED_FILES if not (destination / name).is_file()]
+    if missing:
+        raise FileNotFoundError('The journal source is incomplete; missing: ' + ', '.join(missing))
+    return destination
 
 
 def write_icns(iconset: Path, target: Path) -> None:
@@ -55,10 +82,7 @@ def build(python: Path, output: Path):
         source = resources / 'journal'
         binary.parent.mkdir(parents=True)
         source.mkdir(parents=True)
-        for name in ('app', 'mwjournal', '.streamlit', 'docs'):
-            shutil.copytree(ROOT / name, source / name, ignore=shutil.ignore_patterns('__pycache__', '*.pyc'))
-        for name in ('README.md', 'LICENSE', 'THIRD_PARTY_NOTICES.md'):
-            shutil.copy2(ROOT / name, source / name)
+        copy_source(source)
         jar = ROOT / 'study' / 'build' / 'libs' / 'motivewave-journal.jar'
         if jar.is_file():
             packaged_jar = source / 'study' / 'build' / 'libs' / jar.name

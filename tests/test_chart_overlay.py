@@ -34,6 +34,7 @@ const context = vm.createContext({
   document: {getElementById: id => roots[id], createElementNS: (_, tag) => new Element(tag)},
   ResizeObserver: class { observe() {} },
   requestAnimationFrame: () => 1,
+  setTimeout: () => 1,
   fixture,
   fakeChart: {timeScale: () => scale, priceScale: () => ({width: () => 70})},
   fakeEntries: [{spec: fixture.series[0], api: {priceToCoordinate: price => 500 - price * 2}}],
@@ -93,10 +94,14 @@ def test_long_and_short_arrows_are_anchored_to_exact_fills_without_visible_label
     assert len(connectors) == 1 and connectors[0]['attrs']['stroke-dasharray'] == '3 4'
     assert float(connectors[0]['attrs']['x1']) == pytest.approx(51.625)
     assert float(connectors[0]['attrs']['y2']) == 500 - prices[1] * 2
-    titles = [n['textContent'] for n in nodes if n['tag'] == 'title']
-    assert 'Entry · 1 @ 100' in titles[0] and 'Execution: paper-0' in titles[0]
-    assert 'UTC 1970-01-01T00:00:23.250Z' in titles[0]
-    assert any(n['attrs'].get('role') == 'img' and 'aria-label' in n['attrs'] for n in nodes)
+    # The details are the chart's own IBM Plex Sans tooltip (data-detail), not an SVG <title>, which the
+    # browser would show in the system's font.
+    assert not any(n['tag'] == 'title' for n in nodes)
+    details = [n['attrs']['data-detail'] for n in nodes if 'data-detail' in n['attrs']]
+    assert len(details) == 2
+    assert 'Entry · 1 @ 100' in details[0] and 'Execution: paper-0' in details[0]
+    assert 'UTC 1970-01-01T00:00:23.250Z' in details[0]
+    assert any(n['attrs'].get('role') == 'img' and n['attrs'].get('aria-label') == details[0] for n in nodes)
 
 
 def test_partial_exits_keep_each_arrow_and_consecutive_fill_connections():

@@ -25,7 +25,7 @@ def render(journal, rows):
     manage, runs = st.tabs(['Build & Manage', 'Run History'])
     with manage:
         selected = st.selectbox('Checklist', [None, *sorted(definitions, key=lambda id: definitions[id]['order'])],
-                                 format_func=lambda id: definitions[id]['name'] if id else '＋ New checklist',
+                                 format_func=lambda id: definitions[id]['name'] if id else '+ New checklist',
                                  key=common.key(journal, 'checklist-editor-choice'))
         old = definitions.get(selected, {})
         with st.form(common.key(journal, 'checklist-name-' + str(selected))):

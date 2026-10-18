@@ -11,34 +11,74 @@
 
   It speaks Streamlit's component protocol directly (componentReady, render, setFrameHeight),
   so there is no build step.
+
+  Text is IBM Plex Sans, from the app's bundled files (app/static/fonts, served by Streamlit at
+  <app>/app/static/; this page is <app>/component/tvchart.tvchart/index.html, hence ../../). The axes
+  and watermark are drawn on a canvas, which does not redraw when a font arrives, so the chart waits
+  for the font before it draws.
 -->
 <style>
-  html, body { margin: 0; padding: 0; background: transparent; overflow: hidden; }
+  @font-face { font-family: "IBM Plex Sans"; font-style: normal; font-weight: 400; font-display: block;
+               src: url("../../app/static/fonts/IBMPlexSans-Regular.woff2") format("woff2"); }
+  @font-face { font-family: "IBM Plex Sans"; font-style: italic; font-weight: 400; font-display: block;
+               src: url("../../app/static/fonts/IBMPlexSans-Italic.woff2") format("woff2"); }
+  @font-face { font-family: "IBM Plex Sans"; font-style: normal; font-weight: 500; font-display: block;
+               src: url("../../app/static/fonts/IBMPlexSans-Medium.woff2") format("woff2"); }
+  @font-face { font-family: "IBM Plex Sans"; font-style: normal; font-weight: 600; font-display: block;
+               src: url("../../app/static/fonts/IBMPlexSans-SemiBold.woff2") format("woff2"); }
+  @font-face { font-family: "IBM Plex Sans"; font-style: normal; font-weight: 700; font-display: block;
+               src: url("../../app/static/fonts/IBMPlexSans-Bold.woff2") format("woff2"); }
+  :root { --font: "IBM Plex Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif; }
+  html, body { margin: 0; padding: 0; background: transparent; overflow: hidden; font-family: var(--font); }
   #wrap { position: relative; border-radius: 6px; overflow: hidden; }
   #title { position: absolute; left: 12px; top: 8px; z-index: 4; pointer-events: none;
-           font: 700 11.5px/1.4 var(--mono); letter-spacing: .1em; text-transform: uppercase;
+           font: 700 11.5px/1.4 var(--font); letter-spacing: .1em; text-transform: uppercase;
            max-width: calc(100% - 90px); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-  #legend { position: absolute; left: 12px; z-index: 4; pointer-events: none; font: 11.5px/1.55 var(--mono);
+  #legend { position: absolute; left: 12px; z-index: 4; pointer-events: none; font: 11.5px/1.55 var(--font);
+            font-variant-numeric: tabular-nums;
             display: flex; flex-wrap: wrap; gap: 4px 14px; max-width: calc(100% - 110px);
             padding: 2px 6px; margin-left: -6px; border-radius: 4px; background: var(--legend-bg, transparent); }
   #legend .item { white-space: nowrap; max-width: 100%; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
   #legend .dot { display: inline-block; width: 8px; height: 8px; border-radius: 2px; margin-right: 6px; }
   #legend .name { margin-right: 6px; }
   #hint { position: absolute; right: 70px; bottom: 34px; z-index: 4; pointer-events: none;
-          font: 10.5px/1 var(--mono); opacity: 0; transition: opacity .3s; }
+          font: 10.5px/1 var(--font); opacity: 0; transition: opacity .3s; }
   #wrap:hover #hint { opacity: .55; }
   #trade-overlay { position: absolute; left: 0; top: 0; z-index: 3; pointer-events: none; }
+  #trade-overlay text { font-variant-numeric: tabular-nums; }
+  /* A fill arrow's details. Drawn here rather than as an SVG <title>, which the browser shows in the
+     system's font. */
+  #fill-tip { position: absolute; z-index: 5; pointer-events: none; font: 11.5px/1.45 var(--font);
+              font-variant-numeric: tabular-nums; white-space: pre; padding: 6px 8px; border-radius: 4px;
+              color: var(--tip-ink, #e8e8e5); background: var(--tip-bg, #272829);
+              border: 1px solid var(--tip-border, #414345); box-shadow: 0 4px 12px rgba(0, 0, 0, .35); }
 </style>
 <script src="lightweight-charts.standalone.production.js"></script>
 </head>
 <body>
 <div id="wrap"><div id="title"></div><div id="legend"></div><div id="chart"></div><svg id="trade-overlay"></svg>
-  <div id="hint">scroll zoom · drag pan · double-click reset</div></div>
+  <div id="hint">scroll zoom · drag pan · double-click reset</div><div id="fill-tip" role="tooltip" hidden></div></div>
 <script>
 const LC = window.LightweightCharts;
 const STYLE = { solid: LC.LineStyle.Solid, dotted: LC.LineStyle.Dotted, dashed: LC.LineStyle.Dashed,
                 large: LC.LineStyle.LargeDashed, sparse: LC.LineStyle.SparseDotted };
 let chart = null, entries = [], signature = null, userMoved = false, spec = null, overlayFrame = 0;
+// The canvas keeps whatever font it first drew with, so the first drawing waits for IBM Plex Sans (a
+// local file, normally a few milliseconds; at most three seconds). A font that arrives later still
+// gets the chart redrawn in it.
+let fontLate = false;
+const FONT_FACES = ['400 11px "IBM Plex Sans"', '700 11px "IBM Plex Sans"'];
+const fontLoaded = document.fonts ? Promise.all(FONT_FACES.map(face => document.fonts.load(face))).catch(() => null)
+                                  : Promise.resolve(null);
+const fontReady = Promise.race([fontLoaded.then(() => 'loaded'),
+                                new Promise(resolve => setTimeout(() => resolve('late'), 3000))])
+  .then(result => { fontLate = result === 'late'; });
+fontLoaded.then(() => {
+  if (!fontLate || !spec) return;
+  fontLate = false;
+  signature = null;                        // rebuilt, so the axes measure their labels again
+  try { render({ spec: spec }); } catch (err) { /* the next render from Streamlit draws it */ }
+});
 const escapeText = v => String(v == null ? '' : v).replace(/[&<>"']/g, c =>
   ({'&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;'}[c]));
 
@@ -71,18 +111,21 @@ function build(s) {
   if (chart) { chart.remove(); chart = null; }
   const t = s.theme;
   const hasCandles = s.series.some(x => x.type === 'candles');
-  document.documentElement.style.setProperty('--mono', t.mono);
+  document.documentElement.style.setProperty('--font', t.font);
   document.getElementById('wrap').style.background = t.surface;
   document.getElementById('wrap').style.border = '1px solid ' + t.border;
   document.getElementById('title').style.color = t.ink;
   document.getElementById('legend').style.top = s.title ? '28px' : '8px';
   document.documentElement.style.setProperty('--legend-bg', t.surface + 'E6');
+  [['--tip-bg', t.label], ['--tip-ink', t.ink], ['--tip-border', t.border]].forEach(([name, value]) => {
+    if (value) document.documentElement.style.setProperty(name, value);
+  });
   document.getElementById('hint').style.color = t.muted;
   chart = LC.createChart(el, {
     height: s.height, autoSize: false, width: el.clientWidth || document.body.clientWidth,
     // No logo on the chart: the library's attribution notice and its link are in the app's sidebar,
     // on every view (see VENDOR.txt). Price charts get a faint grid both ways.
-    layout: { background: { type: 'solid', color: t.surface }, textColor: t.muted, fontFamily: t.mono, fontSize: 11,
+    layout: { background: { type: 'solid', color: t.surface }, textColor: t.muted, fontFamily: t.font, fontSize: 11,
               attributionLogo: false },
     grid: { vertLines: { visible: hasCandles, color: t.grid }, horzLines: { color: t.grid, style: LC.LineStyle.Solid } },
     crosshair: { mode: LC.CrosshairMode.Normal,
@@ -98,7 +141,7 @@ function build(s) {
     localization: { priceFormatter: formatter(s.format),
                     ...(s.timezone ? {timeFormatter: time => timeLabel(time, true)} : {}) },
     watermark: s.watermark ? { visible: true, text: s.watermark, color: t.watermark, fontSize: 40,
-                               fontFamily: t.mono, fontStyle: '700', horzAlign: 'center', vertAlign: 'center' }
+                               fontFamily: t.font, fontStyle: '700', horzAlign: 'center', vertAlign: 'center' }
                            : { visible: false },
     handleScroll: { mouseWheel: true, pressedMouseMove: true, horzTouchDrag: true, vertTouchDrag: false },
     handleScale: { mouseWheel: true, pinch: true, axisPressedMouseMove: { time: true, price: true },
@@ -167,6 +210,19 @@ function build(s) {
   new ResizeObserver(() => { if (chart) { chart.applyOptions({ width: el.clientWidth }); requestOverlay(); } }).observe(el);
   box.addEventListener('pointermove', requestOverlay, {passive: true});
   box.addEventListener('wheel', requestOverlay, {passive: true});
+  // A fill arrow's details follow the pointer while it is over the arrow (the arrow is the event target).
+  const tip = document.getElementById('fill-tip');
+  const hideTip = () => { if (tip) tip.hidden = true; };
+  box.addEventListener('pointermove', ev => {
+    const arrow = ev.target && ev.target.closest ? ev.target.closest('[data-detail]') : null;
+    if (!tip || !arrow) { hideTip(); return; }
+    tip.textContent = arrow.getAttribute('data-detail');
+    tip.hidden = false;
+    const area = box.getBoundingClientRect(), x = ev.clientX - area.left, y = ev.clientY - area.top;
+    tip.style.left = Math.max(4, Math.min(box.clientWidth - tip.offsetWidth - 4, x + 14)) + 'px';
+    tip.style.top = Math.max(4, Math.min(box.clientHeight - tip.offsetHeight - 4, y + 14)) + 'px';
+  }, {passive: true});
+  ['pointerleave', 'wheel', 'mousedown'].forEach(ev => box.addEventListener(ev, hideTip, {passive: true}));
 })();
 
 function resetView() {
@@ -259,7 +315,7 @@ function drawOverlay() {
     line(x1,y,x2,y,level.color,level.style === 'dotted' ? '2 4' : '7 4');
     const labelX = Math.max(6, Math.min(plotWidth - 220, x2 - 220));
     const labelY = Math.max(spec.title ? 64 : 28, y - 6); // keep SL/TP labels below the title and OHLC legend
-    element('text',{x:labelX,y:labelY,fill:level.color,'font-size':10,'font-family':spec.theme.mono},layer,
+    element('text',{x:labelX,y:labelY,fill:level.color,'font-size':10,'font-family':spec.theme.font},layer,
       level.label + ' @ ' + formatter(spec.format)(level.price));
   }
   const placed = [];
@@ -277,8 +333,9 @@ function drawOverlay() {
   for (const {fill,x,y} of placed) {
     const detail = fill.side.toUpperCase() + ' · ' + fill.label + '\n' + timeLabel(fill.time,true)
       + '\nUTC ' + fill.ts + '\nExecution: ' + (fill.execution_id || 'not supplied');
-    const group = element('g', {'pointer-events':'visiblePainted',role:'img','aria-label':detail},layer);
-    element('title',{},group,detail);
+    // No SVG <title>: the browser would show it in the system's font. #fill-tip shows data-detail instead.
+    const group = element('g', {'pointer-events':'visiblePainted',role:'img','aria-label':detail,
+                                'data-detail':detail},layer);
     // Buy points up from below; sell points down from above, including short entries and covers.
     // The tip and connector stay at the actual fill price/time, not at a candle high or low.
     const direction = fill.side === 'buy' ? 1 : -1;
@@ -332,9 +389,11 @@ function render(args) {
 window.addEventListener('message', ev => {
   const d = ev.data;
   if (d && d.type === 'streamlit:render') {
-    try { render(d.args); }
-    catch (err) { document.getElementById('chart').textContent = 'Chart error: ' + err.message;
-                  post('streamlit:setFrameHeight', { height: 40 }); }
+    fontReady.then(() => {
+      try { render(d.args); }
+      catch (err) { document.getElementById('chart').textContent = 'Chart error: ' + err.message;
+                    post('streamlit:setFrameHeight', { height: 40 }); }
+    });
   }
 });
 post('streamlit:componentReady', { apiVersion: 1 });

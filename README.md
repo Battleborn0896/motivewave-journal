@@ -7,6 +7,19 @@ Live/paper and replay have separate databases. No routine CSV export/import is r
 MotiveWave Journal is an independent open-source project. It is not affiliated with, endorsed by or
 supported by MotiveWave Software.
 
+## What's new in 0.4.3: one typeface
+
+Every piece of text in the journal is now IBM Plex Sans: pages, buttons, menus, tooltips, tables, the
+Stats charts, the trade chart's axes and legend, the checklist editor and custom script widgets. The
+monospace numbers are gone; amounts, times, prices and the headline tiles use Plex's tabular figures,
+so columns of numbers still line up. A trade chart arrow's fill details now open in the chart's own
+tooltip rather than the system's. Plex has no ★ or ⚠, so the process rating's stars and the Stats fee
+warning are icons now. The font files ship with the app (`app/static/fonts`, SIL Open
+Font License 1.1) and the app serves them itself: nothing is fetched from the internet, and the journal
+still works offline. The browser tab's icon is now part of the app too; in 0.4.2 and earlier the browser
+fetched it from Google's icon server. Journals, tags, reviews and settings are unchanged. (The Mac
+app's menu bar and About box are drawn by macOS in its own font.)
+
 ## What's new in 0.4.2: fees come from MotiveWave
 
 Commission rates are set in MotiveWave, and the journal now takes the fee MotiveWave reports for
@@ -48,8 +61,8 @@ the Daily Report Card, session tools, checklists, tags, imports, backups) is one
 The trade list stays on the left while the selected trade's chart and tags stay on the right.
 Click a row, or use Prev / Next; no separate opening/back-navigation step is needed.
 **Chart & Tags** puts the chart and a grouped, clickable tagging panel side by side. Click a tag to
-toggle it; changes save automatically. **＋ Tag** creates a reusable tag and applies it to the current
-trade; **＋ Category** creates a category. **More Tagging Tools → Copy Tags From Another Trade** adds
+toggle it; changes save automatically. **+ Tag** creates a reusable tag and applies it to the current
+trade; **+ Category** creates a category. **More Tagging Tools → Copy Tags From Another Trade** adds
 another trade's tags without replacing existing tags or notes. Day tags you explicitly select are
 inherited by trades opened on that local calendar date; otherwise no trade is automatically tagged.
 Setup → Connection also lets you pick a captured instrument instead of retyping its symbol.
@@ -115,8 +128,8 @@ instead of scrolling through a long stacked page. Setup/notes autosave when leav
 planned risk/SL/TP use **Save Plan**. **Prev / Next** reviews adjacent trades while
 the list remains visible. A tag edit that removes the current trade from your filters keeps it
 open until you change the filter/selection, rather than interrupting the review. Existing flat tags
-remain under **Other tags**. **＋ Category** creates first-class groups such as Orderflow or Psychology,
-including empty groups; **＋ Tag** creates and immediately applies a reusable tag. A journal from 0.4.0
+remain under **Other tags**. **+ Category** creates first-class groups such as Orderflow or Psychology,
+including empty groups; **+ Tag** creates and immediately applies a reusable tag. A journal from 0.4.0
 keeps its untouched Setup, Execution and Mindset suggestions hidden unless **Show starter examples**
 (under More Tagging Tools) is on, and shows them when it has no categories of its own. Any starter
 tag already used on a trade remains visible. Renames display the current label but keep the original stored review
@@ -282,6 +295,8 @@ bash run.sh
 
 Windows: use `.venv\Scripts\python.exe` for installation and launch with
 `.venv\Scripts\python.exe -m streamlit run app/app.py` from the repository root.
+Start it from the repository root on every system: Streamlit then reads `.streamlit/config.toml`,
+which serves the bundled fonts (`app/static`) and sets the journal's colours.
 The app is bound to localhost. No hosted service or separate Rithmic API subscription is required
 by this app; your MotiveWave/broker data entitlements still apply.
 
