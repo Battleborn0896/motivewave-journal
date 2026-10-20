@@ -73,12 +73,14 @@ LIMITS = ('The study is read-only: it never places, changes or cancels an order.
           'status above then shows the study\'s own message, and prices keep recording either way. A stop or target '
           'is captured only when MotiveWave links it to the position; standalone orders are never guessed from '
           'price. Fees can be the platform\'s estimates; such trades are flagged. Prices are recorded per chart: put '
-          'the study on the chart of each contract you trade; one study reads the account for all of them. Replay '
-          'prices are recorded as they play, and rewinding starts a new run. They count as real ticks only when '
-          'the study\'s Real Tick Data box says the replay runs on tick data. Once a replay trade is flat, the study '
+          'the study on the chart you trade, contract or continuous; prices go with trades of the same product, '
+          'whatever the contract month, and one study reads the account for all of them. Replay prices are '
+          'recorded as they play, and rewinding starts a new run. They count as real ticks unless the study\'s '
+          'Real Tick Data box is switched off, for a replay generated from bars. Once a replay trade is flat, the study '
           'also loads the real ticks of its holding time from MotiveWave\'s history, up to the replay\'s current '
           'time and no further; those count as real ticks of that run either way. Studies before 0.3.3 recorded no '
-          'live or replay ticks: install the study again from this page and restart MotiveWave.')
+          'live or replay ticks, and before 0.3.4 labelled replay prints simulated: install the study again from '
+          'this page and restart MotiveWave.')
 
 
 def render(journal, rows) -> None:

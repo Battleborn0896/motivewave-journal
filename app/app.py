@@ -45,7 +45,7 @@ def badge(dataset: str, selected_journal=None) -> None:
     if journal is None:
         return
     _, _, _, link = common.study_link(journal)
-    # The state word only: 'Connected · study 0.3.3' is wider than the sidebar. Setup shows the version.
+    # The state word only: 'Connected · study 0.3.4' is wider than the sidebar. Setup shows the version.
     st.markdown(theme.chip(link.state, link.tone, state=link.state) + "<span class='mwj-go'>Setup ›</span>",
                 unsafe_allow_html=True)
     seen_key = common.key(journal, SEEN_KEY) if not selected_journal else f'{SEEN_KEY}-{dataset}-{selected_journal}'

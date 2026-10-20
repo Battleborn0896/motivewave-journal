@@ -7,10 +7,27 @@ Live/paper and replay have separate databases. No routine CSV export/import is r
 MotiveWave Journal is an independent open-source project. It is not affiliated with, endorsed by or
 supported by MotiveWave Software.
 
-## What's new in 0.4.5: a short Setup, and tools where they are used
+## What's new in 0.4.5: prices matched by product, replay MAE/MFE by default, and a short Setup
+
+This release comes with study **0.3.4**. Setup asks for it in one line while MotiveWave runs an older
+study: click **Install MotiveWave Study**, then quit MotiveWave completely and open it again.
+
+- **Any chart of the product works.** A trade is measured and charted with the prices of its product,
+  whatever the contract month or the feed's spelling: `NQZ6`, `NQ` and a continuous `NQ` chart are all
+  `NQ`; `MNQ` is another product. When both the contract's own prices and the continuous chart's were
+  recorded, the contract's come first. There is nothing to set, and the study's **Symbol** override is
+  no longer needed for this: clear it if you typed a contract there.
+- **Replay trades get MAE and MFE with the defaults.** The replay's own prints now count as real ticks
+  (**Real Tick Data** is on by default; switch it off only for a replay generated from bars). Charts that
+  already had the study take the new default too.
+- **Prints recorded as they trade are never marked proxy.** Only the history a continuous chart loads
+  when it opens is, because it can be back-adjusted after a roll.
+- **Trades already in your journal are measured again once**, in the background, the first time the new
+  app starts, so an open or recent trade that showed no MAE/MFE gets it without pressing anything. Prices
+  recorded earlier keep their old labels.
 
 Setup now holds only setup. When the study is recording it is one green line, for example
-*Connected · recording NQZ6, ESZ6 · study 0.3.3* (the contracts the study wrote prices or fills for in
+*Connected · recording NQZ6, ESZ6 · study 0.3.4* (the contracts the study wrote prices or fills for in
 the last hour). Only when something is missing does a step appear, and only the one that is needed:
 install the study, add it to a chart, update an older study (Install, then restart MotiveWave), or a
 study that has gone quiet. Below it are **Time Zone** and **MAE / MFE Units**, then accuracy and hiding
@@ -33,7 +50,7 @@ app version, study version and data folder.
 - Connection's **Capture enabled** switch is now **Read Trades From MotiveWave**, under Advanced at the
   bottom of Data → Connection. It is on unless you switched it off.
 
-Nothing in your journals changes, and the study stays 0.3.3.
+Tags, reviews and settings are unchanged.
 
 ## What's new in 0.4.4: ticks that actually arrive, and a study with nothing to set
 
@@ -278,8 +295,8 @@ needs permission to see the desktop.
 
 ### Post-exit runner analysis
 
-The study now defaults to **Always While Study Runs**: every trade print MotiveWave delivers to that
-exact-contract chart is retained, so 5/15/30-minute post-exit windows do not depend on a separate
+The study now defaults to **Always While Study Runs**: every trade print MotiveWave delivers to the
+chart is retained, so 5/15/30-minute post-exit windows do not depend on a separate
 recorder. The lower-storage **Trade + After Exit Only** option keeps a bounded pre-roll, the holding
 window and **After Exit (Minutes)** (30 by default, 0–120 configurable). Neither mode holds a position
 or modifies an order. Both require the chart/study/feed to keep running; `Never` disables ticks.
@@ -374,8 +391,10 @@ bash study/scripts/build.sh
 The output is `study/build/libs/motivewave-journal.jar`. A packaged desktop user can click
 **Setup → Install MotiveWave Study**. The app atomically installs only this named JAR, preserves its
 previous copy and asks for a MotiveWave restart. Manual alternative: use **Study → All Studies →
-Import**. Then add **Journal → MotiveWave Journal** to each exact contract
-chart you trade. There is nothing to set: every setting is under the study's **Advanced** tab and the
+Import**. Then add **Journal → MotiveWave Journal** to the chart you trade, the contract's own (`NQZ6`)
+or a continuous one (`NQ`): a trade is measured with the prices of its product (`NQZ6`, `NQ` and a
+continuous `NQ` are all `NQ`; `MNQ` is another product), its exact contract's first when both were
+recorded. There is nothing to set: every setting is under the study's **Advanced** tab and the
 defaults are what the app expects. The app starts watching both files by itself.
 Check **Setup** in the app: it should change from Waiting For Study to one green Connected line. To install the
 study again after an app update, use **Setup → Data → Connection → Install MotiveWave Study**.
@@ -419,8 +438,9 @@ copy the live bridge path shown in Data → Connection into the study's File set
   study loads the real ticks of its holding window from MotiveWave's tick history for that run, up to
   the replay's current time and never past it (**Backfill Trade Ticks (Days)** under Advanced, 0 = off,
   counted back from the replay clock). They are asked for as real ticks, never generated from bars, whatever
-  the replay plays; a window the history has no ticks for stays empty. Set **Real Tick Data** only
-  when replay actually uses tick data; otherwise measurements stay labelled simulated/unverified.
+  the replay plays; a window the history has no ticks for stays empty. The replay's own prints count
+  as real ticks too; switch **Real Tick Data** off only when the replay is generated from bars, and
+  they are then labelled simulated.
   See [MotiveWave's replay sources](https://docs.motivewave.com/user-guide/replay-mode).
 - Tick-derived one-minute candles represent the received prints; position-gated candles can be
   partial. OHLC estimates, proxies, simulated replay and observed ticks stay visibly distinct.

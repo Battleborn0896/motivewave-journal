@@ -3,23 +3,27 @@ package org.mwjournal.study;
 import java.util.List;
 
 /** The study's settings dialog, as data. A user adds the study to a chart and changes nothing: the first
- * tab only says so, and every setting is under Advanced. Each key and default is the one earlier versions
- * stored, so a chart saved by them keeps its choices.
+ * tab only says so, and every setting is under Advanced. Each key is the one earlier versions stored, so a
+ * chart saved by them keeps its choices, except where a key ends in V2: there the default changed, and a
+ * chart saved with the old default would otherwise keep it.
  *
  * Pure: no MotiveWave types. The SDK's dialog classes need JavaFX, which a test JVM does not have, so the
  * layout is kept here where a test can read it, and MotiveWaveJournal.describe turns it into descriptors. */
 final class JournalSettings {
   static final String FILE = "journalFile", SYMBOL = "journalSymbol", PROXY = "priceProxy";
   static final String DAYS = "historyDays", END = "historyEnd", TICKS = "historyTickMinutes", BACKFILL = "backfillDays";
-  static final String ACCOUNTS = "nativeAccounts", REPLAY = "captureReplay", REAL_REPLAY = "realReplayTicks";
+  static final String ACCOUNTS = "nativeAccounts", REPLAY = "captureReplay";
   // v2 intentionally resets the old position-gated preference: continuous chart capture is the product
   // default, so 5/15/30-minute runner windows exist without another switch.
   static final String RECORD = "recordTicksV2";
+  // v2 (study 0.3.4): replay prints count as real ticks by default. Under the old key, every chart that
+  // had the study kept the old default, off, and its replay trades showed no MAE / MFE.
+  static final String REAL_REPLAY = "realReplayTicksV2";
   static final String POST_EXIT = "postExitMinutes";
 
   static final int DAYS_DEFAULT = 3, DAYS_MAX = 14, TICKS_DEFAULT = 0, TICKS_MAX = 120;
   static final int BACKFILL_DEFAULT = 30, POST_EXIT_DEFAULT = 30, POST_EXIT_MAX = 120;
-  static final boolean ACCOUNTS_DEFAULT = true, REPLAY_DEFAULT = true, REAL_REPLAY_DEFAULT = false, PROXY_DEFAULT = false;
+  static final boolean ACCOUNTS_DEFAULT = true, REPLAY_DEFAULT = true, REAL_REPLAY_DEFAULT = true, PROXY_DEFAULT = false;
   static final String RECORD_DEFAULT = JournalTicks.ALWAYS;
 
   /** NOTE is a line of text with no value; the others are inputs stored under their key. */
@@ -36,7 +40,7 @@ final class JournalSettings {
 
   static List<Tab> layout(String defaultFile) {
     var general = new Tab("General", List.of(new Group("Nothing To Set", List.of(
-        List.of(note("Add the study to the chart of each contract you trade. That is all.")),
+        List.of(note("Add the study to the chart you trade, contract or continuous. That is all.")),
         List.of(note("The defaults suit nearly everyone; the rest is under Advanced."))))));
 
     var bridge = new Group("Bridge File", List.of(List.of(
@@ -59,8 +63,9 @@ final class JournalSettings {
         List.of(text(SYMBOL, "Symbol", "", 110, "The symbol written with each price. Blank uses the chart's active "
                 + "contract. Set it only when this chart stands in for the contract that is traded, and name that "
                 + "contract. Trade tick backfill is then off for this chart."),
-            toggle(PROXY, "Proxy Prices", PROXY_DEFAULT, "Marks the prices as coming from another instrument than "
-                + "the one traded. A continuous-contract chart is marked automatically."))));
+            toggle(PROXY, "Proxy Prices", PROXY_DEFAULT, "Marks this chart's prices as coming from another "
+                + "instrument than the one traded. Prints recorded as they trade, live or replay, are never marked "
+                + "otherwise; the history a continuous-contract chart loads is, as it can be back-adjusted."))));
     var fills = new Group("Fills", List.of(List.of(
         toggle(ACCOUNTS, "Capture Fills", ACCOUNTS_DEFAULT, "Reads fills and their linked stop and target orders, "
             + "live and replay. Read-only: it never places, changes or cancels an order. It reads MotiveWave "
@@ -81,9 +86,10 @@ final class JournalSettings {
     var replay = new Group("Replay", List.of(List.of(
         toggle(REPLAY, "Record Prices", REPLAY_DEFAULT, "Records replay prices, and backfills replay trades with "
             + "real ticks, in a file of their own beside the live one."),
-        toggle(REAL_REPLAY, "Real Tick Data", REAL_REPLAY_DEFAULT, "Switch on only when the replay runs on real "
-            + "tick data. Off, the replay's own prices are labelled simulated: generated from bars, so less exact. "
-            + "Ticks backfilled from history are real either way."))));
+        toggle(REAL_REPLAY, "Real Tick Data", REAL_REPLAY_DEFAULT, "On (default), the replay's own prints are "
+            + "recorded as real ticks and measure replay trades like live ones. Switch off if your replay is "
+            + "generated from bars: its prints are then labelled simulated, so less exact. Ticks backfilled from "
+            + "history are real either way."))));
     return List.of(general, new Tab("Advanced", List.of(bridge, prices, fills, history, replay)));
   }
 

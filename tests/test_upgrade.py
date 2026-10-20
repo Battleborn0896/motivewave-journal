@@ -38,7 +38,8 @@ def rows(path, query):
 
 def as_schema_2(path):
     """Put a journal file back as 0.3.0 stored it: fills without the platform's position fields (the raw
-    event kept beside each still has them), the capture warning held as a failure, version 2."""
+    event kept beside each still has them), the capture warning held as a failure, no measurement rules
+    recorded, version 2."""
     db = sqlite3.connect(path)
     with db:
         for key, payload in db.execute('SELECT key, payload FROM executions').fetchall():
@@ -50,7 +51,7 @@ def as_schema_2(path):
                 status.update(status='needs attention', error=status['heartbeat']['detail'])
             status.pop('relabelled', None)
             db.execute('UPDATE sync_status SET payload=? WHERE name=?', (json.dumps(status, sort_keys=True), name))
-        db.execute("DELETE FROM journal_meta WHERE key IN ('schema_upgrade', 'recalculate')")
+        db.execute("DELETE FROM journal_meta WHERE key IN ('schema_upgrade', 'recalculate', 'measurement_rules')")
         db.execute('DELETE FROM metrics')
         db.execute('PRAGMA user_version=2')
     db.close()
@@ -302,5 +303,6 @@ def test_fills_that_never_had_position_fields_are_left_byte_for_byte(tmp_path):
     upgraded = Journal(path)
     assert rows(path, 'SELECT key, payload, raw FROM executions ORDER BY key') == before
     assert rows(path, 'PRAGMA user_version') == [(3,)] and len(backups(tmp_path)) == 1
-    assert upgraded.upgrade_note()['executions_rewritten'] == 0 and not upgraded.recalculation_due()
+    assert upgraded.upgrade_note()['executions_rewritten'] == 0
+    assert upgraded.recalculation_due()          # nothing regrouped, but measured under older rules: once more
     assert [(t.id, t.net, t.basis) for t in upgraded.trades()] == trades

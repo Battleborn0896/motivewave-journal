@@ -28,10 +28,11 @@ import static org.mwjournal.study.JournalTicks.IN_POSITION;
  *   price_known false, the 'platform reported no fill price' label); the exit is at 21020.
  * Because of that one fill every heartbeat is 'connected' with warnings '1 fill with no fill price'.
  * The replay file holds one ESZ6 trade, short 2 from 4800 and 4802 to 4797, and the same heartbeats. Its
- *   replay prints are simulated (motivewave-replay:<run>:simulated). Once it is flat, the replay backfill
- *   loads five real prints of its holding window (motivewave-replay:<run>:history), low 4795.5 and high
- *   4806, with the replay clock three seconds past the exit: the history also answers with a print after
- *   that clock, at 4700, which must never reach the file.
+ *   replay prints are real ticks, as the study labels them with its default settings
+ *   (motivewave-replay:<run>:ticks). Once it is flat, the replay backfill loads five real prints of its
+ *   holding window (motivewave-replay:<run>:history), low 4795.5 and high 4806, with the replay clock three
+ *   seconds past the exit: the history also answers with a print after that clock, at 4700, which must
+ *   never reach the file.
  *
  * Not a suite (its name does not end in Test): scripts/test.sh runs it and passes a fresh temporary path.
  * Fixtures only: no MotiveWave session, account or order is involved. */
@@ -53,7 +54,7 @@ public final class ContractSample {
     var capture = JournalAccountCapture.fixture(file,
         () -> new JournalNativeAccess.Snapshot("workspace", List.copyOf(fills), List.copyOf(orders)));
     String run = capture.replayRun("ESZ6", REPLAY);
-    String replaySource = "motivewave-replay:" + run + ":simulated";
+    String replaySource = JournalPriceEvents.replayProvider(run, JournalSettings.REAL_REPLAY_DEFAULT);
     var writer = JournalEventWriter.acquire(file);
     var replayWriter = JournalEventWriter.acquire(replayFile);
     var gate = new TickGate<Held>();

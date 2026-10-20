@@ -1,6 +1,7 @@
 package org.mwjournal.study;
 
 import com.motivewave.platform.sdk.common.Bar;
+import com.motivewave.platform.sdk.common.Instrument;
 import com.motivewave.platform.sdk.common.Tick;
 import java.lang.reflect.Proxy;
 import java.util.HashMap;
@@ -39,7 +40,63 @@ public final class JournalPriceEventsTest {
     assert !JournalPriceEvents.tick("ESZ6", tick, false).contains("\"bid\"") : "Skip crossed quotes";
     tickValues.put("getPrice", Float.NaN);
     assert JournalPriceEvents.tick("ESZ6", tick, false) == null : "No NaN in the bridge";
-    System.out.println("Journal price events passed: complete 1m OHLCV, invalid bars, exact tick times, quotes, and escaping.");
+
+    // The log's diagnostic: each name exactly as MotiveWave returns it, and why when it cannot.
+    Instrument chart = Instrument.class.cast(Proxy.newProxyInstance(Instrument.class.getClassLoader(),
+        new Class<?>[]{Instrument.class}, (proxy, method, arguments) -> switch (method.getName()) {
+          case "getSymbol" -> "NQ";
+          case "getActiveSymbol" -> "NQZ6";
+          case "getUnderlying" -> throw new UnsupportedOperationException();
+          default -> null;
+        }));
+    assert JournalPriceEvents.names(chart).equals("getSymbol()=\"NQ\", getActiveSymbol()=\"NQZ6\", "
+        + "getExchangeSymbol()=null, getUnderlying() failed: UnsupportedOperationException") : JournalPriceEvents.names(chart);
+
+    proxyRule();
+    System.out.println("Journal price events passed: complete 1m OHLCV, invalid bars, exact tick times, quotes, escaping, "
+        + "the chart instrument's names for the log, prints recorded as they trade never marked proxy by their "
+        + "chart, a continuous chart's loaded history marked, and the replay labels.");
+  }
+
+  /** What is proxy. Prints recorded as they trade, and the minute bars topped up as they close, are the
+   * product's own on any chart of it: only the user's Proxy Prices setting marks them. History loaded when
+   * a continuous chart opens can be back-adjusted, so it stays marked as before. */
+  private static void proxyRule() {
+    Bar bar = fixture(Bar.class, Map.of("isComplete", true, "getStartTime", 1791381600000L, "getSizeMillis", 60000L,
+        "getOpen", 21000f, "getHigh", 21004f, "getLow", 20999f, "getClose", 21002f, "getVolumeAsFloat", 12f));
+    Tick tick = fixture(Tick.class, Map.of("getTime", 1791381623250L, "getPrice", 21001f, "getBidPrice", 21000.75f,
+        "getAskPrice", 21001.25f, "getVolumeAsFloat", 1f));
+    Instrument continuous = instrument("NQ", "NQZ6"), contract = instrument("NQZ6", "NQZ6");
+    Instrument unnamed = instrument("NQ", null), blank = instrument("NQZ6", " ");
+    for (Instrument chart : java.util.List.of(continuous, contract, unnamed, blank)) {
+      assert !JournalPriceEvents.proxy(chart, false, false) : "Recorded as they trade: never proxy by default";
+      assert JournalPriceEvents.proxy(chart, true, false) && JournalPriceEvents.proxy(chart, true, true)
+          : "Proxy Prices marks everything the chart writes";
+    }
+    assert JournalPriceEvents.proxy(continuous, false, true) : "A continuous chart's loaded history keeps its flag";
+    assert !JournalPriceEvents.proxy(contract, false, true) && !JournalPriceEvents.proxy(unnamed, false, true)
+        && !JournalPriceEvents.proxy(blank, false, true) : "The contract's own history is not proxy";
+    // As written: a continuous chart's live and replay prints, and its loaded candles.
+    String live = JournalPriceEvents.tick("NQZ6", tick, JournalPriceEvents.proxy(continuous, false, false));
+    assert live.contains("\"provider\":\"motivewave-ticks\"") && live.endsWith(",\"proxy\":false}") : live;
+    String replay = JournalPriceEvents.tick("NQZ6", JournalPriceEvents.Print.of(tick),
+        JournalPriceEvents.proxy(continuous, false, false), JournalPriceEvents.replayProvider("run-1", true), "replay");
+    assert replay.contains("\"provider\":\"motivewave-replay:run-1:ticks\"") && replay.endsWith(",\"proxy\":false}") : replay;
+    String candle = JournalPriceEvents.bar("NQZ6", bar, JournalPriceEvents.proxy(continuous, false, true));
+    assert candle.endsWith(",\"proxy\":true}") : candle;
+    String toppedUp = JournalPriceEvents.bar("NQZ6", bar, JournalPriceEvents.proxy(continuous, false, false));
+    assert toppedUp.endsWith(",\"proxy\":false}") : "A minute just traded on the chart: " + toppedUp;
+    assert JournalPriceEvents.replayProvider("run-1", false).equals("motivewave-replay:run-1:simulated");
+  }
+
+  /** A chart instrument: its own symbol and the contract MotiveWave says is active (a continuous chart's differ). */
+  static Instrument instrument(String symbol, String active) {
+    return Instrument.class.cast(Proxy.newProxyInstance(Instrument.class.getClassLoader(),
+        new Class<?>[]{Instrument.class}, (proxy, method, arguments) -> switch (method.getName()) {
+          case "getSymbol" -> symbol;
+          case "getActiveSymbol" -> active;
+          default -> null;
+        }));
   }
 
   private static <T> T fixture(Class<T> type, Map<String,Object> values) {

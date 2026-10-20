@@ -4,6 +4,7 @@ import java.io.IOException;
 import java.nio.ByteBuffer;
 import java.nio.channels.FileChannel;
 import java.nio.channels.FileLock;
+import java.nio.channels.OverlappingFileLockException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -16,6 +17,11 @@ import java.util.concurrent.TimeUnit;
 
 /** One append writer per path across chart instances. All filesystem I/O runs off the tick callback. */
 final class JournalEventWriter {
+  /** Why a writer failed when another copy of the study holds its file, word for word in MotiveWave's log
+   * and in the heartbeat. Usually MotiveWave loaded a new jar without a full restart and the old copy is
+   * still running in the same Java process. */
+  static final String ANOTHER_COPY = "Another copy of the MotiveWave Journal study is still running: "
+      + "quit MotiveWave completely and open it again.";
   private static final Map<Path, JournalEventWriter> WRITERS = new HashMap<>();
   private final Path path;
   private final ArrayBlockingQueue<String> queue = new ArrayBlockingQueue<>(65536);
@@ -116,14 +122,27 @@ final class JournalEventWriter {
 
   private boolean hasDrops() { synchronized (dropped) { return !dropped.isEmpty(); } }
 
+  /** The bridge's lock, or null while someone else holds it. Only this study takes that lock, so that is
+   * another copy of the study: in another process tryLock returns null, in this one (an old copy that
+   * MotiveWave did not unload) it throws. */
+  private static FileLock tryLock(FileChannel channel) throws IOException {
+    try { return channel.tryLock(); }
+    catch (OverlappingFileLockException exc) { return null; }
+  }
+
+  /** True for the failure of a writer whose file another copy of the study holds. */
+  static boolean anotherCopy(Throwable exc) {
+    return exc instanceof IOException && ANOTHER_COPY.equals(exc.getMessage());
+  }
+
   private void run() {
     try {
       Files.createDirectories(path.getParent());
-      // Also reject a second JVM writing the same bridge. The harmless .lock file stays on disk.
+      // Also reject a second writer of the same bridge. The harmless .lock file stays on disk.
       try (FileChannel channel = FileChannel.open(path.resolveSibling(path.getFileName() + ".lock"),
                                                   StandardOpenOption.CREATE, StandardOpenOption.WRITE)) {
-        try (FileLock lock = channel.tryLock()) {
-          if (lock == null) throw new IOException("Another application is writing this journal bridge.");
+        try (FileLock lock = tryLock(channel)) {
+          if (lock == null) throw new IOException(ANOTHER_COPY);
           boolean midLine = endsMidLine(path);
           try (var file = Files.newBufferedWriter(path, StandardCharsets.UTF_8,
                                                   StandardOpenOption.CREATE, StandardOpenOption.APPEND)) {

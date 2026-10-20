@@ -143,7 +143,7 @@ public class MotiveWaveJournal extends Study {
         lastRequest = request;
       }
       long start = end - Math.max(days * 86400000L, ticks * 60000L);
-      submitHistory(capture, start, end, days > 0, ticks, true);
+      submitHistory(capture, start, end, days > 0, ticks, capture.historyProxy(), true);
     } catch (IOException | RuntimeException exc) { report(exc); }
   }
 
@@ -185,8 +185,9 @@ public class MotiveWaveJournal extends Study {
       }
       long minute = print.time() / 60000;
       long previous = lastMinute.getAndSet(minute);
+      // The minutes these prints just closed: recorded as they traded, so marked like the prints themselves.
       if (minute > previous && getSettings().getInteger(DAYS, DAYS_DEFAULT) > 0)
-        submitHistory(capture, (minute - 2) * 60000, minute * 60000, true, 0, false);
+        submitHistory(capture, (minute - 2) * 60000, minute * 60000, true, 0, capture.proxy(), false);
     } catch (IOException | RuntimeException exc) { report(exc); }
   }
 
@@ -199,7 +200,7 @@ public class MotiveWaveJournal extends Study {
     ReplaySource cached = replaySource;
     if (cached == null || cached.real() != real || !cached.run().equals(run)) {
       replayGate.clear(); // A rewind or a relabel: the pre-roll belongs to the previous run.
-      replaySource = cached = new ReplaySource(run, real, "motivewave-replay:" + run + (real ? ":ticks" : ":simulated"));
+      replaySource = cached = new ReplaySource(run, real, JournalPriceEvents.replayProvider(run, real));
     }
     return cached.name();
   }
@@ -233,11 +234,12 @@ public class MotiveWaveJournal extends Study {
         accountFile = file;
       } catch (IOException | ReflectiveOperationException | RuntimeException | LinkageError exc) {
         accountRetry = System.nanoTime() + ACCOUNT_RETRY_NANOS; // Not on every tick: a failed lookup is slow.
-        report("fill capture could not start (" + exc.getClass().getSimpleName()
-            + "). Prices are still recorded; fills are not.");
+        report(JournalEventWriter.anotherCopy(exc) ? JournalEventWriter.ANOTHER_COPY
+            : "fill capture could not start (" + exc.getClass().getSimpleName() + "). Prices are still recorded; fills are not.");
       }
     }
-    if (accounts != null && accounts.failure != null) report("fill capture: " + accounts.failure);
+    if (accounts != null && accounts.failure != null)
+      report(accounts.failure.equals(JournalEventWriter.ANOTHER_COPY) ? accounts.failure : "fill capture: " + accounts.failure);
     // Capture that works but skipped or assumed something is not an error: one line when it changes.
     String warnings = accounts == null ? null : accounts.warnings;
     if (warnings != null && !warnings.equals(lastWarnings)) {
@@ -253,17 +255,20 @@ public class MotiveWaveJournal extends Study {
     return replayWriter;
   }
 
-  private record Capture(Path file, Instrument instrument, String symbol, boolean proxy) {}
+  /** proxy: how the prints and minute bars recorded as they trade are marked. historyProxy: how the history
+   * loaded when the chart loads is marked. JournalPriceEvents.proxy has the rule. */
+  private record Capture(Path file, Instrument instrument, String symbol, boolean proxy, boolean historyProxy) {}
 
   private Capture capture(DataContext ctx) {
     Instrument instrument = ctx.getInstrument();
     if (instrument == null) throw new IllegalArgumentException("No chart instrument.");
     String active = instrument.getActiveSymbol(), symbol = getSettings().getString(SYMBOL, "").trim();
-    boolean continuous = active != null && !active.isBlank() && !active.equals(instrument.getSymbol());
     if (symbol.isEmpty()) symbol = active == null || active.isBlank() ? instrument.getSymbol() : active;
     Path file = Path.of(getSettings().getString(FILE, defaultFile()));
     if (!file.isAbsolute()) throw new IllegalArgumentException("Choose an absolute export path.");
-    return new Capture(file, instrument, symbol, continuous || getSettings().is(PROXY, PROXY_DEFAULT));
+    boolean marked = getSettings().is(PROXY, PROXY_DEFAULT);
+    return new Capture(file, instrument, symbol, JournalPriceEvents.proxy(instrument, marked, false),
+        JournalPriceEvents.proxy(instrument, marked, true));
   }
 
   /** The one background thread for everything that asks MotiveWave for history. Call with the lock held. */
@@ -293,7 +298,7 @@ public class MotiveWaveJournal extends Study {
   private synchronized void submitBackfill(Capture chart, int days, boolean replay) {
     JournalAccountCapture observer = accounts;
     if (disposed || observer == null || !JournalBackfill.applies(chart.instrument().getSymbol(), chart.symbol(),
-        chart.proxy(), replayMode, replay, days)) return;
+        chart.historyProxy(), replayMode, replay, days)) return;
     long token = generation.get();
     history().submit(() -> {
       if (disposed || generation.get() != token || backfilling) return;
@@ -355,10 +360,11 @@ public class MotiveWaveJournal extends Study {
     });
   }
 
-  /** log: true for a load the chart asked for, which leaves one line in MotiveWave's log; false for the
-   * two-minute top-up that follows every new minute, which would only bury that line. */
+  /** proxy: how the bars and ticks are marked (Capture says which applies). log: true for a load the chart
+   * asked for, which leaves one line in MotiveWave's log; false for the two-minute top-up that follows every
+   * new minute, which would only bury that line. */
   private synchronized void submitHistory(Capture capture, long start, long end, boolean bars, int tickMinutes,
-                                          boolean log) {
+                                          boolean proxy, boolean log) {
     if (disposed || (!bars && tickMinutes == 0)) return;
     long token = generation.get();
     history().submit(() -> {
@@ -375,7 +381,7 @@ public class MotiveWaveJournal extends Study {
             if (disposed || generation.get() != token || Thread.currentThread().isInterrupted()) return;
             if (!(item instanceof Bar bar)) continue;
             if (bar.getStartTime() < start || bar.getEndTime() > end) continue;
-            String event = JournalPriceEvents.bar(capture.symbol(), bar, capture.proxy());
+            String event = JournalPriceEvents.bar(capture.symbol(), bar, proxy);
             if (event != null)
               wrote[output.offer(event, "motivewave-bars:1m", Instant.ofEpochMilli(bar.getStartTime()).toString()) ? 0 : 2]++;
           }
@@ -387,7 +393,7 @@ public class MotiveWaveJournal extends Study {
             if (disposed || generation.get() != token || Thread.currentThread().isInterrupted())
               throw new IllegalStateException("Capture settings changed.");
             if (tick.getTime() < end - tickMinutes * 60000L || tick.getTime() >= end) return;
-            String event = JournalPriceEvents.tick(capture.symbol(), tick, capture.proxy());
+            String event = JournalPriceEvents.tick(capture.symbol(), tick, proxy);
             if (event != null) wrote[target.offer(event, LIVE_TICKS, tick.getTime()) ? 1 : 2]++;
           });
         }
@@ -404,7 +410,8 @@ public class MotiveWaveJournal extends Study {
         if (log && outcome != null && !disposed)
           info("MotiveWave Journal: " + capture.symbol() + " history: " + wrote[0] + " bars and " + wrote[1]
               + " ticks written" + (wrote[2] > 0 ? ", " + wrote[2] + " dropped (queue full)" : "") + outcome
-              + " in " + (System.nanoTime() - began) / 1_000_000 + " ms; fill capture " + fillCapture() + ".");
+              + " in " + (System.nanoTime() - began) / 1_000_000 + " ms; fill capture " + fillCapture()
+              + "; chart instrument " + JournalPriceEvents.names(capture.instrument()) + ".");
       }
     });
   }
@@ -420,7 +427,8 @@ public class MotiveWaveJournal extends Study {
   }
 
   private void report(Exception exc) {
-    report(exc.getClass().getSimpleName() + ". Check the export path, history date, and data connection.");
+    report(JournalEventWriter.anotherCopy(exc) ? JournalEventWriter.ANOTHER_COPY
+        : exc.getClass().getSimpleName() + ". Check the export path, history date, and data connection.");
   }
 
   private synchronized void report(String problem) {

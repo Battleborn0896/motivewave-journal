@@ -69,13 +69,15 @@ STEPS = {
                 'Copies the study into your MotiveWave Extensions folder and keeps the previous copy. By hand '
                 'instead: in MotiveWave choose Study → All Studies → Import and pick motivewave-journal.jar.'),
     'chart': ('Add It to Your Chart',
-              'Add **Journal → MotiveWave Journal** to the chart of each contract you trade. There is nothing to set.',
-              'Use the exact contract, such as ESZ6, not a continuous contract. Live and paper trades go to the '
+              'Add **Journal → MotiveWave Journal** to the chart you trade. There is nothing to set.',
+              'A contract chart (ESZ6) or a continuous one (ES) both work: prices go with trades of the same '
+              'product, whatever the contract month. Live and paper trades go to the '
               'Live journal, replay trades to the Replay journal. Restart MotiveWave first if the study was just '
               'installed. To install it again, use Data → Connection.'),
     'update': ('Update the Study', '',
                'Studies before 0.3.3 never received MotiveWave\'s live or replay prints, so MAE and MFE had only '
-               'the trade tick backfill. The previous copy is kept beside the new one.'),
+               'the trade tick backfill. Studies before 0.3.4 labelled replay prints simulated, which hides '
+               'replay MAE and MFE. The previous copy is kept beside the new one.'),
     'quiet': ('The Study Has Gone Quiet',
               'Check that MotiveWave is open and the study is still on your chart.',
               'Nothing has been heard from the study for over a minute. It reports every ten seconds while it is '
@@ -187,7 +189,7 @@ def status_fragment(dataset: str) -> None:
 
 
 def headline(link, contracts=()) -> str:
-    """'Connected · recording NQZ6, ESZ6 · study 0.3.3' while the study records; else the state's own label."""
+    """'Connected · recording NQZ6, ESZ6 · study 0.3.4' while the study records; else the state's own label."""
     if link.state != 'Connected':
         return link.label
     shown = list(contracts[:4]) + ([f'+{len(contracts) - 4} more'] if len(contracts) > 4 else [])
@@ -230,8 +232,7 @@ def step(link, dataset: str = '') -> None:
     if which == 'update':
         line = 'The new study is installed. Restart MotiveWave to use it.' if installed_here else update_line(link)
     elif which == 'chart' and dataset == 'replay':
-        line = ('Add **Journal → MotiveWave Journal** to the replay chart of each contract you replay. There is '
-                'nothing to set.')
+        line = 'Add **Journal → MotiveWave Journal** to the chart you replay. There is nothing to set.'
     elif which == 'install' and not connection.JAR.is_file():
         line = ('In MotiveWave choose **Study → All Studies → Import** and pick motivewave-journal.jar, then add '
                 'the study to your chart.')

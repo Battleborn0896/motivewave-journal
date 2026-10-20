@@ -1,8 +1,10 @@
 package org.mwjournal.study;
 
 import com.motivewave.platform.sdk.common.Bar;
+import com.motivewave.platform.sdk.common.Instrument;
 import com.motivewave.platform.sdk.common.Tick;
 import java.time.Instant;
+import java.util.function.Supplier;
 
 /** Strict price-only serialization. Never generates synthetic ticks from bars. */
 final class JournalPriceEvents {
@@ -20,6 +22,27 @@ final class JournalPriceEvents {
         + quote(symbol) + ",\"ts\":" + quote(Instant.ofEpochMilli(bar.getStartTime()).toString())
         + ",\"resolution_seconds\":60,\"open\":" + open + ",\"high\":" + high + ",\"low\":" + low
         + ",\"close\":" + close + vol + ",\"proxy\":" + proxy + "}";
+  }
+
+  /** The provider of a replay chart's own prints. realTicks is the Real Tick Data setting, on by default:
+   * the prints are real ticks, unless the user says the replay is generated from bars. */
+  static String replayProvider(String run, boolean realTicks) {
+    return "motivewave-replay:" + run + (realTicks ? ":ticks" : ":simulated");
+  }
+
+  /** Whether the prices a chart writes are marked proxy: from another instrument than the one traded.
+   * marked: the Proxy Prices setting. history: loaded from MotiveWave's history when the chart loads, as
+   * opposed to recorded as they trade.
+   *
+   * Prints recorded as they trade (live ticks, the minute bars topped up as they close, replay prints) are
+   * the product's own prices on any chart of it, the contract's or a continuous one, and the app matches a
+   * trade's prices by product: only the setting marks them. History a continuous chart loads (its active
+   * contract differs from its own symbol) can be back-adjusted across rolls, so that is marked as well. */
+  static boolean proxy(Instrument chart, boolean marked, boolean history) {
+    if (marked) return true;
+    if (!history) return false;
+    String active = chart.getActiveSymbol();
+    return active != null && !active.isBlank() && !active.equals(chart.getSymbol());
   }
 
   static String tick(String symbol, Tick tick, boolean proxy) {
@@ -52,6 +75,22 @@ final class JournalPriceEvents {
         + ",\"provider\":" + quote(source) + ",\"symbol\":"
         + quote(symbol) + ",\"ts\":" + quote(Instant.ofEpochMilli(print.time()).toString())
         + ",\"price\":" + print.price() + bidAsk + vol + ",\"proxy\":" + proxy + "}";
+  }
+
+  /** For MotiveWave's log only: what the chart's instrument calls itself, each name as MotiveWave returns it.
+   * Prices are labelled as before; this line shows what a connection (Rithmic, CQG) and a continuous or
+   * replay chart return. A name MotiveWave cannot give says why instead. */
+  static String names(Instrument instrument) {
+    return name("getSymbol", instrument::getSymbol) + ", " + name("getActiveSymbol", instrument::getActiveSymbol)
+        + ", " + name("getExchangeSymbol", instrument::getExchangeSymbol)
+        + ", " + name("getUnderlying", instrument::getUnderlying);
+  }
+
+  private static String name(String method, Supplier<String> getter) {
+    try {
+      String name = getter.get();
+      return method + "()=" + (name == null ? "null" : quote(name));
+    } catch (RuntimeException | LinkageError exc) { return method + "() failed: " + exc.getClass().getSimpleName(); }
   }
 
   static String quote(String value) {

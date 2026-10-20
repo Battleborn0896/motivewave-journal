@@ -630,7 +630,7 @@ def chart_panel(journal, trade, annotation: dict, zone) -> None:
                 'needed; high/low-only and 5-minute history cannot be turned into real 1-minute candles.')
     if trade.closed and instant(trade.closed) > end:
         st.warning('The chart is capped at 10,000 minutes from entry. This position was held beyond that window.')
-    if journal.capture_gaps(source, start=start.isoformat(), end=end.isoformat()):
+    if journal.capture_gaps(source, start=start.isoformat(), end=end.isoformat(), symbol=trade.symbol):
         st.warning('This chart window has a recorded capture gap. Missing prices can understate excursions.')
     with st.expander('Chart Data & Orders'):
         for note in payload['notes']:

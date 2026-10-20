@@ -129,8 +129,9 @@ def test_before_the_study_reports_in_setup_asks_to_install_it_then_to_add_it_to_
     app.run()
     assert steps_shown(app) == ['Add It to Your Chart'] and states(app.main) == ['Waiting For Study']
     step = next(m for m in app.main.markdown if '**Add It to Your Chart**' in m.value)
-    assert ('add **Journal → MotiveWave Journal** to the chart of each contract you trade' in step.value
-            or 'Add **Journal → MotiveWave Journal** to the chart of each contract you trade' in step.value)
+    assert ('add **Journal → MotiveWave Journal** to the chart you trade' in step.value
+            or 'Add **Journal → MotiveWave Journal** to the chart you trade' in step.value)
+    assert 'contract chart (ESZ6) or a continuous one (ES) both work' in step.proto.help
     assert step.value.count('Restart MotiveWave, then add') == int(connection.JAR.is_file())   # installed just now
     assert 'There is nothing to set.' in step.value and 'File' not in step.value
     assert 'To install it again, use Data → Connection.' in step.proto.help
@@ -144,7 +145,7 @@ def test_replay_waiting_for_a_replay_chart_asks_for_the_chart_once_live_has_hear
     app.radio(key='journal-environment').set_value('Replay').run()
     assert not app.exception and states(app.main) == ['Waiting For Study']
     assert steps_shown(app) == ['Add It to Your Chart']           # installed: Live hears it, whatever the folder
-    assert said(app.main.markdown, 'to the replay chart of each contract you replay')
+    assert said(app.main.markdown, 'to the chart you replay')
     assert not any(b.label == setup.INSTALL for b in app.button)
 
 

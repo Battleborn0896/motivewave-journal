@@ -368,7 +368,8 @@ final class JournalAccountCapture {
     } catch (Exception | LinkageError exc) {
       holdings = null; // positions unknown again: record ticks rather than guess
       warnings = null;
-      failure = "Native MotiveWave adapter unavailable: " + exc.getClass().getSimpleName();
+      failure = JournalEventWriter.anotherCopy(exc) ? JournalEventWriter.ANOTHER_COPY
+          : "Native MotiveWave adapter unavailable: " + exc.getClass().getSimpleName();
       try { flushBuffered(nowNanos); }
       catch (RuntimeException ignored) { /* A failed writer is already reported by the capture. */ }
       status("", failure, 0);
@@ -460,10 +461,11 @@ final class JournalAccountCapture {
     lastBeat = beat;
     String now = Instant.now().toString();
     String body = ",\"provider\":\"motivewave-native\",\"ts\":" + quote(now) + beat;
-    try {
-      live.offer("{\"version\":1,\"type\":\"heartbeat\",\"mode\":\"live\"" + body, provider(workspace, false), now);
-      replay.offer("{\"version\":1,\"type\":\"heartbeat\",\"mode\":\"replay\"" + body, provider(workspace, true), now);
-    } catch (RuntimeException ignored) { /* Failure remains visible in the study. */ }
+    // Each file on its own: when another copy of the study holds one of them, the other still says why.
+    try { live.offer("{\"version\":1,\"type\":\"heartbeat\",\"mode\":\"live\"" + body, provider(workspace, false), now); }
+    catch (RuntimeException ignored) { /* Failure remains visible in the study. */ }
+    try { replay.offer("{\"version\":1,\"type\":\"heartbeat\",\"mode\":\"replay\"" + body, provider(workspace, true), now); }
+    catch (RuntimeException ignored) { /* Failure remains visible in the study. */ }
   }
   void release(Path file) {
     synchronized (SHARED) {

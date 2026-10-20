@@ -17,7 +17,8 @@ The data home is `MWJ_HOME` when set, otherwise `~/Library/Application Support/M
 
 - One complete JSON object per line, newline after each. Never rewrite a line that has been written.
 - Every timestamp is ISO-8601 with a full date and a UTC offset, for example `2026-10-07T14:00:00.123Z`.
-- Use the exact contract symbol (`ESZ6`, not a continuous alias) and stable execution ids.
+- Give fills the exact contract symbol (`ESZ6`, not a continuous alias) and stable execution ids. Prices
+  may carry whatever the chart is called (`ES`, `ESZ6`, `ESZ6.CME`): see [prices and products](#prices-and-products).
 - Every event carries `"version": 1`, a `type` and a `provider`. `mode` is `live` or `replay`; an event
   without `mode` counts as live. Live events are rejected by the replay journal and the other way round.
 
@@ -68,6 +69,39 @@ mistaken for a quiet day.
 `error` means fills cannot be read at all, and `detail` then says why. `connected` means fills are being
 read; `warnings`, when present, is one short sentence about what was skipped or assumed on the way. It is
 never a reason to stop trusting the fills that did arrive.
+When another copy of the study holds a bridge file (MotiveWave loaded a new study jar without a full
+restart, or a second MotiveWave is running) the study cannot write to that file, and says in MotiveWave's
+log, and in the heartbeat of a bridge file it can still write: `Another copy of the MotiveWave Journal
+study is still running: quit MotiveWave completely and open it again.`
+
+## Prices and products
+
+A reader measures a trade with the prices of its product, not only of its exact symbol. The product of
+a symbol is the symbol in capitals without a leading `/`, an exchange suffix (`.CME`, or `=F`) and a
+trailing month code with its year digits: `NQZ6`, `NQZ26`, `NQZ2026`, `/NQZ6`, `NQZ6.CME` and a
+continuous `NQ` chart are all `NQ`; `MNQZ6` is `MNQ`, another product; a CQG `ENQZ6` is `ENQ`. Nothing
+is translated: fills and prices that come through the same connection share their letters.
+
+For one source and one time window, when prices exist under the trade's exact symbol only those are
+used, so in roll week the next contract's prices do not mix in. Otherwise every symbol of the product
+is used, and a print recorded under two labels (two charts of one market) counts once: a bar by its
+slot, a tick by everything it says apart from its symbol. Live and replay stay apart as before, and a
+replay trade still uses only its own run's prices.
+
+`"proxy": true` on a tick or bar says the price may not be the traded instrument's own; a reader counts
+such prices as an estimate, never as observed ticks. The study marks as proxy:
+
+- everything a chart writes while the user has switched on **Proxy Prices** (Advanced);
+- otherwise only the history a continuous-contract chart (one whose active contract differs from its own
+  symbol) loads when it opens: the one-minute bars of **1m Bars (Days)** and the ticks of **Ticks
+  (Minutes)**, which MotiveWave may have back-adjusted across rolls.
+
+Prices recorded as they trade are never marked by the chart they come from: live prints
+(`motivewave-ticks`), the one-minute bars topped up as each minute closes, and replay prints are the
+product's own prices on a continuous chart as on the contract's. A bar slot written again replaces the
+earlier one, so on a continuous chart a topped-up minute is marked proxy again when a later history load
+covers it. History-backfill ticks (`motivewave-ticks:history`, `motivewave-replay:<run>:history`) are
+loaded only on a chart of the exact contract and are never proxy.
 
 ## Providers written by the study
 
@@ -78,8 +112,8 @@ never a reason to stop trusting the fills that did arrive.
 | `motivewave-ticks` | Live trade prints, recorded as they happened |
 | `motivewave-ticks:history` | Real trade prints loaded afterwards from the platform's tick history, for the holding window of a past position |
 | `motivewave-bars:1m` | One-minute candles |
-| `motivewave-replay:<run>:ticks` | Replay prints declared as real tick data |
-| `motivewave-replay:<run>:simulated` | Replay prints generated from bars |
+| `motivewave-replay:<run>:ticks` | Replay prints, as real tick data: the default (**Real Tick Data** on) |
+| `motivewave-replay:<run>:simulated` | Replay prints with **Real Tick Data** switched off, for a replay generated from bars |
 | `motivewave-replay:<run>:history` | Real trade prints loaded afterwards from the platform's tick history, for the holding window of a replay position of that run (study 0.3.3) |
 
 A replay run is one pass through the replay clock. Rewinding starts a new run, and a replay trade is
@@ -97,7 +131,12 @@ Study 0.3.3 adds the replay history provider `motivewave-replay:<run>:history`, 
 version whose live (`motivewave-ticks`) and replay (`motivewave-replay:<run>:ticks` / `:simulated`)
 prints actually arrive: earlier studies did not require MotiveWave's per-tick updates and so, with
 default settings, wrote none. No event or field changes shape. All optional fields remain backward
-compatible, and files written by study 0.1 through 0.3.2 stay valid. The heartbeat's `connector_version`
+compatible, and files written by study 0.1 through 0.3.2 stay valid. Study 0.3.4, with its default
+settings, labels replay prints `:ticks` (its Real Tick Data setting is stored under a new key,
+`realReplayTicksV2`, so charts saved with the old default take the new one) and marks only the prices described under
+[prices and products](#prices-and-products) as proxy; earlier studies labelled replay prints `:simulated`
+unless **Real Tick Data** was switched on, and marked everything a continuous chart wrote as proxy. Files
+they wrote keep those labels. The heartbeat's `connector_version`
 says which study wrote a file; the app asks for an update when it is older than the study it bundles.
 
 **Fills (`execution`)**

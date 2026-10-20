@@ -12,6 +12,7 @@ import sqlite3
 import uuid
 from pathlib import Path
 
+from .model import product
 from .store import Journal, ImportConflict, encode
 from .workspace import label
 
@@ -143,6 +144,8 @@ def mirror(capture, target, scopes):
     clauses = ['(json_extract(payload,\'$.provider\')=? AND json_extract(payload,\'$.account\')=?)' for _ in scopes]
     where = ' OR '.join(clauses) or '1'
     params = [v for scope in scopes for v in scope]
+    with capture.connect() as db:
+        stored = Journal._distinct(db, 'symbol')       # every symbol the capture holds prices under
     with target.connect() as db:
         db.execute('ATTACH DATABASE ? AS capture', (str(capture.path),))
         db.execute('BEGIN')
@@ -157,14 +160,19 @@ def mirror(capture, target, scopes):
                    'FROM capture.executions incoming JOIN selected_fills chosen ON incoming.key=chosen.key WHERE 1 ORDER BY incoming.rowid '
                    'ON CONFLICT(key) DO UPDATE SET payload=excluded.payload, raw=excluded.raw')
         db.execute("CREATE TEMP TABLE selected_symbols AS SELECT DISTINCT json_extract(payload,'$.symbol') symbol FROM main.executions")
+        # A trade's prices are those of its product, whatever symbol they were recorded under (model.trade_prices).
+        traded = {product(row[0]) for row in db.execute('SELECT symbol FROM selected_symbols') if row[0]}
+        db.execute('CREATE TEMP TABLE price_symbols (symbol TEXT PRIMARY KEY)')
+        db.executemany('INSERT INTO price_symbols VALUES(?)', [(symbol,) for symbol in stored if product(symbol) in traded])
         for table in ('prices', 'instruments'):
-            # Price rows are shared market observations for exact contracts, not account positions.
+            # Price rows are shared market observations, not account positions.
+            selection = 'price_symbols' if table == 'prices' else 'selected_symbols'
             keys = 'key,symbol,source,ts,payload' if table == 'prices' else 'symbol,point_value'
             update = ('payload=excluded.payload' if table == 'prices' else 'point_value=excluded.point_value')
             difference = ('main.prices.payload != excluded.payload' if table == 'prices' else 'main.instruments.point_value != excluded.point_value')
             conflict_key = 'key' if table == 'prices' else 'symbol'
             db.execute(f'INSERT INTO main.{table}({keys}) SELECT ' + ','.join('incoming.' + key for key in keys.split(',')) +
-                       f' FROM capture.{table} incoming JOIN selected_symbols selected ON incoming.symbol=selected.symbol WHERE 1 '
+                       f' FROM capture.{table} incoming JOIN {selection} selected ON incoming.symbol=selected.symbol WHERE 1 '
                        f'ON CONFLICT({conflict_key}) DO UPDATE SET {update} WHERE {difference}')
         db.execute('INSERT OR REPLACE INTO main.capture_events SELECT incoming.* FROM capture.capture_events incoming '
                    'WHERE incoming.source IN (SELECT DISTINCT source FROM main.prices)')

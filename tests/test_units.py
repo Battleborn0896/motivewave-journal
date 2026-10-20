@@ -85,7 +85,7 @@ def test_ticks_and_r_require_metadata_and_do_not_turn_missing_into_zero():
 
 
 def test_known_tick_sizes_do_not_guess_other_products_and_overrides_are_exact():
-    for symbol in ('ESZ6', 'MESM7', '/NQ', 'MNQZ', 'NQ=F'):
+    for symbol in ('ESZ6', 'MESM7', '/NQ', 'MNQZ26', 'NQZ6.CME', 'NQ=F'):
         assert units.tick_size(symbol) == .25
     for symbol in ('CLZ6', 'SPY', 'NQZ6-C-20000', 'UNKNOWN'):
         assert units.tick_size(symbol) is None

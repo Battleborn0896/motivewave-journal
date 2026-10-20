@@ -14,11 +14,15 @@ from pathlib import Path
 from . import paths
 from .matching import match
 from .model import (NATIVE, Execution, PriceSample, ProtectionEvent, digest, finite, heartbeat_report, instant,
-                    timestamp)
+                    product, timestamp, trade_prices)
 from .scope import event_mode, allows_source
 from .workspace import Workspace, read as read_workspace
 
 SCHEMA_VERSION = 3
+# The rules trades are measured by. Raise it when they change: the watcher then measures every trade of a
+# journal measured under older rules once more, from its stored prices, and records this number in it.
+# 1: a trade's prices are those of its product (model.trade_prices).
+MEASUREMENT_RULES = 1
 # What a writer may say differently about a fill it already sent, without it being another fill.
 LABELS = ('quality', *NATIVE)
 SCHEMA = '''
@@ -97,7 +101,7 @@ def _upgrade(db) -> dict:
             cleared += 1
     if rewritten:
         # The trades are grouped differently now; the watcher measures them again from stored prices.
-        db.execute("INSERT OR REPLACE INTO journal_meta VALUES('recalculate','1')")
+        db.execute("DELETE FROM journal_meta WHERE key='measurement_rules'")
     return {'executions_rewritten': rewritten, 'alarms_cleared': cleared}
 
 
@@ -133,6 +137,8 @@ class Journal(Workspace):
             db.execute('BEGIN IMMEDIATE')
             self._check_environment(db)
             db.execute("INSERT OR IGNORE INTO journal_meta VALUES('dataset',?)", (dataset,))
+            if not existing:                       # a new journal: nothing in it was measured under older rules
+                db.execute("INSERT OR IGNORE INTO journal_meta VALUES('measurement_rules',?)", (str(MEASUREMENT_RULES),))
             version = db.execute('PRAGMA user_version').fetchone()[0]
             if version > SCHEMA_VERSION:
                 raise ValueError(newer)
@@ -210,13 +216,17 @@ class Journal(Workspace):
         return json.loads(row[0]) if row else None
 
     def recalculation_due(self) -> bool:
-        """True after an upgrade regrouped trades, until the watcher has measured them again."""
+        """True while this journal's trades were measured under older MEASUREMENT_RULES than this version's
+        (or regrouped by a schema upgrade), until the watcher has measured them all again."""
         with self.connect() as db:
-            return db.execute("SELECT 1 FROM journal_meta WHERE key='recalculate'").fetchone() is not None
+            row = db.execute("SELECT value FROM journal_meta WHERE key='measurement_rules'").fetchone()
+        return row is None or int(row[0]) < MEASUREMENT_RULES
 
     def recalculation_done(self):
+        """Every trade has been measured under this version's rules."""
         with self.connect() as db:
-            db.execute("DELETE FROM journal_meta WHERE key='recalculate'")
+            db.execute("INSERT OR REPLACE INTO journal_meta VALUES('measurement_rules',?)", (str(MEASUREMENT_RULES),))
+            db.execute("DELETE FROM journal_meta WHERE key='recalculate'")    # what 0.4.4 and earlier set instead
 
     @staticmethod
     def _insert(db, fill: Execution, raw: dict) -> bool:
@@ -666,32 +676,57 @@ class Journal(Workspace):
                 count += db.total_changes - before
             return count
 
+    @staticmethod
+    def _distinct(db, column: str, where: str = '', args=()) -> list[str]:
+        """The distinct values of an indexed column of prices, in order, one index step each instead of
+        a read of the millions of rows behind them. `where` fixes the index columns before `column`."""
+        found, value = [], ''
+        while True:
+            value = db.execute(f'SELECT min({column}) FROM prices WHERE {where}{column}>?', (*args, value)).fetchone()[0]
+            if value is None:
+                return found
+            found.append(value)
+
+    def _labels(self, db, symbol: str) -> list[str]:
+        """Every symbol prices of this symbol's product are stored under: a chart's label, the contract
+        months. A handful, so the price queries below can name them and keep using the index."""
+        return [label for label in self._distinct(db, 'symbol') if product(label) == product(symbol)]
+
     def prices(self, symbol: str, source: str, *, start: str | None = None, end: str | None = None) -> list[PriceSample]:
-        filters, args = ['symbol=?', 'source=?'], [symbol.upper(), source]
-        if start:
-            # The hot tick query starts at entry, not a day earlier. A separate partial index
-            # picks up overlapping bars without scanning yesterday's entire tick tape.
-            filters.append('ts>=?')
-            args.append(timestamp(start))
-        if end:
-            filters.append('ts<=?')
-            args.append(timestamp(end))
-        query = 'SELECT payload,ts FROM prices WHERE ' + ' AND '.join(filters)
-        if start:
-            query += (' UNION ALL SELECT payload,ts FROM prices INDEXED BY prices_bars WHERE symbol=? AND source=? '
-                      "AND json_extract(payload, '$.resolution_seconds') > 0 AND ts>=? AND ts<? "
-                      "AND julianday(ts) + json_extract(payload, '$.resolution_seconds') / 86400.0 > julianday(?)")
-            args.extend([symbol.upper(), source, (instant(start) - dt.timedelta(days=1)).isoformat(),
-                         timestamp(start), timestamp(start)])
+        """The prices of one source that measure a trade in `symbol`, as model.trade_prices chooses them."""
+        exact = symbol.strip().upper()
         with self.connect() as db:
-            return [PriceSample(**json.loads(r['payload'])) for r in db.execute(
-                query + ' ORDER BY ts', args)]
+            labels = self._labels(db, exact)
+            if not labels:
+                return []
+            within = 'symbol IN (' + ','.join('?' * len(labels)) + ') AND source=?'
+            filters, args = [within], [*labels, source]
+            if start:
+                # The hot tick query starts at entry, not a day earlier. A separate partial index
+                # picks up overlapping bars without scanning yesterday's entire tick tape.
+                filters.append('ts>=?')
+                args.append(timestamp(start))
+            if end:
+                filters.append('ts<=?')
+                args.append(timestamp(end))
+            query = 'SELECT symbol,payload,ts FROM prices WHERE ' + ' AND '.join(filters)
+            if start:
+                query += (' UNION ALL SELECT symbol,payload,ts FROM prices INDEXED BY prices_bars WHERE ' + within +
+                          " AND json_extract(payload, '$.resolution_seconds') > 0 AND ts>=? AND ts<? "
+                          "AND julianday(ts) + json_extract(payload, '$.resolution_seconds') / 86400.0 > julianday(?)")
+                args.extend([*labels, source, (instant(start) - dt.timedelta(days=1)).isoformat(),
+                             timestamp(start), timestamp(start)])
+            rows = db.execute(query + ' ORDER BY ts, symbol', args).fetchall()
+        if any(row['symbol'] == exact for row in rows):
+            rows = [row for row in rows if row['symbol'] == exact]   # trade_prices' choice, before any payload is read
+        return trade_prices([PriceSample(**json.loads(row['payload'])) for row in rows], exact, source)
 
     def price_sources(self, symbol: str, trade=None) -> list[str]:
+        """Every source holding prices of this symbol's product."""
         with self.connect() as db:
-            sources = [r['source'] for r in db.execute('SELECT DISTINCT source FROM prices WHERE symbol=? ORDER BY source',
-                                                     (symbol.upper(),))]
-        return [s for s in sources if trade is None or allows_source(trade, s)]
+            sources = {source for label in self._labels(db, symbol)
+                       for source in self._distinct(db, 'source', 'symbol=? AND ', (label,))}
+        return [s for s in sorted(sources) if trade is None or allows_source(trade, s)]
 
     def recent_contracts(self, *, now: dt.datetime | None = None, within=dt.timedelta(hours=1)) -> list[str]:
         """The exact contracts the study recorded prices or fills for recently, traded ones first.
@@ -753,17 +788,19 @@ class Journal(Workspace):
         return traded + sorted(recent - set(traded))
 
     def trade_clock(self, trade):
-        """Open replay positions advance on recorded replay time, never today's wall clock."""
+        """Open replay positions advance on recorded replay time, never today's wall clock: the latest
+        price of the trade's product in its own run."""
         if trade.closed or ':replay:' not in trade.provider:
             return None
         run = trade.provider.rsplit(':replay:', 1)[1]
+        prefix = 'motivewave-replay:' + run + ':'
         with self.connect() as db:
-            prefix = 'motivewave-replay:' + run + ':'
-            latest = db.execute('SELECT max(ts) FROM prices WHERE symbol=? AND substr(source,1,length(?))=?',
-                                (trade.symbol, prefix, prefix)).fetchone()[0]
+            # Every source that starts with the prefix: the run's ticks, simulated prints and history.
+            latest = [db.execute('SELECT max(ts) FROM prices WHERE symbol=? AND source>=? AND source<?',
+                                 (label, prefix, prefix + '\U0010ffff')).fetchone()[0]
+                      for label in self._labels(db, trade.symbol)]
         stamps = [instant(f['ts']) for f in trade.fills]
-        if latest:
-            stamps.append(instant(latest))
+        stamps.extend(instant(stamp) for stamp in latest if stamp)
         return max(stamps) + dt.timedelta(milliseconds=1)
 
     def ingest_protection(self, events: list[ProtectionEvent], *, db=None) -> int:
@@ -801,14 +838,11 @@ class Journal(Workspace):
 
     def capture_gaps(self, source: str | None = None, *, start=None, end=None, symbol=None) -> list[dict]:
         """Recorded gaps, optionally of one source and overlapping one window. With `symbol`, a gap
-        that names another instrument is left out; a gap that names none concerns every instrument."""
+        that names another product is left out; a gap that names none concerns every instrument."""
         filters, args = [], []
         if source:
             filters.append('source=?')
             args.append(source)
-        if symbol:
-            filters.append("(json_extract(payload, '$.symbol') IS NULL OR upper(json_extract(payload, '$.symbol'))=?)")
-            args.append(str(symbol).strip().upper())
         window = []
         if start:
             window.append("coalesce(json_extract(payload, '$.end_ts'), ts)>=?")
@@ -819,9 +853,11 @@ class Journal(Workspace):
         if window:
             filters.append("(ts='' OR (" + ' AND '.join(window) + '))')
         with self.connect() as db:
-            return [json.loads(r['payload']) for r in db.execute(
+            gaps = [json.loads(r['payload']) for r in db.execute(
                 'SELECT payload FROM capture_events' + (' WHERE ' + ' AND '.join(filters) if filters else '')
                 + ' ORDER BY ts', args)]
+        return [gap for gap in gaps if not symbol or gap.get('symbol') is None
+                or product(str(gap['symbol'])) == product(str(symbol))]
 
     def put(self, table: str, key: str, data: dict):
         if table not in ('sessions', 'profiles', 'sync_status'):

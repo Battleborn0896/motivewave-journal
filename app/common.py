@@ -328,7 +328,7 @@ def metric_options(journal, trade):
     if journal.display_settings()['excursion_policy'] != 'ticks-only':
         return options
     return [m for m in options if m.get('precision') == 'observed-ticks'
-            and not journal.capture_gaps(m['source'], start=trade.opened, end=trade.closed)]
+            and not journal.capture_gaps(m['source'], start=trade.opened, end=trade.closed, symbol=trade.symbol)]
 
 
 def excursion_values(journal, trade, metric, risk=None):
@@ -550,7 +550,7 @@ def version_parts(text) -> tuple[int, ...] | None:
 
 def study_outdated(link) -> bool:
     """The study that reported in is ours and older than the one this app bundles. Studies before 0.3.3
-    never receive ticks, so Setup asks for the update. Another writer's version numbers are its own."""
+    never receive ticks and before 0.3.4 label replay prints simulated, so Setup asks for the update. Another writer's version numbers are its own."""
     if getattr(link, 'connector', '') != paths.STUDY_CONNECTOR:
         return False
     version = version_parts(getattr(link, 'version', ''))

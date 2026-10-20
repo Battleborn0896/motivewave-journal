@@ -12,8 +12,8 @@ import org.mwjournal.study.JournalSettings.Setting;
 import org.mwjournal.study.JournalTicks.Held;
 
 /** The settings dialog: nothing to set on the first tab, every setting of 0.3.2 under Advanced with its
- * key and default unchanged, and those defaults alone capture fills, record every live and replay print,
- * and backfill replay trades with real ticks. */
+ * key unchanged and its default too, apart from Real Tick Data, now on. Those defaults alone capture fills,
+ * record every live and replay print as real ticks, and backfill replay trades with real ticks. */
 public final class JournalSettingsTest {
   private JournalSettingsTest() {}
   private static final String FILE = "/fixture/bridge/motivewave.ndjson";
@@ -30,9 +30,10 @@ public final class JournalSettingsTest {
     assert !first.isEmpty() && first.size() <= 2 && first.stream().allMatch(s -> s.kind() == Kind.NOTE && s.key() == null)
         : "The first tab only says there is nothing to set: " + first;
     assert first.stream().allMatch(s -> s.label().length() <= 80) : "Short lines";
-    assert first.getFirst().label().contains("Add the study to the chart of each contract you trade");
+    assert first.getFirst().label().contains("Add the study to the chart you trade, contract or continuous");
 
-    // Every key and default of study 0.3.2, once each and all under Advanced, so a saved chart keeps its choices.
+    // Every key of study 0.3.2, once each and all under Advanced, so a saved chart keeps its choices, except
+    // realReplayTicks, renamed V2 with its default now on, so that saved charts take the new default too.
     var expected = new LinkedHashMap<String, Object>();
     expected.put("journalFile", FILE);
     expected.put("recordTicksV2", "ALWAYS");
@@ -45,14 +46,14 @@ public final class JournalSettingsTest {
     expected.put("historyEnd", "");
     expected.put("backfillDays", 30);
     expected.put("captureReplay", true);
-    expected.put("realReplayTicks", false);
+    expected.put("realReplayTicksV2", true);
     var inputs = JournalSettings.inputs(layout);
     var stored = new LinkedHashMap<String, Object>();
     for (Setting input : inputs) assert stored.put(input.key(), input.fallback()) == null : "Twice: " + input.key();
     assert stored.equals(expected) : stored;
     assert settings(layout.get(1)).equals(inputs) : "Everything is under Advanced";
     assert JournalSettings.FILE.equals("journalFile") && JournalSettings.RECORD.equals("recordTicksV2")
-        && JournalSettings.REAL_REPLAY.equals("realReplayTicks") && JournalSettings.BACKFILL.equals("backfillDays");
+        && JournalSettings.REAL_REPLAY.equals("realReplayTicksV2") && JournalSettings.BACKFILL.equals("backfillDays");
 
     var byKey = new LinkedHashMap<String, Setting>();
     inputs.forEach(input -> byKey.put(input.key(), input));
@@ -74,17 +75,18 @@ public final class JournalSettingsTest {
     // The constants the study reads its settings with are the dialog's defaults.
     assert JournalSettings.DAYS_DEFAULT == 3 && JournalSettings.TICKS_DEFAULT == 0 && JournalSettings.BACKFILL_DEFAULT == 30
         && JournalSettings.POST_EXIT_DEFAULT == 30 && JournalSettings.ACCOUNTS_DEFAULT && JournalSettings.REPLAY_DEFAULT
-        && !JournalSettings.REAL_REPLAY_DEFAULT && !JournalSettings.PROXY_DEFAULT
+        && JournalSettings.REAL_REPLAY_DEFAULT && !JournalSettings.PROXY_DEFAULT
         && JournalSettings.RECORD_DEFAULT.equals(JournalTicks.ALWAYS);
 
     defaultsAloneRecordEverything(byKey);
-    System.out.println("Journal settings passed: nothing to set on the first tab, every 0.3.2 key and default under "
-        + "Advanced, short Title Case labels with tooltips, and the defaults capture fills, record every live and "
-        + "replay print and backfill replay trades.");
+    System.out.println("Journal settings passed: nothing to set on the first tab, every 0.3.2 key under Advanced, "
+        + "short Title Case labels with tooltips, and the defaults capture fills, record every live print and every "
+        + "replay print as real ticks (simulated only with Real Tick Data off), and backfill replay trades.");
   }
 
   /** A chart nobody has changed: fills are captured, every print is written live and in replay whether or
-   * not a position is open, and replay trades are backfilled on a replay chart of the contract. */
+   * not a position is open, replay prints as real ticks and neither marked proxy, on a continuous chart as
+   * on the contract's own, and replay trades are backfilled on a replay chart of the contract. */
   private static void defaultsAloneRecordEverything(Map<String, Setting> byKey) throws Exception {
     assert (Boolean) byKey.get(JournalSettings.ACCOUNTS).fallback() : "Fills captured";
     assert (Boolean) byKey.get(JournalSettings.REPLAY).fallback() : "Replay prices recorded";
@@ -95,6 +97,16 @@ public final class JournalSettingsTest {
     String journalSymbol = symbol.isBlank() ? "NQZ6" : symbol;
     assert JournalBackfill.applies("NQZ6", journalSymbol, proxy, true, true, days) : "Replay trades backfilled";
     assert JournalBackfill.applies("NQZ6", journalSymbol, proxy, false, false, days) : "Live trades backfilled";
+
+    // Replay prints are real ticks unless the user says the replay is generated from bars.
+    boolean realReplay = (Boolean) byKey.get(JournalSettings.REAL_REPLAY).fallback();
+    String replaySource = JournalPriceEvents.replayProvider("run-1", realReplay);
+    assert replaySource.equals("motivewave-replay:run-1:ticks") : replaySource;
+    assert JournalPriceEvents.replayProvider("run-1", false).equals("motivewave-replay:run-1:simulated")
+        : "Real Tick Data off: the replay's prints are labelled simulated";
+    // Prints recorded as they trade are never marked proxy by the chart they come from.
+    var continuous = JournalPriceEventsTest.instrument("NQ", "NQZ6");
+    assert !JournalPriceEvents.proxy(continuous, proxy, false) : "A continuous chart's prints are the product's own";
 
     var folder = Files.createTempDirectory("mwj-settings-fixture-");
     var file = folder.resolve("motivewave.ndjson");
@@ -108,8 +120,9 @@ public final class JournalSettingsTest {
     long time = 1_609_772_400_000L;
     for (int n = 0; n < 5; n++) {
       var print = new JournalPriceEvents.Print(time + n * 250L, 13000 + n, 12999.75f + n, 13000.25f + n, 1);
-      var live = new Held("NQZ6", proxy, "motivewave-ticks", print, "NQZ6", "NQZ6");
-      var replay = new Held("NQZ6", proxy, "motivewave-replay:run-1:simulated", print, "NQZ6", "NQZ6");
+      boolean marked = JournalPriceEvents.proxy(continuous, proxy, false);
+      var live = new Held("NQZ6", marked, "motivewave-ticks", print, "NQ", "NQZ6");
+      var replay = new Held("NQZ6", marked, replaySource, print, "NQ", "NQZ6");
       JournalTicks.record(gate, writer, live, "live", JournalTicks.armed(capture, record, false, live));
       JournalTicks.record(replayGate, replayWriter, replay, "replay", JournalTicks.armed(capture, record, true, replay));
     }
@@ -119,6 +132,9 @@ public final class JournalSettingsTest {
     var liveTicks = ticks(Files.readAllLines(file));
     var replayTicks = ticks(Files.readAllLines(JournalAccountCapture.replayFile(file)));
     assert liveTicks.size() == 5 && replayTicks.size() == 5 : "Every print, flat or not: " + liveTicks.size() + " " + replayTicks.size();
+    assert replayTicks.stream().allMatch(t -> t.contains("\"provider\":\"motivewave-replay:run-1:ticks\"")) : replayTicks;
+    assert liveTicks.stream().allMatch(t -> t.endsWith(",\"proxy\":false}"))
+        && replayTicks.stream().allMatch(t -> t.endsWith(",\"proxy\":false}")) : "Never proxy by default";
     try (var left = Files.walk(folder)) {
       for (var path : left.sorted(java.util.Comparator.reverseOrder()).toList()) Files.delete(path);
     }

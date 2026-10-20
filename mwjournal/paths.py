@@ -26,8 +26,8 @@ APP_NAME = 'MotiveWave Journal'
 VERSION = '0.4.5'
 # The study this app bundles (JournalPaths.CONNECTOR_VERSION; tests/test_version.py checks). Setup asks a
 # user whose study reports an older version to install this one: studies before 0.3.3 receive no live or
-# replay ticks.
-STUDY_VERSION = '0.3.3'
+# replay ticks, and before 0.3.4 a replay's prints are labelled simulated unless Real Tick Data is ticked.
+STUDY_VERSION = '0.3.4'
 STUDY_CONNECTOR = 'motivewave-journal-study'
 ENV = 'MWJ_HOME'
 DATASETS = ('live', 'replay')
