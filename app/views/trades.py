@@ -13,6 +13,7 @@ import hashlib
 import html
 import itertools
 import json
+import time
 
 import pandas as pd
 import plotly.graph_objects as go
@@ -30,13 +31,15 @@ from mwjournal.model import WHY_INCOMPLETE, finite, instant
 from mwjournal.metrics import excursions
 from mwjournal.scope import LIVE_TICKS, PROVENANCE, provenance
 from mwjournal import humanize, units
-from mwjournal import merging
+from mwjournal import journals, merging
 
 ADHERENCE = ['Unreviewed', 'Yes', 'No']
 LIST_LIMIT = 150           # rows drawn at once; Show Earlier Trades draws the next ones
 REPORT = 'report-card-open'  # per environment: the Daily Report Card is shown in place of the trade
-REFRESH = '3s'             # how often the page looks for trades the watcher has added or changed
-LIVE = '1s'                # how often an open trade's numbers and chart are drawn again
+# How often the page looks for trades the watcher has added or changed, and an open trade's numbers and chart
+# are drawn again: one clock, so a fill and the prices after it reach the page together.
+LIVE = '1s'
+KEPT = 'live-chart-kept'   # per session: the prices an open trade's chart has drawn before the current minute
 CONTEXT = [15, 30, 60, 120, 0]
 LONG, SHORT = theme.SERIES[0], theme.SERIES[1]
 
@@ -261,7 +264,7 @@ def report_card(journal, rows) -> None:
     daily.render(journal, rows)
 
 
-@st.fragment(run_every=REFRESH)
+@st.fragment(run_every=LIVE)
 def follow(capture, seen) -> None:
     """Redraws the page when the background watcher has added or changed trades. Widgets keep their
     keys, so the selection, the open tab and text being typed stay as they are."""
@@ -370,7 +373,10 @@ def detail(journal, trade, ids, zone) -> None:
         st.caption(f'{position + 1} of {len(ids)}', width='content')
     annotation = journal.annotations().get(trade.id, {})
     live = trade.status == 'open'          # an open trade follows the market: see live_numbers at the end
-    (live_numbers if live else numbers)(journal, trade, annotation, zone)
+    if live:
+        live_numbers(journals.Live(journal), trade, annotation, zone)
+    else:
+        numbers(journal, trade, annotation, zone)
     if trade.point_value is None:
         st.warning(f'{trade.symbol} has no dollars-per-point multiplier yet, so its P&L cannot be calculated. Set it here.')
         common.multiplier_form(journal, 'trade-multiplier', trade.symbol)
@@ -379,7 +385,10 @@ def detail(journal, trade, ids, zone) -> None:
     with overview:
         chart_col, tag_col = st.columns([1.35, 1], gap='small')
         with chart_col:
-            (live_chart if live else chart_panel)(journal, trade, annotation, zone)
+            if live:
+                live_chart(journals.Live(journal), trade, annotation, zone)
+            else:
+                chart_panel(journal, trade, annotation, zone)
         with tag_col:
             tag_controls.render(journal, trade)
     with notes:
@@ -392,7 +401,7 @@ def detail(journal, trade, ids, zone) -> None:
         with executions:
             executions_panel(journal, trade, zone)
         with metrics:
-            (live_excursions if live else excursions_panel)(journal, trade, annotation, zone)
+            excursions_panel(journal, trade, annotation, zone)
         with runner:
             if getattr(trade, 'merge_leg_ids', None):
                 st.info('Runner analysis stays per original trade: a merged trade can have different stops. '
@@ -405,7 +414,7 @@ def detail(journal, trade, ids, zone) -> None:
 
 def numbers(journal, trade, annotation: dict, zone) -> None:
     """The trade's result, MAE, MFE and size, and what they were measured from. An open trade's result is
-    what it would be if closed at the last recorded price of the prints that measure its MAE and MFE."""
+    what it would be if closed at the newest price its MAE and MFE were measured with."""
     unit = common.excursion_unit(journal)
     metric = common.best_display_metric(journal, trade)
     precision = metric.get('point_precision') if unit in ('points', 'ticks') else metric.get('precision')
@@ -421,13 +430,13 @@ def numbers(journal, trade, annotation: dict, zone) -> None:
     result, label = trade.net, 'Recorded P&L' if trade.closed else 'Realised P&L · still open'
     why = (' '.join(WHY_INCOMPLETE[reason] for reason in trade.incomplete) if trade.incomplete
            else 'This contract has no dollars per point yet.' if trade.net is None else None)
-    last = (journal.latest_price(trade.symbol, metric['source'], since=trade.opened)
-            if not trade.closed and trade.net is not None and metric.get('source') else None)
-    if last is not None and last.last is not None:
-        result, label = trade.net_at(last.last), 'Open P&L'
-        why = (f'If the {trade.open_qty:g} still held were closed at {last.last:g}, the last recorded price '
-               f'({common.moment(last.ts, zone)}). Realised so far: {money(trade.net, trade.currency)}. The exit\'s '
-               'fees are not included.')
+    mark = metric.get('last_price') if not trade.closed and trade.net is not None else None
+    if mark is not None:
+        # The newest price the MAE and MFE beside it were measured with, so the three always agree.
+        result, label = trade.net_at(mark), 'Open P&L'
+        why = (f'If the {trade.open_qty:g} still held were closed at {humanize.price(mark)}, the last recorded price '
+               f'({common.moment(metric["last_ts"], zone)}). Realised so far: {money(trade.net, trade.currency)}. '
+               "The exit's fees are not included.")
     outcome = 'positive' if result is not None and result > 0 else 'negative' if result is not None and result < 0 else 'neutral'
     with cols[0].container(key='trade-result-' + outcome):
         st.metric(label, money(result, trade.currency) if result is not None else 'Unknown', help=why)
@@ -527,6 +536,10 @@ def review_form(journal, trade, a: dict) -> None:
 
 def excursions_panel(journal, trade, a: dict, zone) -> None:
     theme.section('MAE / MFE')
+    if trade.status == 'open':
+        # Drawn once: the path and the full-path export are too much to read again every second.
+        st.caption('Still open: this tab shows the trade as it was when the page was drawn. The MAE and MFE '
+                   'above the tabs follow the market.')
     unit = common.excursion_unit(journal)
     tick = units.tick_size(trade.symbol, journal.display_settings()['tick_sizes'])
     options = [common.display_metric(journal, trade, m) for m in common.metric_options(journal, trade)]
@@ -611,6 +624,24 @@ def excursions_panel(journal, trade, a: dict, zone) -> None:
         st.rerun()
 
 
+def window_prices(journal, trade, source, start, end) -> list:
+    """The prices of one source in the chart window. An open trade's chart is drawn every second, and the
+    minutes it has drawn before the newest one do not change: they are read once a minute and kept, and
+    each second reads only the prices from the newest minute on."""
+    if trade.status != 'open':
+        return journal.prices(trade.symbol, source, start=start.isoformat(), end=end.isoformat())
+    key = (str(journal.path), trade.id, source, start.isoformat(), int(time.time() // 60))
+    kept = st.session_state.get(KEPT)
+    if not kept or kept[0] != key:
+        samples = journal.prices(trade.symbol, source, start=start.isoformat(), end=end.isoformat())
+        # Stored times are UTC ISO strings, so they compare as text in time order.
+        newest = max((s.ts for s in samples), default=start.isoformat())
+        boundary = instant(newest).replace(second=0, microsecond=0).isoformat()
+        kept = st.session_state[KEPT] = (key, [s for s in samples if s.ts < boundary], boundary)
+    _, settled, boundary = kept
+    return settled + journal.prices(trade.symbol, source, start=boundary, end=end.isoformat())
+
+
 def chart_panel(journal, trade, annotation: dict, zone) -> None:
     sources = journal.price_sources(trade.symbol, trade)
     if not sources:
@@ -624,7 +655,7 @@ def chart_panel(journal, trade, annotation: dict, zone) -> None:
     levels = st.session_state.get(common.key(journal, 'chart-levels'), True)
     clock = journal.trade_clock(trade)
     start, end = chart_window(trade, context, now=clock)
-    samples = journal.prices(trade.symbol, source, start=start.isoformat(), end=end.isoformat())
+    samples = window_prices(journal, trade, source, start, end)
     prints = []
     if provenance(source) == 'platform-bars' and LIVE_TICKS in sources:
         # The minute in progress has no platform candle yet: the study's prints draw it.
@@ -667,8 +698,7 @@ def chart_panel(journal, trade, annotation: dict, zone) -> None:
                      hide_index=True, width='stretch')
 
 
-# An open trade's numbers, chart and MAE / MFE are drawn again every LIVE from what the watcher has stored by
-# then, the rest of the page staying as it is. A closed trade's are drawn once.
+# An open trade's numbers and chart are drawn again every LIVE from what the watcher has stored by then, the
+# rest of the page staying as it is; they read through journals.Live. A closed trade's are drawn once.
 live_numbers = st.fragment(run_every=LIVE)(numbers)
 live_chart = st.fragment(run_every=LIVE)(chart_panel)
-live_excursions = st.fragment(run_every=LIVE)(excursions_panel)

@@ -63,6 +63,7 @@ const LC = window.LightweightCharts;
 const STYLE = { solid: LC.LineStyle.Solid, dotted: LC.LineStyle.Dotted, dashed: LC.LineStyle.Dashed,
                 large: LC.LineStyle.LargeDashed, sparse: LC.LineStyle.SparseDotted };
 let chart = null, entries = [], signature = null, userMoved = false, spec = null, overlayFrame = 0;
+let hover = null;                          // the bar under the pointer, so a redraw keeps its legend
 // The canvas keeps whatever font it first drew with, so the first drawing waits for IBM Plex Sans (a
 // local file, normally a few milliseconds; at most three seconds). A font that arrives later still
 // gets the chart redrawn in it.
@@ -196,7 +197,7 @@ function build(s) {
     return { spec: x, api: api, lines: [] };
   });
   userMoved = false;
-  chart.subscribeCrosshairMove(p => { legend(p); requestOverlay(); });
+  chart.subscribeCrosshairMove(p => { hover = p && p.time !== undefined ? p : null; legend(p); requestOverlay(); });
   chart.timeScale().subscribeVisibleLogicalRangeChange(requestOverlay);
 }
 
@@ -266,10 +267,10 @@ function fill(s) {
   if (keep) {
     // A view the user moved stays put, except that one reaching the newest bar keeps following it as new
     // bars arrive (a live trade), as on any trading platform.
-    const added = keep.to >= before - 1 ? Math.max(0, bars(s.series) - before) : 0;
+    const added = keep.to > before - 1.5 ? Math.max(0, bars(s.series) - before) : 0;
     chart.timeScale().setVisibleLogicalRange({ from: keep.from + added, to: keep.to + added });
   } else resetView();
-  legend(null);
+  legend(hover);
   requestOverlay();
 }
 
@@ -360,7 +361,9 @@ function legend(param) {
   const t = spec.theme;
   box.innerHTML = entries.filter(e => e.spec.legend !== false).map(e => {
     const x = e.spec, fmt = formatter(x.format || spec.format);
-    let point = param && param.time !== undefined ? param.seriesData.get(e.api) : null;
+    // The bar at the hovered time as it is now: a live chart's newest bar changes under a resting pointer.
+    let point = param && param.time !== undefined
+      ? ((x.data || []).find(b => b.time === param.time) || param.seriesData.get(e.api)) : null;
     if (!point) { const d = x.data || []; point = d.length ? d[d.length - 1] : null; }
     let text = '–';
     if (point) {

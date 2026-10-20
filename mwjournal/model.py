@@ -217,6 +217,15 @@ class PriceSample:
     close: float | None = None
     volume: float | None = None
 
+    @classmethod
+    def stored(cls, data: dict) -> 'PriceSample':
+        """A price read back from a journal, which checked it when it was stored. Checking it again took
+        most of the time of reading a long tape, and an open trade's prices are read every second."""
+        sample = object.__new__(cls)
+        for name, spec in cls.__dataclass_fields__.items():
+            object.__setattr__(sample, name, data[name] if name in data else spec.default)
+        return sample
+
     @property
     def last(self) -> float | None:
         """The price it ended at: a print's price, a bar's close; None for a bar with only a high and low."""

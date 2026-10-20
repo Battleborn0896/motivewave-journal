@@ -128,6 +128,22 @@ def account_alias(capture, provider, account, name):
     edit(capture, lambda state: state['account_aliases'].update({key: name}))
 
 
+class Live:
+    """A journal as an open trade's one-second redraw reads it: its own settings, reviews and keys, with
+    prices, measurements, gaps and orders read where the watcher writes them as they arrive, the capture
+    journal. A named journal holds copies of those, brought up to date only when the whole page is drawn
+    (open_named), which a redraw does not do."""
+    MARKET = frozenset({'path', 'prices', 'price_sources', 'metric_options', 'best_metric', 'capture_gaps',
+                        'trade_clock', 'protection_events'})
+
+    def __init__(self, journal):
+        self.journal = journal
+        self.market = getattr(journal, 'capture_journal', None) or journal
+
+    def __getattr__(self, name):
+        return getattr(self.market if name in self.MARKET else self.journal, name)
+
+
 def alias(capture, scope):
     return registry(capture)['account_aliases'].get(encode(list(scope)), scope[1])
 

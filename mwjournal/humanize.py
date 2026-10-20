@@ -219,3 +219,8 @@ def span(opened, closed, zone: str, *, now=None) -> str:
 def wall_clock(values, zone: str):
     """Stored times as naive wall-clock datetimes in the zone, for chart axes that print what they get."""
     return [to_zone(v, zone).replace(tzinfo=None) if v not in (None, '') and v == v else None for v in values]
+
+
+def price(value) -> str:
+    """A price as the market quotes it, every decimal it has and no more: '19,990.25', '1.08515', '20,000'."""
+    return f'{value:,.6f}'.rstrip('0').rstrip('.')

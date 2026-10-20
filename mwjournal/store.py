@@ -301,6 +301,13 @@ class Journal(Workspace):
         with self.connect() as db:
             db.execute("INSERT OR REPLACE INTO journal_meta VALUES('media_settings',?)", (encode(data),))
 
+    def fills_version(self) -> tuple:
+        """Changes whenever trades() could: a fill added or described again, or a multiplier set."""
+        with self.connect() as db:
+            return tuple(db.execute('SELECT (SELECT count(*) FROM executions), (SELECT total(length(payload)) FROM '
+                                    "executions), (SELECT group_concat(symbol || '=' || point_value) FROM instruments)"
+                                    ).fetchone())
+
     def trades(self):
         with self.connect() as db:
             instruments = {r['symbol']: r['point_value'] for r in db.execute('SELECT * FROM instruments')}
@@ -719,19 +726,7 @@ class Journal(Workspace):
             rows = db.execute(query + ' ORDER BY ts, symbol', args).fetchall()
         if any(row['symbol'] == exact for row in rows):
             rows = [row for row in rows if row['symbol'] == exact]   # trade_prices' choice, before any payload is read
-        return trade_prices([PriceSample(**json.loads(row['payload'])) for row in rows], exact, source)
-
-    def latest_price(self, symbol: str, source: str, *, since=None) -> PriceSample | None:
-        """The newest price of one source that measures a trade in `symbol`, since `since`: the contract's
-        own when it has one, as model.trade_prices chooses. One indexed step per label, however long the tape."""
-        exact = symbol.strip().upper()
-        with self.connect() as db:
-            found = [row for label in self._labels(db, exact) for row in db.execute(
-                'SELECT symbol,payload,ts FROM prices WHERE symbol=? AND source=? AND ts>=? ORDER BY ts DESC LIMIT 1',
-                (label, source, timestamp(since) if since else ''))]
-        if any(row['symbol'] == exact for row in found):
-            found = [row for row in found if row['symbol'] == exact]
-        return PriceSample(**json.loads(max(found, key=lambda row: row['ts'])['payload'])) if found else None
+        return trade_prices([PriceSample.stored(json.loads(row['payload'])) for row in rows], exact, source)
 
     def price_sources(self, symbol: str, trade=None) -> list[str]:
         """Every source holding prices of this symbol's product."""

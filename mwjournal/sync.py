@@ -17,6 +17,7 @@ import datetime as dt
 import hashlib
 import os
 import threading
+import time
 from pathlib import Path
 
 from . import paths
@@ -63,6 +64,8 @@ class SyncWorker:
         self.hashes = {}
         self.dirty_executions = set()
         self.dirty_prices = {}      # (product, source): the time new prices span, for the trades of that product
+        self.measure_after = 0      # time.monotonic() before which new prices alone are not measured (recalculate)
+        self.trade_list, self.trades_version = [], None
         # Measured under older rules, or regrouped by an upgrade: measure every trade again, once.
         self.rebuild = journal.recalculation_due()
         self.thread = threading.Thread(target=self.run, name='mwj-sync', daemon=True)
@@ -194,13 +197,25 @@ class SyncWorker:
         self.journal.reconcile_drafts()
         self.recalculate()
 
+    def trades(self):
+        """The journal's trades, built again only when its fills or multipliers changed: new prices arrive at
+        nearly every poll and change no trade."""
+        version = self.journal.fills_version()
+        if self.rebuild or self.dirty_executions or version != self.trades_version:
+            self.trade_list, self.trades_version = self.journal.trades(), version
+        return self.trade_list
+
     def recalculate(self):
         """Late fills use cached prices; new prices measure only the trades they overlap, which while
-        trading is the open one, so its MAE / MFE follow the market at every poll (POLL_SECONDS)."""
-        if not self.rebuild and not self.dirty_executions and not self.dirty_prices:
+        trading is the open one, so its MAE / MFE follow the market at every poll (POLL_SECONDS). New prices
+        alone wait at least as long as the last measurement took, so a long-held trade with a long tape
+        keeps the watcher busy half the time at most and the file is still read every poll."""
+        fills = self.rebuild or self.dirty_executions
+        if not fills and (not self.dirty_prices or time.monotonic() < self.measure_after):
             return
+        began = time.monotonic()
         now = dt.datetime.now(dt.timezone.utc)
-        for trade in self.journal.trades():
+        for trade in self.trades():
             if not trade.complete:
                 continue                               # its excursions are unknown, whatever prices exist
             fills_changed = self.rebuild or (
@@ -222,6 +237,7 @@ class SyncWorker:
             self.rebuild = False
         self.dirty_executions.clear()
         self.dirty_prices.clear()
+        self.measure_after = time.monotonic() + (time.monotonic() - began)
 
     def run(self):
         failed = True                                  # a failure recorded by an earlier run is cleared too

@@ -22,12 +22,13 @@ study: click **Install MotiveWave Study**, then quit MotiveWave completely and o
   already had the study take the new default too.
 - **Prints recorded as they trade are never marked proxy.** Only the history a continuous chart loads
   when it opens is, because it can be back-adjusted after a roll.
-- **An open trade is live.** While a trade is open, its chart, **Open P&L** (at the last recorded
-  price; the exit's fees are not in yet), MAE, MFE and the **More → MAE / MFE** tab are drawn again every
-  second. The minute in progress is drawn from the study's prints until MotiveWave's own candle for it
+- **An open trade is live.** While a trade is open, its chart, **Open P&L** (at the newest price its
+  MAE and MFE were measured with; the exit's fees are not in yet), MAE and MFE are drawn again every
+  second, in a named journal too. The minute in progress is drawn from the study's prints until MotiveWave's own candle for it
   arrives. A chart you zoomed or panned keeps your view, and while it shows the newest candle it moves
-  along with new ones. The study writes to disk four times a second and the app reads it every second,
-  so the page is about a second behind MotiveWave.
+  along with new ones. The study writes to disk four times a second, the app reads it every second and the
+  page redraws every second, so it runs one to three seconds behind MotiveWave. The **More → MAE / MFE**
+  tab, with the price path, is drawn once and shows the trade as it was when the page opened.
 - **Trades already in your journal are measured again once**, in the background, the first time the new
   app starts, so an open or recent trade that showed no MAE/MFE gets it without pressing anything. Prices
   recorded earlier keep their old labels.

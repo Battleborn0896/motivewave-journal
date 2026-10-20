@@ -156,6 +156,9 @@ def excursions(trade: Trade, samples: list[PriceSample], source: str, *, basis: 
                  'point_high': max(p['point_high'] for p in path[i:i + size])} for i in range(0, len(path), size)]
         notes.append('Chart path is compacted for display; original prices remain stored. '
                      'Use the full recorded path view/export for every observation.')
+    # The newest price measured, which an open trade's result is shown at (Trade.net_at).
+    newest = max(used, key=lambda s: s.ts)
+    common.update(last_price=newest.last, last_ts=newest.ts)
     common.update(precision=precision, mae=max(0., -min(values)) if trade.point_value is not None else None,
                   mfe=max(0., max(values)) if trade.point_value is not None else None,
                   mae_points=max(0., -min(point_values)), mfe_points=max(0., max(point_values)),
