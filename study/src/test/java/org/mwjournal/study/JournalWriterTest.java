@@ -52,6 +52,11 @@ public final class JournalWriterTest {
         var blocked = JournalEventWriter.acquire(path);
         blocked.thread.join(3000);
         assert blocked.failure != null : "A competing process must not corrupt the bridge";
+        // Held in this Java process: what an old copy of the study that MotiveWave did not unload looks like.
+        assert blocked.failure.getMessage().equals("Another copy of the MotiveWave Journal study is still running: "
+            + "quit MotiveWave completely and open it again.") : blocked.failure;
+        assert JournalEventWriter.anotherCopy(blocked.failure);
+        assert !JournalEventWriter.anotherCopy(new java.io.IOException("Disk full"));
         blocked.release();
         assert Files.readAllLines(path).size() == expected.size() + 1;
       }
@@ -75,7 +80,7 @@ public final class JournalWriterTest {
       assert gap.contains("\"type\":\"gap\"") && gap.contains("\"provider\":\"motivewave-ticks\"") && gap.contains("\"dropped\":3")
           && gap.contains("\"start_ts\":\"2026-10-07T13:50:00Z\"") && gap.contains("\"end_ts\":\"2026-10-07T13:50:10.250Z\"");
       System.out.println("Journal writer passed: 16,000 concurrent events, shared-chart lifetime, restart, file lock, "
-          + "and a clean line after a crash.");
+          + "another copy of the study told apart, and a clean line after a crash.");
     } finally {
       Files.deleteIfExists(path);
       Files.deleteIfExists(lockPath);

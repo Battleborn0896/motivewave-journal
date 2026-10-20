@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import datetime as dt
 
-from .model import PriceSample, Trade, instant
+from .model import PriceSample, Trade, instant, trade_prices
 from .scope import allows_source, is_history, is_simulated, provenance
 from .units import POINT_DEFINITION
 
@@ -81,9 +81,7 @@ def excursions(trade: Trade, samples: list[PriceSample], source: str, *, basis: 
     values = [v * multiplier for v in boundaries]
     point_values = price_boundaries(trade)
     path, used, covered = [], [], []
-    for sample in samples:
-        if sample.symbol != trade.symbol or sample.source != source:
-            continue
+    for sample in trade_prices(samples, trade.symbol, source):
         stamp = instant(sample.ts)
         stop = stamp + dt.timedelta(seconds=sample.resolution_seconds)
         if stop < start or stamp > end:

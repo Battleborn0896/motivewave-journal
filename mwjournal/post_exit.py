@@ -9,7 +9,7 @@ from __future__ import annotations
 import datetime as dt
 from collections import defaultdict
 
-from .model import finite, instant
+from .model import finite, instant, trade_prices
 from .scope import allows_source, is_simulated, provenance
 
 
@@ -50,12 +50,12 @@ def post_exit(trade, samples, source, *, minutes=15, now=None, initial_risk=None
             return result
     used, path = [], []
     hit, ambiguous_upper = None, None
-    for sample in sorted(samples, key=lambda s: instant(s.ts)):
+    for sample in sorted(trade_prices(samples, trade.symbol, source), key=lambda s: instant(s.ts)):
         stamp = instant(sample.ts)
         end = stamp + dt.timedelta(seconds=sample.resolution_seconds)
         # Entire bars must be after exit and before the horizon. Never borrow pre-exit highs or
         # future highs from a boundary candle. Ticks at exit are ambiguous and excluded too.
-        if sample.symbol != trade.symbol or sample.source != source or end > through:
+        if end > through:
             continue
         if (sample.resolution_seconds and stamp < start) or (not sample.resolution_seconds and stamp <= start):
             continue

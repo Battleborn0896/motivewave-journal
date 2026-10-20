@@ -23,7 +23,7 @@ from pathlib import Path
 from . import paths
 from .importers import apply_preview, preview_bridge, preview_csv, preview_prices_csv
 from .metrics import measurements
-from .model import heartbeat_report, instant
+from .model import heartbeat_report, instant, product
 from .store import Journal
 from .scope import allows_source
 
@@ -61,7 +61,7 @@ class SyncWorker:
         self.hashes = {}
         self.metric_clock = 0
         self.dirty_executions = set()
-        self.dirty_prices = {}
+        self.dirty_prices = {}      # (product, source): the time new prices span, for the trades of that product
         self.rebuild = journal.recalculation_due()     # an upgrade regrouped the trades: measure them all again
         self.thread = threading.Thread(target=self.run, name='mwj-sync', daemon=True)
 
@@ -153,7 +153,7 @@ class SyncWorker:
                     self.dirty_executions.update((e.provider, e.account, e.symbol, e.currency) for e, _ in parsed.fills)
                 if result['prices']:
                     for sample in parsed.prices:
-                        key = (sample.symbol, sample.source)
+                        key = (product(sample.symbol), sample.source)
                         start = instant(sample.ts)
                         stop = start + dt.timedelta(seconds=sample.resolution_seconds)
                         old = self.dirty_prices.get(key, (start, stop))
@@ -163,7 +163,7 @@ class SyncWorker:
                         start = instant(gap.get('start_ts', gap.get('ts'))) if gap.get('start_ts') or gap.get('ts') else dt.datetime.min.replace(tzinfo=dt.timezone.utc)
                         stop = instant(gap['end_ts']) if gap.get('end_ts') else start if gap.get('ts') else dt.datetime.max.replace(tzinfo=dt.timezone.utc)
                         for trade in self.journal.trades():
-                            key = (trade.symbol, gap['provider'])
+                            key = (product(trade.symbol), gap['provider'])
                             old = self.dirty_prices.get(key, (start, stop))
                             self.dirty_prices[key] = (min(start, old[0]), max(stop, old[1]))
                 previous = self.journal.get('sync_status').get(name, {})
@@ -206,8 +206,8 @@ class SyncWorker:
             if fills_changed:
                 sources = self.journal.price_sources(trade.symbol, trade)
             else:
-                sources = [source for (symbol, source), window in self.dirty_prices.items()
-                           if symbol == trade.symbol and allows_source(trade, source) and window[1] >= instant(trade.opened)
+                sources = [source for (market, source), window in self.dirty_prices.items()
+                           if market == product(trade.symbol) and allows_source(trade, source) and window[1] >= instant(trade.opened)
                            and window[0] < (instant(trade.closed) if trade.closed else now)]
             for source in sources:
                 prices = self.journal.prices(trade.symbol, source, start=trade.opened, end=trade.closed)

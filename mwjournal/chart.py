@@ -5,7 +5,7 @@ from __future__ import annotations
 import datetime as dt
 from collections import defaultdict
 
-from .model import PriceSample, Trade, instant
+from .model import PriceSample, Trade, instant, trade_prices
 from .scope import allows_source, is_history, is_simulated, provenance
 
 STOP = '#F05B70'
@@ -28,9 +28,8 @@ def minute_candles(samples: list[PriceSample], symbol: str, source: str) -> tupl
     if is_simulated(source):
         notes.append('Generated/unknown replay ticks: these candles are not a verified historical tick path.')
     unusable = False
+    samples = trade_prices(samples, symbol, source)
     for sample in sorted(samples, key=lambda s: instant(s.ts)):
-        if sample.symbol != symbol or sample.source != source:
-            continue
         stamp = instant(sample.ts).timestamp()
         seconds = sample.resolution_seconds
         # Never divide a 5m bar into fake 1m bars or invent O/C from a high/low range.
@@ -70,7 +69,7 @@ def minute_candles(samples: list[PriceSample], symbol: str, source: str) -> tupl
         notes.append('Some minute candles contain only partial subminute history.')
     if any(b['time'] - a['time'] > 60 for a, b in zip(data, data[1:])):
         notes.append('Missing minutes are left blank (market closures or missing data); no prices are fabricated.')
-    if any(s.proxy for s in samples if s.source == source and s.symbol == symbol):
+    if any(s.proxy for s in samples):
         notes.append('Proxy/continuous-contract candles: fills still show your actual execution prices.')
     return data, notes
 

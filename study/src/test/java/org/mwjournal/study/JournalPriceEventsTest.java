@@ -1,6 +1,7 @@
 package org.mwjournal.study;
 
 import com.motivewave.platform.sdk.common.Bar;
+import com.motivewave.platform.sdk.common.Instrument;
 import com.motivewave.platform.sdk.common.Tick;
 import java.lang.reflect.Proxy;
 import java.util.HashMap;
@@ -39,7 +40,19 @@ public final class JournalPriceEventsTest {
     assert !JournalPriceEvents.tick("ESZ6", tick, false).contains("\"bid\"") : "Skip crossed quotes";
     tickValues.put("getPrice", Float.NaN);
     assert JournalPriceEvents.tick("ESZ6", tick, false) == null : "No NaN in the bridge";
-    System.out.println("Journal price events passed: complete 1m OHLCV, invalid bars, exact tick times, quotes, and escaping.");
+
+    // The log's diagnostic: each name exactly as MotiveWave returns it, and why when it cannot.
+    Instrument chart = Instrument.class.cast(Proxy.newProxyInstance(Instrument.class.getClassLoader(),
+        new Class<?>[]{Instrument.class}, (proxy, method, arguments) -> switch (method.getName()) {
+          case "getSymbol" -> "NQ";
+          case "getActiveSymbol" -> "NQZ6";
+          case "getUnderlying" -> throw new UnsupportedOperationException();
+          default -> null;
+        }));
+    assert JournalPriceEvents.names(chart).equals("getSymbol()=\"NQ\", getActiveSymbol()=\"NQZ6\", "
+        + "getExchangeSymbol()=null, getUnderlying() failed: UnsupportedOperationException") : JournalPriceEvents.names(chart);
+    System.out.println("Journal price events passed: complete 1m OHLCV, invalid bars, exact tick times, quotes, escaping, "
+        + "and the chart instrument's names for the log.");
   }
 
   private static <T> T fixture(Class<T> type, Map<String,Object> values) {

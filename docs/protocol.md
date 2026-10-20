@@ -17,7 +17,8 @@ The data home is `MWJ_HOME` when set, otherwise `~/Library/Application Support/M
 
 - One complete JSON object per line, newline after each. Never rewrite a line that has been written.
 - Every timestamp is ISO-8601 with a full date and a UTC offset, for example `2026-10-07T14:00:00.123Z`.
-- Use the exact contract symbol (`ESZ6`, not a continuous alias) and stable execution ids.
+- Give fills the exact contract symbol (`ESZ6`, not a continuous alias) and stable execution ids. Prices
+  may carry whatever the chart is called (`ES`, `ESZ6`, `ESZ6.CME`): see [prices and products](#prices-and-products).
 - Every event carries `"version": 1`, a `type` and a `provider`. `mode` is `live` or `replay`; an event
   without `mode` counts as live. Live events are rejected by the replay journal and the other way round.
 
@@ -68,6 +69,24 @@ mistaken for a quiet day.
 `error` means fills cannot be read at all, and `detail` then says why. `connected` means fills are being
 read; `warnings`, when present, is one short sentence about what was skipped or assumed on the way. It is
 never a reason to stop trusting the fills that did arrive.
+When another copy of the study holds a bridge file (MotiveWave loaded a new study jar without a full
+restart, or a second MotiveWave is running) the study cannot write to that file, and says in MotiveWave's
+log, and in the heartbeat of a bridge file it can still write: `Another copy of the MotiveWave Journal
+study is still running: quit MotiveWave completely and open it again.`
+
+## Prices and products
+
+A reader measures a trade with the prices of its product, not only of its exact symbol. The product of
+a symbol is the symbol in capitals without a leading `/`, an exchange suffix (`.CME`, or `=F`) and a
+trailing month code with its year digits: `NQZ6`, `NQZ26`, `NQZ2026`, `/NQZ6`, `NQZ6.CME` and a
+continuous `NQ` chart are all `NQ`; `MNQZ6` is `MNQ`, another product; a CQG `ENQZ6` is `ENQ`. Nothing
+is translated: fills and prices that come through the same connection share their letters.
+
+For one source and one time window, when prices exist under the trade's exact symbol only those are
+used, so in roll week the next contract's prices do not mix in. Otherwise every symbol of the product
+is used, and a print recorded under two labels (two charts of one market) counts once: a bar by its
+slot, a tick by everything it says apart from its symbol. Live and replay stay apart as before, and a
+replay trade still uses only its own run's prices.
 
 ## Providers written by the study
 

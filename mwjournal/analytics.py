@@ -2,7 +2,7 @@
 
 from collections import defaultdict
 
-from .model import instrument_market
+from .model import product
 
 
 def summary(rows: list[dict]) -> dict:
@@ -31,7 +31,7 @@ def grouped(rows: list[dict], field: str) -> list[dict]:
     groups = defaultdict(list)
     for row in rows:
         if field == 'market':
-            values = [instrument_market(row['symbol'])]
+            values = [product(row['symbol'])]
         else:
             values = (row.get(field) or ['Untagged' if field == 'tags' else 'No matching playbook']) if field in ('tags', 'playbooks') else [row.get(field) or 'Unspecified']
         for value in values:

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import datetime as dt
+import functools
 import hashlib
 import json
 import math
@@ -88,22 +89,46 @@ def digest(value) -> str:
     return hashlib.sha256(json.dumps(value, sort_keys=True, default=str, allow_nan=False).encode()).hexdigest()
 
 
-def futures_root(symbol: str) -> str | None:
-    """Recognise known markets, including yearless labels, without changing stored contracts."""
-    symbol = symbol.strip().upper().lstrip('/').removesuffix('=F')
-    for root in sorted(FUTURES, key=len, reverse=True):
-        if re.fullmatch(re.escape(root) + r'(?:\s*[FGHJKMNQUVXZ]\d{0,4})?', symbol):
-            return root
-    return None
+@functools.lru_cache(maxsize=4096)
+def product(symbol: str) -> str:
+    """What is traded, whatever the contract month or chart: the symbol in capitals without a leading
+    slash, an exchange suffix ('.CME', or Yahoo's '=F') or a trailing month code with its year digits.
+    NQZ6, NQZ26, NQZ2026, /NQZ6, NQZ6.CME and a continuous NQ chart are all NQ; MNQZ6 is MNQ, another
+    product at the same price. The letters stay as the connection sends them (CQG's ENQZ6 is ENQ): a
+    trader's fills and chart prices come through the same connection, so they share them. A trade's
+    prices are the prices of its product (trade_prices), and markets are grouped by it."""
+    text = str(symbol or '').strip().upper().lstrip('/')
+    text = re.sub(r'^([^.]+)\.[A-Z]{2,}$', r'\1', text).removesuffix('=F')
+    month = re.fullmatch(r'(.+?)\s*[FGHJKMNQUVXZ]\d{1,4}', text)
+    return month.group(1) if month else text
 
 
-def instrument_market(symbol: str) -> str:
-    """An analytics/filter label only. Never use it to match fills or select price history."""
-    return futures_root(symbol) or symbol.strip().upper()
+instrument_market = product     # the name app/ uses for the market filter
 
 
 def point_value(symbol: str) -> float | None:
-    return FUTURES.get(futures_root(symbol))
+    return FUTURES.get(product(symbol))
+
+
+def trade_prices(samples, symbol: str, source: str) -> list:
+    """The prices of one source that measure a trade in `symbol`: those recorded under any symbol of
+    its product, in their order. In roll week the next contract trades at another price, so when some
+    were recorded under `symbol` itself only those are used. A print recorded under two labels (two
+    charts of one market) counts once."""
+    exact = str(symbol).strip().upper()
+    wanted = product(exact)
+    chosen = [s for s in samples if s.source == source and product(s.symbol) == wanted]
+    if any(s.symbol == exact for s in chosen):
+        return [s for s in chosen if s.symbol == exact]
+    seen, result = set(), []
+    for sample in chosen:
+        # A bar is its slot, as in the journal; a tick is everything it says apart from its label.
+        key = (sample.ts, sample.resolution_seconds) + (() if sample.resolution_seconds else (
+            sample.high, sample.bid, sample.ask, sample.volume))
+        if key not in seen:
+            seen.add(key)
+            result.append(sample)
+    return result
 
 
 @dataclass(frozen=True)

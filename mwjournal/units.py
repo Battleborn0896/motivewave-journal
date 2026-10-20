@@ -1,7 +1,7 @@
 """Explicit excursion display units. Never infer price movement from size-weighted P&L."""
 import math
 
-from .model import futures_root
+from .model import product
 
 UNITS = ('currency', 'points', 'ticks', 'r')
 LABELS = {'currency': 'Dollars / account currency', 'points': 'Points', 'ticks': 'Ticks', 'r': 'R · planned risk'}
@@ -17,7 +17,7 @@ def positive(value):
 def tick_size(symbol, overrides=None):
     exact = symbol.strip().upper()
     overrides = overrides or {}
-    value = overrides.get(exact, TICK_SIZES.get(futures_root(exact)))
+    value = overrides.get(exact, TICK_SIZES.get(product(exact)))
     return value if positive(value) else None
 
 

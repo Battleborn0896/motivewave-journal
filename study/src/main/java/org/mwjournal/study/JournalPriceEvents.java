@@ -1,8 +1,10 @@
 package org.mwjournal.study;
 
 import com.motivewave.platform.sdk.common.Bar;
+import com.motivewave.platform.sdk.common.Instrument;
 import com.motivewave.platform.sdk.common.Tick;
 import java.time.Instant;
+import java.util.function.Supplier;
 
 /** Strict price-only serialization. Never generates synthetic ticks from bars. */
 final class JournalPriceEvents {
@@ -52,6 +54,22 @@ final class JournalPriceEvents {
         + ",\"provider\":" + quote(source) + ",\"symbol\":"
         + quote(symbol) + ",\"ts\":" + quote(Instant.ofEpochMilli(print.time()).toString())
         + ",\"price\":" + print.price() + bidAsk + vol + ",\"proxy\":" + proxy + "}";
+  }
+
+  /** For MotiveWave's log only: what the chart's instrument calls itself, each name as MotiveWave returns it.
+   * Prices are labelled as before; this line shows what a connection (Rithmic, CQG) and a continuous or
+   * replay chart return. A name MotiveWave cannot give says why instead. */
+  static String names(Instrument instrument) {
+    return name("getSymbol", instrument::getSymbol) + ", " + name("getActiveSymbol", instrument::getActiveSymbol)
+        + ", " + name("getExchangeSymbol", instrument::getExchangeSymbol)
+        + ", " + name("getUnderlying", instrument::getUnderlying);
+  }
+
+  private static String name(String method, Supplier<String> getter) {
+    try {
+      String name = getter.get();
+      return method + "()=" + (name == null ? "null" : quote(name));
+    } catch (RuntimeException | LinkageError exc) { return method + "() failed: " + exc.getClass().getSimpleName(); }
   }
 
   static String quote(String value) {

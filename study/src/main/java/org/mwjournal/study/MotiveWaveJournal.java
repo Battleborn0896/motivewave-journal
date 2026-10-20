@@ -233,11 +233,12 @@ public class MotiveWaveJournal extends Study {
         accountFile = file;
       } catch (IOException | ReflectiveOperationException | RuntimeException | LinkageError exc) {
         accountRetry = System.nanoTime() + ACCOUNT_RETRY_NANOS; // Not on every tick: a failed lookup is slow.
-        report("fill capture could not start (" + exc.getClass().getSimpleName()
-            + "). Prices are still recorded; fills are not.");
+        report(JournalEventWriter.anotherCopy(exc) ? JournalEventWriter.ANOTHER_COPY
+            : "fill capture could not start (" + exc.getClass().getSimpleName() + "). Prices are still recorded; fills are not.");
       }
     }
-    if (accounts != null && accounts.failure != null) report("fill capture: " + accounts.failure);
+    if (accounts != null && accounts.failure != null)
+      report(accounts.failure.equals(JournalEventWriter.ANOTHER_COPY) ? accounts.failure : "fill capture: " + accounts.failure);
     // Capture that works but skipped or assumed something is not an error: one line when it changes.
     String warnings = accounts == null ? null : accounts.warnings;
     if (warnings != null && !warnings.equals(lastWarnings)) {
@@ -404,7 +405,8 @@ public class MotiveWaveJournal extends Study {
         if (log && outcome != null && !disposed)
           info("MotiveWave Journal: " + capture.symbol() + " history: " + wrote[0] + " bars and " + wrote[1]
               + " ticks written" + (wrote[2] > 0 ? ", " + wrote[2] + " dropped (queue full)" : "") + outcome
-              + " in " + (System.nanoTime() - began) / 1_000_000 + " ms; fill capture " + fillCapture() + ".");
+              + " in " + (System.nanoTime() - began) / 1_000_000 + " ms; fill capture " + fillCapture()
+              + "; chart instrument " + JournalPriceEvents.names(capture.instrument()) + ".");
       }
     });
   }
@@ -420,7 +422,8 @@ public class MotiveWaveJournal extends Study {
   }
 
   private void report(Exception exc) {
-    report(exc.getClass().getSimpleName() + ". Check the export path, history date, and data connection.");
+    report(JournalEventWriter.anotherCopy(exc) ? JournalEventWriter.ANOTHER_COPY
+        : exc.getClass().getSimpleName() + ". Check the export path, history date, and data connection.");
   }
 
   private synchronized void report(String problem) {

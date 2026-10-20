@@ -30,13 +30,14 @@ public final class JournalCaptureWarningsTest {
     heartbeats(folder.resolve("motivewave.ndjson"));
     settling(folder.resolve("settling.ndjson"));
     stableLabels(folder);
+    anotherCopy(folder.resolve("held.ndjson"));
     // Only a passing run tidies up; a failing one leaves its files to look at.
     try (var left = Files.walk(folder)) {
       for (var path : left.sorted(java.util.Comparator.reverseOrder()).toList()) Files.delete(path);
     }
     System.out.println("Journal capture warnings passed: account fallback and its label, skip reasons and counts, "
         + "fills without a price, the warnings sentence, connected-with-warnings versus error, the grace for an "
-        + "unfinished record, and labels that never change once written.");
+        + "unfinished record, labels that never change once written, and another copy of the study holding the file.");
   }
 
   /** The adapter's decision for one execution, without MotiveWave. */
@@ -292,6 +293,30 @@ public final class JournalCaptureWarningsTest {
     var orphan = events(found);
     assert orphan.size() == 2 && orphan.get(0).equals(orphan.get(1)) && orphan.get(0).contains(ASSUMED)
         && orphan.get(0).contains("\"currency_assumed\":true") : orphan;
+  }
+
+  /** MotiveWave loaded a new jar without a full restart and the old copy still holds the live bridge: the
+   * capture says so in one plain sentence, and the heartbeat carries it to the file it can still write. */
+  private static void anotherCopy(Path file) throws Exception {
+    String sentence = "Another copy of the MotiveWave Journal study is still running: "
+        + "quit MotiveWave completely and open it again.";
+    Path lock = file.resolveSibling(file.getFileName() + ".lock");
+    try (var channel = java.nio.channels.FileChannel.open(lock, java.nio.file.StandardOpenOption.CREATE,
+                                                          java.nio.file.StandardOpenOption.WRITE);
+         var held = channel.lock()) {
+      assert held.isValid();
+      var capture = JournalAccountCapture.fixture(file, reader(List.of(), new AtomicReference<>()));
+      for (int i = 0; i < 150 && !sentence.equals(capture.failure); i++) {
+        capture.poll();
+        Thread.sleep(20);
+      }
+      assert sentence.equals(capture.failure) : capture.failure;
+      assert capture.status().equals("failing") && capture.warnings == null;
+      capture.close();
+    }
+    assert !Files.exists(file) || beats(Files.readAllLines(file)).isEmpty() : "Nothing is written past the other copy";
+    var said = beats(Files.readAllLines(JournalAccountCapture.replayFile(file)));
+    assert said.getLast().contains("\"status\":\"error\",\"detail\":\"" + sentence + "\"") : said;
   }
 
   private static JournalNativeAccess.Reader reader(List<Raw> raws, AtomicReference<ReflectiveOperationException> broken) {
