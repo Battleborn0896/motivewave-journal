@@ -432,7 +432,6 @@ def test_watcher_recalculates_late_fills_and_only_price_windows_affected(tmp_pat
     original = sync.measurements
     monkeypatch.setattr(sync, 'measurements', lambda *args: called.append(args[0].id) or original(*args))
     bridge.write_text(newline='', data=json.dumps(event) + '\n' + json.dumps({**event, 'ts': tick(10, 999).ts, 'price': 999}) + '\n')
-    worker.metric_clock -= 6
     worker.poll()
     assert not called                      # current ticks must not rebuild historical closed trades
     bridge.write_text(newline='', data=bridge.read_bytes().decode() + json.dumps({**fill('c', 'buy', 1, 100, 10).__dict__, 'type': 'execution'}) + '\n')

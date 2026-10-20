@@ -721,6 +721,18 @@ class Journal(Workspace):
             rows = [row for row in rows if row['symbol'] == exact]   # trade_prices' choice, before any payload is read
         return trade_prices([PriceSample(**json.loads(row['payload'])) for row in rows], exact, source)
 
+    def latest_price(self, symbol: str, source: str, *, since=None) -> PriceSample | None:
+        """The newest price of one source that measures a trade in `symbol`, since `since`: the contract's
+        own when it has one, as model.trade_prices chooses. One indexed step per label, however long the tape."""
+        exact = symbol.strip().upper()
+        with self.connect() as db:
+            found = [row for label in self._labels(db, exact) for row in db.execute(
+                'SELECT symbol,payload,ts FROM prices WHERE symbol=? AND source=? AND ts>=? ORDER BY ts DESC LIMIT 1',
+                (label, source, timestamp(since) if since else ''))]
+        if any(row['symbol'] == exact for row in found):
+            found = [row for row in found if row['symbol'] == exact]
+        return PriceSample(**json.loads(max(found, key=lambda row: row['ts'])['payload'])) if found else None
+
     def price_sources(self, symbol: str, trade=None) -> list[str]:
         """Every source holding prices of this symbol's product."""
         with self.connect() as db:

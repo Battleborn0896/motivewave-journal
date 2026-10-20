@@ -28,7 +28,7 @@ from common import PRECISION, money
 from mwjournal.chart import ENTRY, EXIT, STOP, TARGET, chart_window, trade_chart
 from mwjournal.model import WHY_INCOMPLETE, finite, instant
 from mwjournal.metrics import excursions
-from mwjournal.scope import PROVENANCE, provenance
+from mwjournal.scope import LIVE_TICKS, PROVENANCE, provenance
 from mwjournal import humanize, units
 from mwjournal import merging
 
@@ -36,6 +36,7 @@ ADHERENCE = ['Unreviewed', 'Yes', 'No']
 LIST_LIMIT = 150           # rows drawn at once; Show Earlier Trades draws the next ones
 REPORT = 'report-card-open'  # per environment: the Daily Report Card is shown in place of the trade
 REFRESH = '3s'             # how often the page looks for trades the watcher has added or changed
+LIVE = '1s'                # how often an open trade's numbers and chart are drawn again
 CONTEXT = [15, 30, 60, 120, 0]
 LONG, SHORT = theme.SERIES[0], theme.SERIES[1]
 
@@ -368,35 +369,8 @@ def detail(journal, trade, ids, zone) -> None:
                     f"<span class='when'>{common.moment(trade.opened, zone)}</span></div>", unsafe_allow_html=True)
         st.caption(f'{position + 1} of {len(ids)}', width='content')
     annotation = journal.annotations().get(trade.id, {})
-    unit = common.excursion_unit(journal)
-    metric = common.best_display_metric(journal, trade)
-    precision = metric.get('point_precision') if unit in ('points', 'ticks') else metric.get('precision')
-    measured = PRECISION.get(precision, 'Waiting for prices') if metric else ''
-    if metric and metric.get('provenance') in ('history-backfill', 'replay-history'):
-        measured += ' · ' + PROVENANCE[metric['provenance']]      # real prints, loaded after the trade
-    st.caption(' · '.join(part for part in (common.span(trade.opened, trade.closed, zone), measured) if part))
-    if getattr(trade, 'merge_leg_ids', None):
-        st.caption(f'Merged from {len(trade.merge_leg_ids)} trades · their own fills and notes are kept',
-                   help='Overlapping positions: points and ticks are unavailable because the original trades had '
-                        'different average entries. Currency and R remain.' if getattr(trade, 'merge_overlapping', False) else None)
-    cols = st.columns([1.25, 1, 1, .75])
-    outcome = 'positive' if trade.net is not None and trade.net > 0 else 'negative' if trade.net is not None and trade.net < 0 else 'neutral'
-    with cols[0].container(key='trade-result-' + outcome):
-        why = (' '.join(WHY_INCOMPLETE[reason] for reason in trade.incomplete) if trade.incomplete
-               else 'This contract has no dollars per point yet.' if trade.net is None else None)
-        st.metric('Recorded P&L' if trade.closed else 'Realised P&L · still open',
-                  money(trade.net, trade.currency) if trade.net is not None else 'Unknown', help=why)
-    mae, mfe = common.excursion_values(journal, trade, metric, annotation.get('initial_risk'))
-    explain = units.description(unit) + (f' Measured from: {measured}.' if measured else '')
-    cols[1].metric('MAE', common.excursion_amount(mae, unit, trade.currency), help=explain)
-    cols[2].metric('MFE', common.excursion_amount(mfe, unit, trade.currency), help=explain)
-    cols[3].metric('Peak size', f'{trade.max_qty:g}', help='The most contracts held at once.')
-    if common.replay_ticks_pending(journal, trade):
-        st.caption(common.REPLAY_TICKS_LATER)
-    elif not metric and journal.display_settings()['excursion_policy'] == 'ticks-only':
-        st.caption('MAE / MFE need recorded ticks · candle estimates are excluded',
-                   help='To show candle-based values, choose Allow labelled estimates under Setup → Advanced → '
-                        'MAE / MFE Accuracy.')
+    live = trade.status == 'open'          # an open trade follows the market: see live_numbers at the end
+    (live_numbers if live else numbers)(journal, trade, annotation, zone)
     if trade.point_value is None:
         st.warning(f'{trade.symbol} has no dollars-per-point multiplier yet, so its P&L cannot be calculated. Set it here.')
         common.multiplier_form(journal, 'trade-multiplier', trade.symbol)
@@ -405,7 +379,7 @@ def detail(journal, trade, ids, zone) -> None:
     with overview:
         chart_col, tag_col = st.columns([1.35, 1], gap='small')
         with chart_col:
-            chart_panel(journal, trade, annotation, zone)
+            (live_chart if live else chart_panel)(journal, trade, annotation, zone)
         with tag_col:
             tag_controls.render(journal, trade)
     with notes:
@@ -418,7 +392,7 @@ def detail(journal, trade, ids, zone) -> None:
         with executions:
             executions_panel(journal, trade, zone)
         with metrics:
-            excursions_panel(journal, trade, annotation, zone)
+            (live_excursions if live else excursions_panel)(journal, trade, annotation, zone)
         with runner:
             if getattr(trade, 'merge_leg_ids', None):
                 st.info('Runner analysis stays per original trade: a merged trade can have different stops. '
@@ -427,6 +401,47 @@ def detail(journal, trade, ids, zone) -> None:
                 runner_controls.trade_panel(journal, trade, annotation)
             else:
                 st.info('Post-exit runner analysis becomes available after the trade closes.')
+
+
+def numbers(journal, trade, annotation: dict, zone) -> None:
+    """The trade's result, MAE, MFE and size, and what they were measured from. An open trade's result is
+    what it would be if closed at the last recorded price of the prints that measure its MAE and MFE."""
+    unit = common.excursion_unit(journal)
+    metric = common.best_display_metric(journal, trade)
+    precision = metric.get('point_precision') if unit in ('points', 'ticks') else metric.get('precision')
+    measured = PRECISION.get(precision, 'Waiting for prices') if metric else ''
+    if metric and metric.get('provenance') in ('history-backfill', 'replay-history'):
+        measured += ' · ' + PROVENANCE[metric['provenance']]      # real prints, loaded after the trade
+    st.caption(' · '.join(part for part in (common.span(trade.opened, trade.closed, zone), measured) if part))
+    if getattr(trade, 'merge_leg_ids', None):
+        st.caption(f'Merged from {len(trade.merge_leg_ids)} trades · their own fills and notes are kept',
+                   help='Overlapping positions: points and ticks are unavailable because the original trades had '
+                        'different average entries. Currency and R remain.' if getattr(trade, 'merge_overlapping', False) else None)
+    cols = st.columns([1.25, 1, 1, .75])
+    result, label = trade.net, 'Recorded P&L' if trade.closed else 'Realised P&L · still open'
+    why = (' '.join(WHY_INCOMPLETE[reason] for reason in trade.incomplete) if trade.incomplete
+           else 'This contract has no dollars per point yet.' if trade.net is None else None)
+    last = (journal.latest_price(trade.symbol, metric['source'], since=trade.opened)
+            if not trade.closed and trade.net is not None and metric.get('source') else None)
+    if last is not None and last.last is not None:
+        result, label = trade.net_at(last.last), 'Open P&L'
+        why = (f'If the {trade.open_qty:g} still held were closed at {last.last:g}, the last recorded price '
+               f'({common.moment(last.ts, zone)}). Realised so far: {money(trade.net, trade.currency)}. The exit\'s '
+               'fees are not included.')
+    outcome = 'positive' if result is not None and result > 0 else 'negative' if result is not None and result < 0 else 'neutral'
+    with cols[0].container(key='trade-result-' + outcome):
+        st.metric(label, money(result, trade.currency) if result is not None else 'Unknown', help=why)
+    mae, mfe = common.excursion_values(journal, trade, metric, annotation.get('initial_risk'))
+    explain = units.description(unit) + (f' Measured from: {measured}.' if measured else '')
+    cols[1].metric('MAE', common.excursion_amount(mae, unit, trade.currency), help=explain)
+    cols[2].metric('MFE', common.excursion_amount(mfe, unit, trade.currency), help=explain)
+    cols[3].metric('Peak size', f'{trade.max_qty:g}', help='The most contracts held at once.')
+    if common.replay_ticks_pending(journal, trade):
+        st.caption(common.REPLAY_TICKS_LATER)
+    elif not metric and journal.display_settings()['excursion_policy'] == 'ticks-only':
+        st.caption('MAE / MFE need recorded ticks · candle estimates are excluded',
+                   help='To show candle-based values, choose Allow labelled estimates under Setup → Advanced → '
+                        'MAE / MFE Accuracy.')
 
 
 def executions_panel(journal, trade, zone) -> None:
@@ -583,8 +598,9 @@ def excursions_panel(journal, trade, a: dict, zone) -> None:
                     fig.add_vline(x=common.wall_clock([fill['ts']], zone)[0], line_width=1,
                                   line_dash='dot', line_color=theme.UP if fill['role'] == 'entry' else theme.DOWN)
                 definition = 'Price move from held average entry' if unit in ('points', 'ticks') else 'Gross position P&L'
+                # uirevision: a zoom survives the redraws of an open trade's path.
                 fig.update_layout(height=290, yaxis_title=f'{definition} ({units.suffix(unit, trade.currency)})',
-                                  xaxis_title=f'Time ({humanize.zone_name(zone, trade.opened)})')
+                                  xaxis_title=f'Time ({humanize.zone_name(zone, trade.opened)})', uirevision=trade.id)
                 if unit == 'currency':
                     theme.money_axis(fig, trade.currency, [*high, *low])
                 st.plotly_chart(fig, width='stretch', config=theme.PLOTLY_CONFIG,
@@ -609,8 +625,13 @@ def chart_panel(journal, trade, annotation: dict, zone) -> None:
     clock = journal.trade_clock(trade)
     start, end = chart_window(trade, context, now=clock)
     samples = journal.prices(trade.symbol, source, start=start.isoformat(), end=end.isoformat())
+    prints = []
+    if provenance(source) == 'platform-bars' and LIVE_TICKS in sources:
+        # The minute in progress has no platform candle yet: the study's prints draw it.
+        after = max((instant(s.ts) for s in samples), default=start)
+        prints = journal.prices(trade.symbol, LIVE_TICKS, start=after.isoformat(), end=end.isoformat())
     events = journal.protection_events(trade)
-    payload = trade_chart(trade, samples, source, annotation, events, now=clock)
+    payload = trade_chart(trade, samples, source, annotation, events, now=clock, prints=prints, prints_source=LIVE_TICKS)
     candles = payload['series']['data']
     if candles:
         overlays = payload['overlays'] if levels else {**payload['overlays'], 'levels': []}
@@ -644,3 +665,10 @@ def chart_panel(journal, trade, annotation: dict, zone) -> None:
                                     'Side': f['side'].title(), 'Qty': f['qty'], 'Price': f['price'],
                                     'Execution': f['execution_id']} for f in trade.fills]),
                      hide_index=True, width='stretch')
+
+
+# An open trade's numbers, chart and MAE / MFE are drawn again every LIVE from what the watcher has stored by
+# then, the rest of the page staying as it is. A closed trade's are drawn once.
+live_numbers = st.fragment(run_every=LIVE)(numbers)
+live_chart = st.fragment(run_every=LIVE)(chart_panel)
+live_excursions = st.fragment(run_every=LIVE)(excursions_panel)

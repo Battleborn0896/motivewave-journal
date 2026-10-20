@@ -217,6 +217,11 @@ class PriceSample:
     close: float | None = None
     volume: float | None = None
 
+    @property
+    def last(self) -> float | None:
+        """The price it ended at: a print's price, a bar's close; None for a bar with only a high and low."""
+        return self.close if self.close is not None else self.high if not self.resolution_seconds else None
+
     def __post_init__(self):
         object.__setattr__(self, 'symbol', str(self.symbol or '').strip().upper())
         if not self.symbol or not isinstance(self.source, str) or not self.source.strip():
@@ -337,6 +342,13 @@ class Trade:
     @property
     def net(self):
         return self.gross - self.commission if self.gross is not None else None
+
+    def net_at(self, price):
+        """The net result if the contracts still held were closed at `price`, without that exit's fees."""
+        if self.net is None or self.average_cost is None or price is None:
+            return None
+        sign = 1 if self.direction == 'long' else -1
+        return self.net + sign * (price - self.average_cost) * self.open_qty * self.point_value
 
     @property
     def basis(self):

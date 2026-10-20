@@ -105,10 +105,20 @@ def protection_segments(trade: Trade, events, annotation: dict, *, now=None) -> 
     return result
 
 
-def trade_chart(trade: Trade, samples: list[PriceSample], source: str, annotation=None, events=(), *, now=None) -> dict:
+def trade_chart(trade: Trade, samples: list[PriceSample], source: str, annotation=None, events=(), *, now=None,
+                prints: list[PriceSample] = (), prints_source: str = '') -> dict:
+    """`prints`, of `prints_source`, draw the minutes after the last candle of `source`: the one in
+    progress, before the platform has its candle. One chart, as on any trading platform."""
     if not allows_source(trade, source):
         samples = []
     data, notes = minute_candles(samples, trade.symbol, source)
+    if prints and allows_source(trade, prints_source):
+        after = data[-1]['time'] + 60 if data else 0
+        forming, _ = minute_candles([p for p in prints if instant(p.ts).timestamp() >= after], trade.symbol, prints_source)
+        if forming:
+            data += forming
+            notes.append('Minutes after the last platform candle, usually just the one in progress, are drawn from '
+                         "the prints the study recorded; the platform's candle replaces each when it arrives.")
     bars = {b['time'] for b in data}
     fills = []
     for i, fill in enumerate(trade.fills):

@@ -22,6 +22,7 @@ final class JournalEventWriter {
    * still running in the same Java process. */
   static final String ANOTHER_COPY = "Another copy of the MotiveWave Journal study is still running: "
       + "quit MotiveWave completely and open it again.";
+  static final long FLUSH_MILLIS = 250;
   private static final Map<Path, JournalEventWriter> WRITERS = new HashMap<>();
   private final Path path;
   private final ArrayBlockingQueue<String> queue = new ArrayBlockingQueue<>(65536);
@@ -160,7 +161,8 @@ final class JournalEventWriter {
                 file.write(gap(entry.getKey(), gap.count, gap.first, gap.last));
                 file.newLine();
               }
-              if (System.currentTimeMillis() - lastFlush >= 1000) {
+              // Four times a second: the app redraws an open trade's chart every second from what is on disk.
+              if (System.currentTimeMillis() - lastFlush >= FLUSH_MILLIS) {
                 file.flush();
                 lastFlush = System.currentTimeMillis();
               }

@@ -7,7 +7,7 @@ Live/paper and replay have separate databases. No routine CSV export/import is r
 MotiveWave Journal is an independent open-source project. It is not affiliated with, endorsed by or
 supported by MotiveWave Software.
 
-## What's new in 0.4.5: prices matched by product, replay MAE/MFE by default, and a short Setup
+## What's new in 0.4.5: live open trades, prices matched by product, replay MAE/MFE by default, and a short Setup
 
 This release comes with study **0.3.4**. Setup asks for it in one line while MotiveWave runs an older
 study: click **Install MotiveWave Study**, then quit MotiveWave completely and open it again.
@@ -22,6 +22,12 @@ study: click **Install MotiveWave Study**, then quit MotiveWave completely and o
   already had the study take the new default too.
 - **Prints recorded as they trade are never marked proxy.** Only the history a continuous chart loads
   when it opens is, because it can be back-adjusted after a roll.
+- **An open trade is live.** While a trade is open, its chart, **Open P&L** (at the last recorded
+  price; the exit's fees are not in yet), MAE, MFE and the **More → MAE / MFE** tab are drawn again every
+  second. The minute in progress is drawn from the study's prints until MotiveWave's own candle for it
+  arrives. A chart you zoomed or panned keeps your view, and while it shows the newest candle it moves
+  along with new ones. The study writes to disk four times a second and the app reads it every second,
+  so the page is about a second behind MotiveWave.
 - **Trades already in your journal are measured again once**, in the background, the first time the new
   app starts, so an open or recent trade that showed no MAE/MFE gets it without pressing anything. Prices
   recorded earlier keep their old labels.

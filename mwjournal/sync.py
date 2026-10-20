@@ -17,7 +17,6 @@ import datetime as dt
 import hashlib
 import os
 import threading
-import time
 from pathlib import Path
 
 from . import paths
@@ -28,6 +27,9 @@ from .store import Journal
 from .scope import allows_source
 
 MODES = ('bridge', 'executions', 'prices')
+# How often the watcher reads the files. The study writes the bridge file at least every quarter second,
+# and an open trade's chart is drawn again every second (app/views/trades.py LIVE).
+POLL_SECONDS = 1
 DEFAULT_CONNECTION = 'MotiveWave'
 CHECKPOINT = 256            # bytes remembered from just before the read position, to notice a rewrite in place
 
@@ -59,7 +61,6 @@ class SyncWorker:
         self.journal = journal
         self.stop_event = threading.Event()
         self.hashes = {}
-        self.metric_clock = 0
         self.dirty_executions = set()
         self.dirty_prices = {}      # (product, source): the time new prices span, for the trades of that product
         # Measured under older rules, or regrouped by an upgrade: measure every trade again, once.
@@ -194,9 +195,9 @@ class SyncWorker:
         self.recalculate()
 
     def recalculate(self):
-        """Late fills use cached prices; new live ticks do not rebuild every old closed trade."""
-        clock = time.monotonic()
-        if not self.rebuild and not self.dirty_executions and (not self.dirty_prices or clock - self.metric_clock < 5):
+        """Late fills use cached prices; new prices measure only the trades they overlap, which while
+        trading is the open one, so its MAE / MFE follow the market at every poll (POLL_SECONDS)."""
+        if not self.rebuild and not self.dirty_executions and not self.dirty_prices:
             return
         now = dt.datetime.now(dt.timezone.utc)
         for trade in self.journal.trades():
@@ -221,7 +222,6 @@ class SyncWorker:
             self.rebuild = False
         self.dirty_executions.clear()
         self.dirty_prices.clear()
-        self.metric_clock = clock
 
     def run(self):
         failed = True                                  # a failure recorded by an earlier run is cleared too
@@ -238,7 +238,7 @@ class SyncWorker:
                                                             'error': type(exc).__name__})
                 except Exception:
                     pass                               # the database is unavailable; keep trying, do not end capture
-            self.stop_event.wait(1)
+            self.stop_event.wait(POLL_SECONDS)
 
 
 def main(argv=None):

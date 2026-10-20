@@ -245,6 +245,8 @@ function resetView() {
 
 function fill(s) {
   const keep = userMoved ? chart.timeScale().getVisibleLogicalRange() : null;
+  const bars = x => Math.max(0, ...x.map(e => ((e.spec || e).data || []).length));
+  const before = bars(entries);
   entries.forEach((e, i) => {
     const x = s.series[i];
     e.spec = x;
@@ -261,7 +263,12 @@ function fill(s) {
     e.api.setMarkers((x.markers || []).map(m => Object.assign({ position: 'aboveBar', shape: 'circle', size: 1 }, m)));
   });
   document.getElementById('title').textContent = s.title || '';
-  if (keep) chart.timeScale().setVisibleLogicalRange(keep); else resetView();
+  if (keep) {
+    // A view the user moved stays put, except that one reaching the newest bar keeps following it as new
+    // bars arrive (a live trade), as on any trading platform.
+    const added = keep.to >= before - 1 ? Math.max(0, bars(s.series) - before) : 0;
+    chart.timeScale().setVisibleLogicalRange({ from: keep.from + added, to: keep.to + added });
+  } else resetView();
   legend(null);
   requestOverlay();
 }
