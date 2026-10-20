@@ -132,13 +132,16 @@ class Live:
     """A journal as an open trade's one-second redraw reads it: its own settings, reviews and keys, with
     prices, measurements, gaps and orders read where the watcher writes them as they arrive, the capture
     journal. A named journal holds copies of those, brought up to date only when the whole page is drawn
-    (open_named), which a redraw does not do."""
+    (open_named), which a redraw does not do. Only for a trade the capture journal measures as this journal
+    holds it: fills or a multiplier added to a named journal alone make it another trade there, and its own
+    copy is then the only one."""
     MARKET = frozenset({'path', 'prices', 'price_sources', 'metric_options', 'best_metric', 'capture_gaps',
                         'trade_clock', 'protection_events'})
 
-    def __init__(self, journal):
+    def __init__(self, journal, trade):
         self.journal = journal
-        self.market = getattr(journal, 'capture_journal', None) or journal
+        capture = getattr(journal, 'capture_journal', None)
+        self.market = capture if capture is not None and capture.metric_options(trade) else journal
 
     def __getattr__(self, name):
         return getattr(self.market if name in self.MARKET else self.journal, name)

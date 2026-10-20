@@ -353,7 +353,7 @@ class Workspace:
             return key
         return self._workspace_edit(save)
 
-    def reconcile_drafts(self):
+    def reconcile_drafts(self, trades=None):
         """Only explicit account/provider/exact-contract/time windows; ambiguity attaches nothing.
 
         A consumed draft stays consumed after restart. No placeholder fill, P&L or price is invented.
@@ -361,7 +361,7 @@ class Workspace:
         """
         if not any(d['state'] in ('armed', 'ambiguous') for d in self.workspace()['drafts'].values()):
             return
-        trades = self.trades()
+        trades = self.trades() if trades is None else trades
         with self.connect() as db:
             db.execute('BEGIN IMMEDIATE')
             state, library = read(db), tagging.library(db)

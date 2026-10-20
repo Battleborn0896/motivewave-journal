@@ -246,6 +246,10 @@ class Journal(Workspace):
             merged = encode({**data, **{k: held[k] for k in NATIVE if k in held and k not in data}})
             if merged != previous['payload']:
                 db.execute('UPDATE executions SET payload=? WHERE key=?', (merged, fill.key))
+                # Counts the fills described again (fills_revision): the importer reports them, and the
+                # watcher's fills_version sees a rewrite of the same length by it.
+                db.execute("INSERT INTO journal_meta VALUES('fills_revision','1') ON CONFLICT(key) "
+                           'DO UPDATE SET value=CAST(value AS INTEGER)+1')
         return False
 
     @contextmanager
@@ -301,12 +305,18 @@ class Journal(Workspace):
         with self.connect() as db:
             db.execute("INSERT OR REPLACE INTO journal_meta VALUES('media_settings',?)", (encode(data),))
 
+    @staticmethod
+    def fills_revision(db) -> int:
+        """How many times a fill already held has been described again (_insert)."""
+        row = db.execute("SELECT value FROM journal_meta WHERE key='fills_revision'").fetchone()
+        return int(row[0]) if row else 0
+
     def fills_version(self) -> tuple:
         """Changes whenever trades() could: a fill added or described again, or a multiplier set."""
         with self.connect() as db:
             return tuple(db.execute('SELECT (SELECT count(*) FROM executions), (SELECT total(length(payload)) FROM '
-                                    "executions), (SELECT group_concat(symbol || '=' || point_value) FROM instruments)"
-                                    ).fetchone())
+                                    "executions), (SELECT value FROM journal_meta WHERE key='fills_revision'), "
+                                    "(SELECT group_concat(symbol || '=' || point_value) FROM instruments)").fetchone())
 
     def trades(self):
         with self.connect() as db:
@@ -802,10 +812,11 @@ class Journal(Workspace):
         run = trade.provider.rsplit(':replay:', 1)[1]
         prefix = 'motivewave-replay:' + run + ':'
         with self.connect() as db:
-            # Every source that starts with the prefix: the run's ticks, simulated prints and history.
-            latest = [db.execute('SELECT max(ts) FROM prices WHERE symbol=? AND source>=? AND source<?',
-                                 (label, prefix, prefix + '\U0010ffff')).fetchone()[0]
-                      for label in self._labels(db, trade.symbol)]
+            # Every source that starts with the prefix: the run's ticks, simulated prints and history. One
+            # index step per source; a range over sources would read every price of the run, every second.
+            latest = [db.execute('SELECT max(ts) FROM prices WHERE symbol=? AND source=?', (label, source)).fetchone()[0]
+                      for label in self._labels(db, trade.symbol)
+                      for source in self._distinct(db, 'source', 'symbol=? AND ', (label,)) if source.startswith(prefix)]
         stamps = [instant(f['ts']) for f in trade.fills]
         stamps.extend(instant(stamp) for stamp in latest if stamp)
         return max(stamps) + dt.timedelta(milliseconds=1)

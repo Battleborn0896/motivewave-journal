@@ -76,6 +76,7 @@ def test_new_prices_alone_wait_as_long_as_the_last_measurement_took_and_fills_ne
     worker.poll()
     trade, = journal.trades()
     assert trade.closed and journal.best_metric(trade)['observations'] == 2
+    assert worker.measure_after == 0                  # a pass for fills holds back no later prices
 
 
 def test_the_watcher_builds_its_trades_again_only_when_fills_or_multipliers_change(tmp_path, monkeypatch):
@@ -97,6 +98,13 @@ def test_the_watcher_builds_its_trades_again_only_when_fills_or_multipliers_chan
     write(bridge, [fill('sell', 'out', 20009, '2026-10-07T14:00:06Z')])
     worker.poll()
     assert len(built) == 2 and original(journal)[0].closed
+    # A fill described again in the app, to a payload of the same length, is a change too.
+    out = next(e for e in journal.executions() if e.execution_id == 'out')
+    journal.ingest([(dataclasses.replace(out, quality='aaaa'), {})])
+    worker.poll()
+    journal.ingest([(dataclasses.replace(out, quality='bbbb'), {})])
+    worker.poll()
+    assert len(built) == 4
 
 
 def test_the_result_of_an_open_trade_at_a_price():
@@ -117,6 +125,11 @@ def test_the_newest_measured_price_is_the_newest_by_time_whatever_order_prices_c
     prices = [PriceSample('NQ', f'2026-10-07T14:00:0{s}Z', 'ticks', p, p) for s, p in [(3, 20003), (1, 20001), (2, 20002)]]
     metric = excursions(trade, prices, 'ticks', now=trade_time('2026-10-07T14:00:09Z'))
     assert metric['last_price'] == 20003 and metric['last_ts'] == '2026-10-07T14:00:03+00:00'
+    # Prints sharing the newest time (a sweep): the last one on the tape, as the chart's close is.
+    sweep = [PriceSample('NQ', '2026-10-07T14:00:04Z', 'ticks', p, p) for p in (20004, 20004.25, 20004.5)]
+    assert excursions(trade, prices + sweep, 'ticks', now=trade_time('2026-10-07T14:00:09Z'))['last_price'] == 20004.5
+    chart = trade_chart(trade, prices + sweep, 'ticks')
+    assert chart['series']['data'][-1]['close'] == 20004.5
 
 
 def trade_time(text):
@@ -148,7 +161,7 @@ def test_a_named_journal_redraw_reads_the_capture_journals_newest_prices_and_mea
     write(bridge, [tick(20030, '2026-10-07T14:00:02Z')])
     worker.poll()
     trade, = named.trades()
-    live = journals.Live(named)
+    live = journals.Live(named, trade)
     assert named.best_metric(trade)['observations'] == 1 and len(named.prices('NQZ6', 'motivewave-ticks')) == 1
     assert live.best_metric(trade)['observations'] == 2 and len(live.prices('NQZ6', 'motivewave-ticks')) == 2
     assert live.path == capture.path and live.price_sources('NQZ6', trade) == ['motivewave-ticks']
@@ -156,7 +169,19 @@ def test_a_named_journal_redraw_reads_the_capture_journals_newest_prices_and_mea
     assert live.display_settings()['excursion_unit'] == 'points' != capture.display_settings()['excursion_unit']
     assert live.ui_scope == named.ui_scope and live.annotations() == named.annotations()
     # A journal that is not a named one reads itself.
-    assert journals.Live(capture).market is capture
+    assert journals.Live(capture, capture.trades()[0]).market is capture
+    # A trade the capture journal does not hold as the named journal does (a fill added to the named journal
+    # alone) is read from the named journal's own copy.
+    named.ingest([(Execution('motivewave-native:ws:live', 'SIM', 'ESZ6', 'buy', 1, 5000, '2026-10-07T14:00:00Z',
+                             execution_id='by-hand'), {})])
+    named.ingest_prices([PriceSample('ES', '2026-10-07T14:00:01Z', 'my-data', 4990, 4990)])
+    measure = SyncWorker(named)
+    measure.rebuild = True                             # as Recalculate does after a fill added by hand
+    measure.poll()
+    by_hand = next(t for t in named.trades() if t.symbol == 'ESZ6')
+    live = journals.Live(named, by_hand)
+    assert live.market is named and live.best_metric(by_hand)['mae_points'] == 10
+    assert live.price_sources('ESZ6', by_hand) == ['my-data']
 
 
 def test_an_open_trades_chart_reads_only_the_prices_after_its_kept_minutes(tmp_path, monkeypatch):
@@ -179,11 +204,24 @@ def test_an_open_trades_chart_reads_only_the_prices_after_its_kept_minutes(tmp_p
     reads.clear()
     assert [s.high for s in view.window_prices(journal, trade, 'motivewave-ticks', *window)] == [1, 2, 3, 4]
     assert reads == ['2026-10-07T14:02:00+00:00']
-    # A minute later everything is read again once; a closed trade always reads everything.
+    # A replay racing ahead: the newest minute moves with the prices, not the clock on the wall.
+    journal.ingest_prices(ticks(('2026-10-07T14:05:01Z', 5)))
+    view.window_prices(journal, trade, 'motivewave-ticks', *window)
+    reads.clear()
+    assert [s.high for s in view.window_prices(journal, trade, 'motivewave-ticks', *window)] == [1, 2, 3, 4, 5]
+    assert reads == ['2026-10-07T14:05:00+00:00']
+    # A minute later everything is read again once.
     monkeypatch.setattr(view.time, 'time', lambda: 60 * 1001)
     reads.clear()
-    assert [s.high for s in view.window_prices(journal, trade, 'motivewave-ticks', *window)] == [1, 2, 3, 4]
+    assert [s.high for s in view.window_prices(journal, trade, 'motivewave-ticks', *window)] == [1, 2, 3, 4, 5]
     assert reads[0] == window[0].isoformat()
+    # The contract's own prices appearing replace the continuous chart's in the kept minutes too.
+    journal.ingest_prices([PriceSample('NQZ6', '2026-10-07T14:05:30Z', 'motivewave-ticks', 9, 9)])
+    assert [s.high for s in view.window_prices(journal, trade, 'motivewave-ticks', *window)] == [9]
+    # A closed trade reads everything, and nothing is kept for it.
+    closed = dataclasses.replace(trade, closed='2026-10-07T14:06:00+00:00')
+    assert closed.status == 'closed' and view.window_prices(journal, closed, 'motivewave-ticks', *window)
+    assert view.KEPT not in view.st.session_state
 
 
 def test_the_minute_in_progress_is_drawn_from_prints_after_the_last_platform_candle():

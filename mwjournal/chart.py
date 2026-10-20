@@ -29,7 +29,7 @@ def minute_candles(samples: list[PriceSample], symbol: str, source: str) -> tupl
         notes.append('Generated/unknown replay ticks: these candles are not a verified historical tick path.')
     unusable = False
     samples = trade_prices(samples, symbol, source)
-    for sample in sorted(samples, key=lambda s: instant(s.ts)):
+    for sample in sorted(samples, key=lambda s: s.ts):           # UTC ISO text sorts in time order
         stamp = instant(sample.ts).timestamp()
         seconds = sample.resolution_seconds
         # Never divide a 5m bar into fake 1m bars or invent O/C from a high/low range.

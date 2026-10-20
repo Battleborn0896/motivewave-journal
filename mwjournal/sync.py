@@ -194,15 +194,17 @@ class SyncWorker:
                 self.journal.put('sync_status', name, {'checked': now, **waiting})
             except (OSError, ValueError, UnicodeError) as exc:
                 self.journal.put('sync_status', name, {'status': 'needs attention', 'checked': now, 'error': str(exc)})
-        self.journal.reconcile_drafts()
+        self.trades()
         self.recalculate()
 
     def trades(self):
         """The journal's trades, built again only when its fills or multipliers changed: new prices arrive at
-        nearly every poll and change no trade."""
+        nearly every poll and change no trade. A pre-trade draft can only attach to a trade new fills made,
+        so drafts are matched then too."""
         version = self.journal.fills_version()
-        if self.rebuild or self.dirty_executions or version != self.trades_version:
+        if version != self.trades_version:
             self.trade_list, self.trades_version = self.journal.trades(), version
+            self.journal.reconcile_drafts(self.trade_list)
         return self.trade_list
 
     def recalculate(self):
@@ -210,7 +212,7 @@ class SyncWorker:
         trading is the open one, so its MAE / MFE follow the market at every poll (POLL_SECONDS). New prices
         alone wait at least as long as the last measurement took, so a long-held trade with a long tape
         keeps the watcher busy half the time at most and the file is still read every poll."""
-        fills = self.rebuild or self.dirty_executions
+        fills = bool(self.rebuild or self.dirty_executions)    # a bool: the set is cleared below
         if not fills and (not self.dirty_prices or time.monotonic() < self.measure_after):
             return
         began = time.monotonic()
@@ -237,7 +239,8 @@ class SyncWorker:
             self.rebuild = False
         self.dirty_executions.clear()
         self.dirty_prices.clear()
-        self.measure_after = time.monotonic() + (time.monotonic() - began)
+        # Only a measurement of new prices alone holds back the next one; after fills, prices are measured at once.
+        self.measure_after = 0 if fills else time.monotonic() + (time.monotonic() - began)
 
     def run(self):
         failed = True                                  # a failure recorded by an earlier run is cleared too

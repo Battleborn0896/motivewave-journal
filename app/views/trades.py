@@ -374,7 +374,7 @@ def detail(journal, trade, ids, zone) -> None:
     annotation = journal.annotations().get(trade.id, {})
     live = trade.status == 'open'          # an open trade follows the market: see live_numbers at the end
     if live:
-        live_numbers(journals.Live(journal), trade, annotation, zone)
+        live_numbers(journals.Live(journal, trade), trade, annotation, zone)
     else:
         numbers(journal, trade, annotation, zone)
     if trade.point_value is None:
@@ -386,7 +386,7 @@ def detail(journal, trade, ids, zone) -> None:
         chart_col, tag_col = st.columns([1.35, 1], gap='small')
         with chart_col:
             if live:
-                live_chart(journals.Live(journal), trade, annotation, zone)
+                live_chart(journals.Live(journal, trade), trade, annotation, zone)
             else:
                 chart_panel(journal, trade, annotation, zone)
         with tag_col:
@@ -626,20 +626,35 @@ def excursions_panel(journal, trade, a: dict, zone) -> None:
 
 def window_prices(journal, trade, source, start, end) -> list:
     """The prices of one source in the chart window. An open trade's chart is drawn every second, and the
-    minutes it has drawn before the newest one do not change: they are read once a minute and kept, and
-    each second reads only the prices from the newest minute on."""
+    minutes it has drawn before the newest one do not change: they are kept, and each second reads only the
+    prices from the newest minute on. The window is read whole again once a wall-clock minute, for prices
+    stored late (a platform candle written after its minute)."""
     if trade.status != 'open':
+        st.session_state.pop(KEPT, None)
         return journal.prices(trade.symbol, source, start=start.isoformat(), end=end.isoformat())
     key = (str(journal.path), trade.id, source, start.isoformat(), int(time.time() // 60))
     kept = st.session_state.get(KEPT)
-    if not kept or kept[0] != key:
-        samples = journal.prices(trade.symbol, source, start=start.isoformat(), end=end.isoformat())
-        # Stored times are UTC ISO strings, so they compare as text in time order.
-        newest = max((s.ts for s in samples), default=start.isoformat())
+    if kept and kept[0] == key:
+        settled, boundary = kept[1], kept[2]
+        fresh = journal.prices(trade.symbol, source, start=boundary, end=end.isoformat())
+        # The contract's own prices first (model.trade_prices): the kept part cannot keep the continuous
+        # chart's once the contract's appear.
+        exact = trade.symbol.strip().upper()
+        if settled and any(s.symbol == exact for s in fresh) and not any(s.symbol == exact for s in settled):
+            fresh, settled = journal.prices(trade.symbol, source, start=start.isoformat(), end=end.isoformat()), []
+    else:
+        settled, fresh = [], journal.prices(trade.symbol, source, start=start.isoformat(), end=end.isoformat())
+    samples = settled + fresh
+    # Minutes before the newest one join the kept part, however fast a replay plays.
+    newest = max((s.ts for s in fresh), default=None)
+    if newest is not None:
         boundary = instant(newest).replace(second=0, microsecond=0).isoformat()
-        kept = st.session_state[KEPT] = (key, [s for s in samples if s.ts < boundary], boundary)
-    _, settled, boundary = kept
-    return settled + journal.prices(trade.symbol, source, start=boundary, end=end.isoformat())
+        # Stored times are UTC ISO text, so they compare as text in time order.
+        settled = settled + [s for s in fresh if s.ts < boundary]
+    elif not settled:
+        boundary = start.isoformat()
+    st.session_state[KEPT] = (key, settled, boundary)
+    return samples
 
 
 def chart_panel(journal, trade, annotation: dict, zone) -> None:

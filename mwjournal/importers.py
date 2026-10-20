@@ -200,11 +200,11 @@ def apply_preview(journal, preview: Preview) -> dict:
     if preview.dataset is not None and preview.dataset != journal.dataset:
         raise ValueError('Preview belongs to the other trading environment.')
     with journal.connect() as db:
-        before = db.total_changes
+        before = journal.fills_revision(db)
         added = journal.ingest(preview.fills, db=db) if preview.fills else 0
         # Fills already held whose writer described them again: a reworded quality label, or the
         # platform's position id. Their trades are rebuilt, so the caller is told.
-        relabelled = db.total_changes - before - added
+        relabelled = journal.fills_revision(db) - before
         prices = journal.ingest_prices(preview.prices, db=db)
         gaps = journal.ingest_gaps(preview.gaps, db=db)
         protection = journal.ingest_protection(preview.protection, db=db)
