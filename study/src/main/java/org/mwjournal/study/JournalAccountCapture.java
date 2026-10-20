@@ -70,6 +70,8 @@ final class JournalAccountCapture {
   private final Set<TickGate<JournalTicks.Held>> replayGates = ConcurrentHashMap.newKeySet();
   private final Set<Runnable> listeners = ConcurrentHashMap.newKeySet();
   private volatile List<JournalNativeAccess.Fill> fills; // the last snapshot's; null until one has been read
+  // The replay fills written so far, each with the run it was filed under; null until a snapshot has been read.
+  private volatile List<JournalBackfill.ReplayFill> replayFills;
   private String lastBeat = "";
   /** Set while fills cannot be read at all. Null means capture is working, whatever warnings says. */
   volatile String failure;
@@ -142,6 +144,17 @@ final class JournalAccountCapture {
 
   /** Every fill of the last snapshot that could be read, live and replay; null before the first one. */
   List<JournalNativeAccess.Fill> fills() { return fills; }
+
+  /** The replay fills of the last snapshot that have been written, each with the replay run it was filed
+   * under (the run in its provider's name, which never changes once written). A replay fill still waiting
+   * for a replay chart is not in it. Null before the first snapshot. */
+  List<JournalBackfill.ReplayFill> replayFills() { return replayFills; }
+
+  /** The run in a replay fill's provider: motivewave-native:<workspace>:replay:<run>. Null for any other. */
+  static String runOf(String provider) {
+    int at = provider == null ? -1 : provider.lastIndexOf(":replay:");
+    return at < 0 || at + 8 >= provider.length() ? null : provider.substring(at + 8);
+  }
 
   private void flushBuffered(long nowNanos) {
     for (var gate : liveGates) JournalTicks.flush(gate, live, this, false, nowNanos);
@@ -308,6 +321,12 @@ final class JournalAccountCapture {
         }
       }
       if (snapshot.skipped().isEmpty() && waitingReplay == 0 && settling == 0) mediaBaseline = true;
+      var filed = new ArrayList<JournalBackfill.ReplayFill>();
+      for (var fill : fills) {
+        String run = fill.replay() ? runOf(fillProviders.get(key(snapshot.workspace(), fill))) : null;
+        if (run != null) filed.add(new JournalBackfill.ReplayFill(run, fill));
+      }
+      replayFills = List.copyOf(filed);
       var entryOrders = new HashMap<String, JournalNativeAccess.Fill>();
       var entryPositions = new HashMap<String, JournalNativeAccess.Fill>();
       for (var fill : fills) if (fill.entry()) {

@@ -294,6 +294,8 @@ def detail(journal, trade, ids, zone) -> None:
     metric = common.best_display_metric(journal, trade)
     precision = metric.get('point_precision') if unit in ('points', 'ticks') else metric.get('precision')
     measured = PRECISION.get(precision, 'Waiting for prices') if metric else ''
+    if metric and metric.get('provenance') in ('history-backfill', 'replay-history'):
+        measured += ' · ' + PROVENANCE[metric['provenance']]      # real prints, loaded after the trade
     st.caption(' · '.join(part for part in (common.span(trade.opened, trade.closed, zone), measured) if part))
     if getattr(trade, 'merge_leg_ids', None):
         st.caption(f'Merged from {len(trade.merge_leg_ids)} trades · their own fills and notes are kept',
@@ -311,7 +313,9 @@ def detail(journal, trade, ids, zone) -> None:
     cols[1].metric('MAE', common.excursion_amount(mae, unit, trade.currency), help=explain)
     cols[2].metric('MFE', common.excursion_amount(mfe, unit, trade.currency), help=explain)
     cols[3].metric('Peak size', f'{trade.max_qty:g}', help='The most contracts held at once.')
-    if not metric and journal.display_settings()['excursion_policy'] == 'ticks-only':
+    if common.replay_ticks_pending(journal, trade):
+        st.caption(common.REPLAY_TICKS_LATER)
+    elif not metric and journal.display_settings()['excursion_policy'] == 'ticks-only':
         st.caption('MAE / MFE need recorded ticks · candle estimates are excluded',
                    help='To show candle-based values, choose Allow labelled estimates under Setup → Display → '
                         'MAE / MFE accuracy.')
@@ -433,7 +437,9 @@ def excursions_panel(journal, trade, a: dict, zone) -> None:
     unit = common.excursion_unit(journal)
     tick = units.tick_size(trade.symbol, journal.display_settings()['tick_sizes'])
     options = [common.display_metric(journal, trade, m) for m in common.metric_options(journal, trade)]
-    if not options:
+    if not options and common.replay_ticks_pending(journal, trade):
+        st.info(common.REPLAY_TICKS_LATER)
+    elif not options:
         st.info('Unavailable under the selected accuracy policy. Recorded ticks are required in tick-only mode; '
                 'OHLC, synthetic replay and recorded capture gaps do not qualify. '
                 'The one-minute chart can still be displayed independently.')

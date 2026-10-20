@@ -53,7 +53,7 @@ def test_the_first_page_has_no_paths_raw_errors_or_paragraphs_of_jargon():
     assert str(paths.bridge_file('live')) not in visible and 'motivewave.ndjson' not in visible
     assert 'Scale-ins and partial exits' not in visible                    # flat to flat is in the ? of step 3
     assert helped(app.main.markdown, 'flat to flat') and helped(app.main.markdown, 'Scale-ins and partial exits')
-    assert helped(app.main.markdown, 'real tick data')
+    assert helped(app.main.markdown, "real ticks of its holding time from MotiveWave's history")
 
 
 def test_a_study_that_has_gone_quiet_still_counts_as_installed_and_on_the_chart():
@@ -64,6 +64,50 @@ def test_a_study_that_has_gone_quiet_still_counts_as_installed_and_on_the_chart(
     assert states(app.main) == ['Stale'] and said(app.main.markdown, 'study is still on your chart')
     assert [m.value for m in app.main.markdown].count(':green[✓ Done]') == 2
     assert not any(b.label == 'Install MotiveWave Study' for b in app.button)
+
+
+def test_step_two_says_only_to_add_the_study_to_each_chart_with_nothing_to_set():
+    app = open_app('Setup')
+    step = next(m for m in app.main.markdown if '2 · Add It to Your Chart' in m.value)
+    assert 'Add **Journal → MotiveWave Journal** to the chart of each contract you trade' in step.value
+    assert 'nothing to set' in step.value
+    assert 'File' not in step.value and 'File' not in (step.proto.help or '') and 'setting' not in (step.proto.help or '')
+
+
+@pytest.mark.parametrize('version', ['0.3.2', '0.1.0'])
+def test_a_study_older_than_the_bundled_one_is_asked_to_update_because_it_records_no_live_or_replay_ticks(version):
+    study_writes([heartbeat(version=version)])
+    app = open_app('Setup')
+    wait_until(lambda: status_of().get('heartbeat'))
+    app.run()
+    assert states(app.main) == ['Connected']
+    line = f'Study {version} records no live or replay ticks'
+    assert said(app.main.markdown, line) and said(app.main.markdown, 'then restart MotiveWave')
+    status = next(m.value for m in app.main.markdown if line in m.value)
+    assert status.count('mwj-status-note') == 2                    # still one element: the state, then one line
+    if setup.connection.JAR.is_file():
+        assert said(app.main.markdown, 'click Install MotiveWave Study below')
+        assert any(b.label == 'Install MotiveWave Study' for b in app.main.button)      # step 1 is open again
+        assert [m.value for m in app.main.markdown].count(':green[✓ Done]') == 1         # step 2 stays done
+    assert not said(app.sidebar.markdown, line)
+
+
+def test_the_bundled_study_or_another_writer_gets_no_update_line():
+    study_writes([heartbeat()])
+    app = open_app('Setup')
+    wait_until(lambda: status_of().get('heartbeat'))
+    app.run()
+    assert states(app.main) == ['Connected'] and not said(app.main.markdown, 'records no live or replay ticks')
+    assert not any(b.label == 'Install MotiveWave Study' for b in app.main.button)
+    on = lambda **fields: SimpleNamespace(**{'connector': paths.STUDY_CONNECTOR, 'version': '', **fields})
+    assert common.study_outdated(on(version='0.3.2')) and common.study_outdated(on(version='0.2.10'))
+    assert not common.study_outdated(on(version=paths.STUDY_VERSION)) and not common.study_outdated(on(version='0.3.10'))
+    assert not common.study_outdated(on(version='0.4.0')) and not common.study_outdated(on())
+    assert not common.study_outdated(on(version='0.3.2-beta'))                 # not a version this app wrote
+    assert not common.study_outdated(on(version='0.1.0', connector='another-writer'))
+    assert not common.study_outdated(SimpleNamespace(state='Connected'))
+    assert setup.update_line(on(version='0.3.2')).startswith('Study 0.3.2 records no live or replay ticks: ')
+    assert setup.update_line(on(version=paths.STUDY_VERSION)) is None
 
 
 def test_the_waiting_status_uses_one_controlled_line_instead_of_a_raw_error_or_path(monkeypatch):

@@ -9,7 +9,7 @@ from __future__ import annotations
 import datetime as dt
 
 from .model import PriceSample, Trade, instant
-from .scope import HISTORY_TICKS, allows_source, provenance
+from .scope import allows_source, is_history, is_simulated, provenance
 from .units import POINT_DEFINITION
 
 
@@ -119,7 +119,7 @@ def excursions(trade: Trade, samples: list[PriceSample], source: str, *, basis: 
         return common
     bars = any(s.resolution_seconds > 0 for s in used)
     proxy = any(s.proxy for s in used)
-    simulated = source.startswith('motivewave-replay:') and source.endswith(':simulated')
+    simulated = is_simulated(source)
     precision = ('replay-simulated' if simulated else
                  'proxy-estimate' if proxy else 'estimated-bars' if bars else 'observed-ticks')
     notes = []
@@ -139,7 +139,7 @@ def excursions(trade: Trade, samples: list[PriceSample], source: str, *, basis: 
             notes.append('History does not cover the end of the holding window.')
     else:
         notes.append('Observed ticks: completeness is not guaranteed; missing ticks can understate excursions.')
-        if source == HISTORY_TICKS:
+        if is_history(source):
             notes.append("History backfill: real prints loaded from the platform's history afterwards, "
                          'not recorded while the trade was open.')
     if proxy:

@@ -7,6 +7,36 @@ Live/paper and replay have separate databases. No routine CSV export/import is r
 MotiveWave Journal is an independent open-source project. It is not affiliated with, endorsed by or
 supported by MotiveWave Software.
 
+## What's new in 0.4.4: ticks that actually arrive, and a study with nothing to set
+
+This release comes with study **0.3.3**. Install it from **Setup → Install MotiveWave Study** and
+restart MotiveWave; Setup says so in one line while MotiveWave still runs an older study.
+
+- **Live and replay ticks are recorded.** Study 0.3.2 and earlier declared that they *could* take
+  MotiveWave's per-tick updates but not that they *needed* them. MotiveWave then never sent a single
+  live or replay print unless bar updates were switched on by hand in the study's dialog, so MAE and
+  MFE came only from the trade tick backfill. Study 0.3.3 requires bar updates, and every print the
+  chart receives reaches the bridge file with the default settings.
+- **Replay trades get real ticks.** Once a replay position is flat, the study asks MotiveWave's tick
+  history for the real prints of its holding time (first fill to last, five seconds either side) and
+  writes them for that replay run only (`motivewave-replay:<run>:history`). It never asks for
+  anything later than the replay's current time. Each window is loaded once and remembered beside
+  the replay bridge file, so restarts and rewinds do not load it again. The journal counts these as
+  real ticks of that run, labelled **Backfilled from MotiveWave history**, never as simulated, and
+  never for live trades or another run. A replay trade without them yet says that the study fills
+  them in after the trade closes, while the study is on the replay chart.
+- **Nothing to set.** The study's first tab only says to add it to the chart of each contract you
+  trade. Every setting is under **Advanced**, with the same keys and defaults as before, so a chart
+  that was already set up keeps its choices. The defaults capture fills, record every live and replay
+  print, and backfill live and replay trades with real ticks. Setup's step 2 now only says to add
+  **Journal → MotiveWave Journal** to each chart.
+
+Nothing in your journals changes. A replay trade already captured gets its ticks the next time the
+study is on a replay chart of that exact contract with the replay at or past the trade's exit and no
+more than **Backfill Trade Ticks (Days)** (30 by default) after it, while MotiveWave still holds its
+fills. Whether MotiveWave's tick history answers on a replay chart is up to MotiveWave and the data
+service; when it does not, MotiveWave's log says `windows with no tick history`.
+
 ## What's new in 0.4.3: one typeface
 
 Every piece of text in the journal is now IBM Plex Sans: pages, buttons, menus, tooltips, tables, the
@@ -312,7 +342,8 @@ The output is `study/build/libs/motivewave-journal.jar`. A packaged desktop user
 **Setup → Install MotiveWave Study**. The app atomically installs only this named JAR, preserves its
 previous copy and asks for a MotiveWave restart. Manual alternative: use **Study → All Studies →
 Import**. Then add **Journal → MotiveWave Journal** to each exact contract
-chart you trade. Keep the study's File default. The app starts watching both files by itself.
+chart you trade. There is nothing to set: every setting is under the study's **Advanced** tab and the
+defaults are what the app expects. The app starts watching both files by itself.
 Check **Setup** in the app: it should change from Waiting For Study to Connected. To install the
 study again after an app update, use **Setup → Connection → Install MotiveWave Study**.
 See [MotiveWave's import instructions](https://docs.motivewave.com/knowledge-base/study/add-a-custom-study).
@@ -333,7 +364,7 @@ Default data folders:
 The study writes `bridge/motivewave.ndjson` and `bridge/motivewave.replay.ndjson`; databases are
 `trades.sqlite3` and `replay/trades.sqlite3`. Set `MWJ_HOME` to override the folder, but a desktop
 MotiveWave will not necessarily inherit your terminal environment. If overriding only the app,
-copy the live bridge path shown in Connection into the study's File setting.
+copy the live bridge path shown in Connection into the study's File setting (under Advanced).
 
 ## Tick accuracy and replay
 
@@ -344,11 +375,18 @@ copy the live bridge path shown in Connection into the study's File setting.
   and continues for the configured post-exit window. The account poll also drains observed pre-roll
   after seeing fills, so a paused replay does not need another tick. Unknown/stalled capture records
   rather than guessing flat. **Never** disables streaming ticks; history loading is separate.
+- MotiveWave sends a study each print only while the study receives bar updates. Study 0.3.3 requires
+  them. Study 0.3.2 and earlier only offered them as a dialog switch that was off, so they recorded no
+  live or replay prints; Setup asks for the update.
 - Historical one-minute bars load in live mode. Optional historical real-tick loading defaults off
   and is currently capped at 120 minutes by this implementation, not by a claimed Rithmic limit.
   It requests real ticks, not manufactured OHLC ticks. Availability is up to the data service.
 - Replay records only prices already delivered by replay, never a future historical path. Rewinding
-  starts a new run; prices from another run cannot measure that trade. Set **Real Tick Data** only
+  starts a new run; prices from another run cannot measure that trade. Once a replay trade is flat, the
+  study loads the real ticks of its holding window from MotiveWave's tick history for that run, up to
+  the replay's current time and never past it (**Backfill Trade Ticks (Days)** under Advanced, 0 = off,
+  counted back from the replay clock). They are asked for as real ticks, never generated from bars, whatever
+  the replay plays; a window the history has no ticks for stays empty. Set **Real Tick Data** only
   when replay actually uses tick data; otherwise measurements stay labelled simulated/unverified.
   See [MotiveWave's replay sources](https://docs.motivewave.com/user-guide/replay-mode).
 - Tick-derived one-minute candles represent the received prints; position-gated candles can be

@@ -17,6 +17,7 @@ import streamlit as st
 from mwjournal import Journal, paths
 from mwjournal.metrics import measurements
 from mwjournal.model import Trade, instant, instrument_market, point_value
+from mwjournal.scope import replay_run
 from mwjournal import humanize, units, tagging
 from mwjournal.sync import DEFAULT_CONNECTION
 
@@ -42,6 +43,9 @@ PRECISION = {'platform-reported': 'Platform reported', 'observed-ticks': 'Observ
              'estimated-bars': 'OHLC estimate', 'proxy-estimate': 'Proxy estimate',
              'replay-simulated': 'Replay simulated / source unverified', 'pending': 'Waiting for data'}
 STALE_AFTER = 60           # seconds without a heartbeat; the study sends one every 10
+# One line under a replay trade that has no real ticks yet: the study loads them once the trade is flat.
+REPLAY_TICKS_LATER = ('The study fills in this replay trade\'s real ticks after it closes, while the study is on '
+                      'the replay chart.')
 # The chart library's licence asks for this notice and link on a page its users can see.
 CREDIT = '[TradingView Lightweight Charts™, Copyright (c) 2025 TradingView, Inc.](https://www.tradingview.com/)'
 
@@ -266,6 +270,16 @@ def best_display_metric(journal, trade):
                                         m.get('basis', 'last') == 'last', m.get('observations', 0))) if available else display_metric(journal, trade, best)
 
 
+def replay_ticks_pending(journal, trade) -> bool:
+    """A replay trade without a measurement from real ticks yet, under any accuracy policy. The study
+    backfills one from MotiveWave's history once the trade is flat and the study is on the replay chart."""
+    if getattr(journal, 'dataset', None) != 'replay' or not replay_run(getattr(trade, 'provider', '') or ''):
+        return False
+    if not getattr(trade, 'complete', True):
+        return False                       # fills are missing: its excursions stay unknown, ticks or not
+    return not any(m.get('precision') == 'observed-ticks' for m in journal.metric_options(trade))
+
+
 def metric_options(journal, trade):
     options = journal.metric_options(trade)
     if journal.display_settings()['excursion_policy'] != 'ticks-only':
@@ -478,10 +492,26 @@ class Link:
     detail: str
     version: str = ''      # the study's version, when its heartbeat carries one
     heard: dt.datetime | None = None
+    connector: str = ''    # which writer sent the heartbeat; the study says 'motivewave-journal-study'
 
     @property
     def label(self) -> str:
         return self.state + (f' · study {self.version}' if self.version and self.state == 'Connected' else '')
+
+
+def version_parts(text) -> tuple[int, ...] | None:
+    """'0.3.2' -> (0, 3, 2); None for anything that is not dotted whole numbers."""
+    parts = str(text or '').strip().split('.')
+    return tuple(int(p) for p in parts) if all(p.isdigit() for p in parts) else None
+
+
+def study_outdated(link) -> bool:
+    """The study that reported in is ours and older than the one this app bundles. Studies before 0.3.3
+    never receive ticks, so Setup asks for the update. Another writer's version numbers are its own."""
+    if getattr(link, 'connector', '') != paths.STUDY_CONNECTOR:
+        return False
+    version = version_parts(getattr(link, 'version', ''))
+    return version is not None and version < version_parts(paths.STUDY_VERSION)
 
 
 def ago(seconds: float) -> str:
@@ -523,8 +553,9 @@ def link_state(profile: dict | None, status: dict | None, *, worker_error: str |
     now = now or dt.datetime.now(dt.timezone.utc)
     age = (now - heard).total_seconds() if heard else None
     version = str(heartbeat.get('connector_version') or '')
+    connector = str(heartbeat.get('connector') or '')
     if status.get('error'):
-        return Link('Needs Attention', 'critical', str(status['error']), version, heard)
+        return Link('Needs Attention', 'critical', str(status['error']), version, heard, connector)
     try:
         exists = Path(profile.get('path') or '').expanduser().is_file()
     except OSError:
@@ -536,11 +567,11 @@ def link_state(profile: dict | None, status: dict | None, *, worker_error: str |
         return Link('Waiting For Study', 'warning', 'The bridge file is there but holds no events yet.')
     if heard is None:
         return Link('No Heartbeat', 'warning', 'Events are being read, but the study has not reported in. Prices '
-                    'still arrive; fills need Capture Fills switched on in the study.')
+                    'still arrive; fills need Capture Fills switched on (the study\'s Advanced tab).')
     if age > STALE_AFTER:
         return Link('Stale', 'warning', f'The study was last heard from {ago(age)}. Check that MotiveWave is '
-                    'running and the study is still on a chart.', version, heard)
-    return Link('Connected', 'good', f'Heard from the study {ago(age)}.', version, heard)
+                    'running and the study is still on a chart.', version, heard, connector)
+    return Link('Connected', 'good', f'Heard from the study {ago(age)}.', version, heard, connector)
 
 
 def study_link(journal, *, now=None) -> tuple[str | None, dict | None, dict, Link]:

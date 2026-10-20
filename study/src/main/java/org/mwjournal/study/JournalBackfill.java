@@ -20,9 +20,13 @@ import java.util.function.Consumer;
  * held, and the platform's tick history is asked for exactly those stretches. Nothing is generated from
  * bars, and a stretch with no tick history stays empty.
  *
+ * Live positions go to the live bridge as motivewave-ticks:history. Replay positions go to the replay
+ * bridge as motivewave-replay:<run>:history, one copy per replay run, and never reach past the replay's
+ * current time: a replay must not be shown what happens next.
+ *
  * It lives outside the study class so it can be exercised without a MotiveWave session: the tick
  * history and the writer are handed in. It waits and writes files, so it never runs on the tick thread.
- * One instance per study load: what it asked for and got nothing back is only remembered here. */
+ * One instance per study load and bridge file: what it asked for and got nothing back is only remembered here. */
 final class JournalBackfill {
   static final String SOURCE = "motivewave-ticks:history";
   /** Either side of a position: fill times and tick times come from different clocks. */
@@ -41,6 +45,18 @@ final class JournalBackfill {
   /** A stretch of time in epoch milliseconds: start included, end not. */
   record Window(long start, long end) {}
 
+  /** A replay fill and the replay run the study filed it under: the run in its provider's name. */
+  record ReplayFill(String run, JournalNativeAccess.Fill fill) {}
+
+  /** A holding window of one replay run. */
+  record RunWindow(String run, Window window) {}
+
+  /** The provider of the history ticks of one replay run. The app measures a replay trade only with
+   * prices of its own run, so each run gets its own copy. */
+  static String replaySource(String run) {
+    return "motivewave-replay:" + run + ":history";
+  }
+
   /** The platform's real ticks between two moments, oldest first. Never ticks made up from bars. */
   interface TickSource {
     void forEach(long start, long end, Consumer<JournalPriceEvents.Print> each) throws Exception;
@@ -53,8 +69,13 @@ final class JournalBackfill {
    * failed: windows the history could not be asked about. cut: windows that reached the tick cap.
    * remaining: windows left for the next pass. waits: how often the writer's queue was full. */
   record Result(int done, long ticks, int empty, int failed, int cut, int remaining, long waits, String failure) {
+    static final Result NONE = new Result(0, 0, 0, 0, 0, 0, 0, null);
     int attempted() { return done + empty + failed; }
   }
+
+  /** One window to load. key: what the ledger files it under (the contract for live, run and contract for
+   * replay). source and mode: what its ticks are written as. */
+  private record Job(String key, String source, String mode, Window window) {}
 
   private final Ledger ledger;
   private final int maxTicks, perPass;
@@ -72,12 +93,14 @@ final class JournalBackfill {
 
   Ledger ledger() { return ledger; }
 
-  /** Whether a chart loads history for its fills at all: live only (replay never reads history, and a
-   * chart that has not said which it is counts as neither), and only for the chart's own contract. A
-   * continuous chart, or one standing in for the traded contract under another symbol, shows the prices
-   * of another instrument than the one the fills are in; those are never written as that contract's ticks. */
-  static boolean applies(String instrumentSymbol, String journalSymbol, boolean proxy, Boolean replayMode, int days) {
-    return days > 0 && Boolean.FALSE.equals(replayMode) && !proxy && instrumentSymbol != null
+  /** Whether a chart loads history for the fills of one environment: only while the chart is in that
+   * environment (a chart that has not said whether it is replay counts as neither), and only for the
+   * chart's own contract. A continuous chart, or one standing in for the traded contract under another
+   * symbol, shows the prices of another instrument than the one the fills are in; those are never written
+   * as that contract's ticks. The same rule holds live and in replay. */
+  static boolean applies(String instrumentSymbol, String journalSymbol, boolean proxy, Boolean replayMode,
+                         boolean replay, int days) {
+    return days > 0 && replayMode != null && replayMode == replay && !proxy && instrumentSymbol != null
         && !instrumentSymbol.isBlank() && instrumentSymbol.equals(journalSymbol);
   }
 
@@ -112,6 +135,40 @@ final class JournalBackfill {
     return List.copyOf(result);
   }
 
+  /** The holding windows of this instrument's replay positions, oldest first, each with its run. A replay
+   * position is the fills that share a run, an account and MotiveWave's position id (MotiveWave can give a
+   * position of a later run the id of an earlier one).
+   *
+   * Only positions that are flat and whose last fill is no later than clock, the replay's current time:
+   * the trade is over in the replay. The window is the same as live, first fill to last, a few seconds
+   * either side, except that it ends at clock at the latest: nothing after the replay's present is ever
+   * asked for. The rest of the window is asked for in a later pass, once the replay has played past it.
+   * Left out, as live: live fills, other instruments, fills without a run or a position id, positions
+   * longer than 24 hours, and those that ended before notBefore. */
+  static List<RunWindow> replayWindows(List<ReplayFill> fills, String symbol, long notBefore, long clock) {
+    var positions = new HashMap<String, Held>();
+    var runs = new HashMap<String, String>();
+    for (var filed : fills) {
+      var fill = filed.fill();
+      if (!fill.replay() || filed.run() == null || filed.run().isBlank() || symbol == null
+          || !symbol.equals(fill.symbol()) || fill.positionId().isBlank() || fill.time() <= 0) continue;
+      String key = filed.run() + "\0" + fill.account() + "\0" + fill.positionId();
+      runs.put(key, filed.run());
+      Held held = positions.computeIfAbsent(key, k -> new Held());
+      held.net += fill.buy() ? fill.qty() : -fill.qty();
+      held.first = Math.min(held.first, fill.time());
+      held.last = Math.max(held.last, fill.time());
+    }
+    var result = new TreeSet<RunWindow>(Comparator.comparingLong((RunWindow w) -> w.window().start())
+        .thenComparingLong(w -> w.window().end()).thenComparing(RunWindow::run));
+    positions.forEach((key, held) -> {
+      if (!(Math.abs(held.net) <= FLAT) || held.last - held.first + 2 * PAD_MILLIS > MAX_WINDOW_MILLIS
+          || held.last + PAD_MILLIS < notBefore || held.last > clock) return;
+      result.add(new RunWindow(runs.get(key), new Window(held.first - PAD_MILLIS, Math.min(held.last + PAD_MILLIS, clock))));
+    });
+    return List.copyOf(result);
+  }
+
   /** One pass: the oldest few windows that are not in the bridge file yet. The parts of a window another
    * window already covered are not loaded again. Every event waits for room in the writer's queue.
    *
@@ -122,24 +179,49 @@ final class JournalBackfill {
    * days is the 'Backfill Trade Ticks (Days)' setting; 0 does nothing. */
   synchronized Result pass(String symbol, List<JournalNativeAccess.Fill> fills, long now, int days,
                            TickSource source, Sink sink, BooleanSupplier cancelled) throws IOException {
+    if (days <= 0 || symbol == null || fills == null) return Result.NONE;
+    long horizon = now - Math.min(days, MAX_DAYS) * 86_400_000L;
+    var jobs = new ArrayList<Job>();
+    for (Window window : windows(fills, symbol, horizon, now - SETTLE_MILLIS))
+      jobs.add(new Job(symbol, SOURCE, "live", window));
+    return run(symbol, jobs, now, source, sink, cancelled);
+  }
+
+  /** The same for replay: the flat replay positions of this instrument, each written for its own run, and
+   * never past clock, the replay's current time. days counts back from clock. now is the wall clock, which
+   * only dates the ledger's entries. The ledger is the replay bridge's. */
+  synchronized Result replayPass(String symbol, List<ReplayFill> fills, long clock, long now, int days,
+                                 TickSource source, Sink sink, BooleanSupplier cancelled) throws IOException {
+    if (days <= 0 || symbol == null || fills == null || clock <= 0) return Result.NONE;
+    long horizon = clock - Math.min(days, MAX_DAYS) * 86_400_000L;
+    var jobs = new ArrayList<Job>();
+    for (RunWindow window : replayWindows(fills, symbol, horizon, clock))
+      jobs.add(new Job(replayKey(window.run(), symbol), replaySource(window.run()), "replay", window.window()));
+    return run(symbol, jobs, now, source, sink, cancelled);
+  }
+
+  /** What the replay ledger files a run's windows of one contract under. */
+  static String replayKey(String run, String symbol) { return run + ":" + symbol; }
+
+  private Result run(String symbol, List<Job> jobs, long now, TickSource source, Sink sink,
+                     BooleanSupplier cancelled) throws IOException {
     int done = 0, empty = 0, failed = 0, cut = 0, remaining = 0;
     long ticks = 0;
     long[] waits = new long[1];
     String failure = null;
-    if (days <= 0 || symbol == null || fills == null) return new Result(0, 0, 0, 0, 0, 0, 0, null);
-    Spans tried = asked.computeIfAbsent(symbol, key -> new Spans());
-    Spans planned = new Spans(); // overlapping windows share their overlap; count and load it once
-    long horizon = now - Math.min(days, MAX_DAYS) * 86_400_000L;
-    for (Window window : windows(fills, symbol, horizon, now - SETTLE_MILLIS)) {
-      for (Window open : ledger.missing(symbol, window, tried)) {
-        for (Window piece : planned.missing(open.start(), open.end())) {
-          planned.add(piece.start(), piece.end());
+    var planned = new HashMap<String, Spans>(); // overlapping windows share their overlap; count and load it once
+    for (Job job : jobs) {
+      Spans tried = asked.computeIfAbsent(job.key(), key -> new Spans());
+      Spans plan = planned.computeIfAbsent(job.key(), key -> new Spans());
+      for (Window open : ledger.missing(job.key(), job.window(), tried)) {
+        for (Window piece : plan.missing(open.start(), open.end())) {
+          plan.add(piece.start(), piece.end());
           if (done + empty + failed >= perPass) { remaining++; continue; }
           if (cancelled.getAsBoolean()) throw new CancellationException();
-          if (!ledger.claim(symbol, piece)) { remaining++; continue; } // another chart took it meanwhile
+          if (!ledger.claim(job.key(), piece)) { remaining++; continue; } // another chart took it meanwhile
           boolean written = false;
           try {
-            long[] count = load(symbol, piece, source, sink, cancelled, waits);
+            long[] count = load(symbol, piece, source, sink, cancelled, waits, job.source(), job.mode());
             if (count[0] == 0 && count[1] == 0) {
               tried.add(piece.start(), piece.end());
               empty++;
@@ -157,7 +239,7 @@ final class JournalBackfill {
             failed++;
             failure = exc.getClass().getSimpleName();
           } finally {
-            ledger.finish(symbol, piece, written, now);
+            ledger.finish(job.key(), piece, written, now);
           }
         }
       }
@@ -165,9 +247,11 @@ final class JournalBackfill {
     return new Result(done, ticks, empty, failed, cut, remaining, waits[0], failure);
   }
 
-  /** count: ticks written, ticks left out by the cap, and the time of the first and last one left out. */
+  /** count: ticks written, ticks left out by the cap, and the time of the first and last one left out.
+   * Only prints inside the piece are written, whatever the history answers with: for replay the piece
+   * ends at the replay's present, so nothing later can reach the file. */
   private long[] load(String symbol, Window piece, TickSource source, Sink sink, BooleanSupplier cancelled,
-                      long[] waits) throws Exception {
+                      long[] waits, String provider, String mode) throws Exception {
     long[] count = {0, 0, Long.MAX_VALUE, Long.MIN_VALUE};
     RuntimeException[] stopped = new RuntimeException[1];
     source.forEach(piece.start(), piece.end(), print -> {
@@ -183,7 +267,7 @@ final class JournalBackfill {
           count[3] = Math.max(count[3], print.time());
           return;
         }
-        put(sink, JournalPriceEvents.tick(symbol, print, false, SOURCE, "live"), cancelled, waits);
+        put(sink, JournalPriceEvents.tick(symbol, print, false, provider, mode), cancelled, waits);
         count[0]++;
       } catch (RuntimeException exc) {
         stopped[0] = exc;
@@ -191,7 +275,7 @@ final class JournalBackfill {
       }
     });
     if (stopped[0] != null) throw stopped[0];
-    if (count[1] > 0) put(sink, JournalEventWriter.gap(SOURCE, symbol, count[1], Instant.ofEpochMilli(count[2]),
+    if (count[1] > 0) put(sink, JournalEventWriter.gap(provider, symbol, count[1], Instant.ofEpochMilli(count[2]),
         Instant.ofEpochMilli(count[3])), cancelled, waits);
     return count;
   }
@@ -282,20 +366,32 @@ final class JournalBackfill {
     }
   }
 
-  /** Which stretches of each instrument's tick history are already in the bridge file. One per bridge
-   * file, shared by every chart writing to it, and kept in a small file beside it so that a restart
-   * does not load them again. The file holds symbols and times only. */
+  /** Which stretches of tick history are already in a bridge file. One per bridge file, shared by every
+   * chart writing to it, and kept in a small file beside it so that a restart does not load them again.
+   * The file holds symbols, replay run ids and times only.
+   *
+   * The live bridge's ledger files stretches by contract, and forgets those older than any setting can ask
+   * for. The replay bridge's files them by replay run and contract (replayKey), since every run has its
+   * own copy; their times are the replay's, often years ago, so a run is instead forgotten once it has not
+   * been written to for as long. */
   static final class Ledger {
     private static final Map<Path, Ledger> SHARED = new HashMap<>();
     private final Path path;
+    private final boolean replay;
     private final Map<String, Spans> done = new HashMap<>(), busy = new HashMap<>();
+    private final Map<String, Long> used = new HashMap<>(); // replay only: when each key was last written
+    private final long opened = System.currentTimeMillis();
 
-    /** The one ledger of this bridge file for as long as MotiveWave runs. */
-    static Ledger shared(Path bridge) throws IOException {
+    /** The one ledger of this live bridge file for as long as MotiveWave runs. */
+    static Ledger shared(Path bridge) throws IOException { return shared(bridge, false); }
+
+    /** The one ledger of this bridge file; replay says which kind of bridge it is. */
+    static Ledger shared(Path bridge, boolean replay) throws IOException {
       Path key = bridge.toAbsolutePath().normalize();
       synchronized (SHARED) {
         Ledger ledger = SHARED.get(key);
-        if (ledger == null) SHARED.put(key, ledger = new Ledger(key));
+        if (ledger == null) SHARED.put(key, ledger = new Ledger(key, replay));
+        if (ledger.replay != replay) throw new IOException("One bridge file cannot be both live and replay.");
         return ledger;
       }
     }
@@ -305,15 +401,23 @@ final class JournalBackfill {
     }
 
     /** Reads what earlier runs finished. Tests open one directly to stand in for a restart. */
-    Ledger(Path bridge) throws IOException {
+    Ledger(Path bridge) throws IOException { this(bridge, false); }
+
+    Ledger(Path bridge, boolean replay) throws IOException {
       path = sidecar(bridge);
+      this.replay = replay;
       if (!Files.exists(path)) return;
       if (Files.size(path) > 16L * 1024 * 1024) throw new IOException("Tick backfill record exceeds safety limit.");
       Properties data = new Properties();
       try (var input = Files.newInputStream(path)) { data.load(input); }
       if (!"1".equals(data.getProperty("version"))) throw new IOException("Unsupported tick backfill record.");
-      for (String key : data.stringPropertyNames()) if (key.startsWith("done."))
-        done.put(key.substring(5), Spans.parse(data.getProperty(key)));
+      for (String key : data.stringPropertyNames()) {
+        if (key.startsWith("done.")) done.put(key.substring(5), Spans.parse(data.getProperty(key)));
+        else if (replay && key.startsWith("used.")) {
+          try { used.put(key.substring(5), Long.parseLong(data.getProperty(key).strip())); }
+          catch (NumberFormatException exc) { throw new IOException("Unreadable tick backfill record.", exc); }
+        }
+      }
     }
 
     /** The parts of the window that are neither written nor being written, less what the caller rules out. */
@@ -335,16 +439,23 @@ final class JournalBackfill {
 
     /** Gives a claimed piece back. written: its ticks are in the bridge file, so it is never loaded
      * again. It counts as written from here on even when the file beside the bridge cannot be saved:
-     * loading it again every minute would only fill the bridge with copies. */
+     * loading it again every minute would only fill the bridge with copies. now is the wall clock. */
     synchronized void finish(String symbol, Window piece, boolean written, long now) throws IOException {
       spans(busy, symbol).remove(piece.start(), piece.end());
       if (!written) return;
       spans(done, symbol).add(piece.start(), piece.end());
+      if (replay) used.put(symbol, now);
       Properties data = new Properties();
       data.setProperty("version", "1");
+      if (replay) {
+        done.keySet().removeIf(key -> used.getOrDefault(key, opened) < now - KEEP_MILLIS);
+        used.keySet().retainAll(done.keySet());
+      }
       done.forEach((name, spans) -> {
-        spans.dropBefore(now - KEEP_MILLIS);
-        if (!spans.isEmpty()) data.setProperty("done." + name, spans.text());
+        if (!replay) spans.dropBefore(now - KEEP_MILLIS);
+        if (spans.isEmpty()) return;
+        data.setProperty("done." + name, spans.text());
+        if (replay) data.setProperty("used." + name, String.valueOf(used.getOrDefault(name, opened)));
       });
       JournalCaptureState.saveAtomic(path, data, "Tick history already written to the bridge; no credentials");
     }

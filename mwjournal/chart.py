@@ -6,7 +6,7 @@ import datetime as dt
 from collections import defaultdict
 
 from .model import PriceSample, Trade, instant
-from .scope import HISTORY_TICKS, allows_source, provenance
+from .scope import allows_source, is_history, is_simulated, provenance
 
 STOP = '#F05B70'
 TARGET = '#36C9A0'
@@ -25,7 +25,7 @@ def chart_window(trade: Trade, padding_minutes=15, *, now=None):
 
 def minute_candles(samples: list[PriceSample], symbol: str, source: str) -> tuple[list[dict], list[str]]:
     buckets, notes = defaultdict(list), []
-    if source.startswith('motivewave-replay:') and source.endswith(':simulated'):
+    if is_simulated(source):
         notes.append('Generated/unknown replay ticks: these candles are not a verified historical tick path.')
     unusable = False
     for sample in sorted(samples, key=lambda s: instant(s.ts)):
@@ -61,7 +61,7 @@ def minute_candles(samples: list[PriceSample], symbol: str, source: str) -> tupl
     if unusable:
         notes.append('Some prices cannot draw 1m candles: provide minute-aligned OHLC, smaller OHLC bars, or ticks. '
                      'High/low-only and coarser bars remain usable for estimated MAE/MFE.')
-    if ticks and source == HISTORY_TICKS:
+    if ticks and is_history(source):
         notes.append("Candles aggregate real prints loaded from the platform's history afterwards (history "
                      'backfill); the data service decides how much of each minute it returns.')
     elif ticks:

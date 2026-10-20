@@ -1,5 +1,6 @@
 """Native bridge protocol fixtures only: no brokerage requests or real trading records."""
 import json
+from types import SimpleNamespace
 
 import pytest
 
@@ -253,6 +254,67 @@ def test_history_backfill_ticks_are_observed_ticks_with_their_own_label_and_are_
     assert preview_bridge(lines(backfill), dataset='replay').errors
     with pytest.raises(ValueError, match='other trading environment'):
         apply_preview(replay, preview_bridge(lines(backfill)))
+
+
+def test_replay_history_ticks_are_real_ticks_of_their_own_run_and_never_of_another_or_of_live(tmp_path):
+    """motivewave-replay:<run>:history (study 0.3.3): real prints of a replay trade's holding window, loaded
+    from MotiveWave's history once it was flat. Observed ticks of that run only, never simulated."""
+    from common import metric_options
+    from mwjournal.post_exit import best_post_exit
+    from mwjournal.scope import PROVENANCE, allows_source, is_history, is_simulated, provenance
+    journal = Journal(tmp_path / 'replay.db', dataset='replay')
+    path = tmp_path / 'motivewave.replay.ndjson'
+    journal.put('profiles', 'native', {'mode': 'bridge', 'path': str(path), 'enabled': True})
+    history = [tick(price, suffix='history', ts=f'2022-01-03T{stamp}Z') for stamp, price in
+               (('14:29:57', 4990), ('14:30:20', 4997), ('14:31:10', 5006), ('14:32:03', 5010))]
+    # The same moments in another run (the replay was rewound and replayed): never this trade's prices.
+    other_run = [tick(4900, run='run-b', suffix='history', ts='2022-01-03T14:31:00Z'),
+                 tick(5100, run='run-b', suffix='history', ts='2022-01-03T14:31:30Z')]
+    path.write_text(lines([fill('a'), tick(4999, suffix='simulated'), *history, *other_run,
+                           fill('b', 'sell', 5002, ts='2022-01-03T14:32:00Z')]), encoding='utf-8', newline='')
+    SyncWorker(journal).poll()
+    trade, = journal.trades()
+    source = 'motivewave-replay:run-a:history'
+    assert journal.price_sources('ESZ6', trade) == [source, 'motivewave-replay:run-a:simulated']
+    assert not allows_source(trade, 'motivewave-replay:run-b:history') and allows_source(trade, source)
+    assert is_history(source) and not is_simulated(source) and provenance(source) == 'replay-history'
+    assert PROVENANCE['replay-history'] == 'Backfilled from MotiveWave history'
+    measured, simulated = journal.metric_options(trade)
+    assert measured['source'] == source and simulated['source'] == 'motivewave-replay:run-a:simulated'
+    # Real ticks: observed precision, both for currency and for points, never the simulated label.
+    assert (measured['precision'], measured['point_precision'], measured['provenance']) == (
+        'observed-ticks', 'observed-ticks', 'replay-history')
+    assert (measured['mae'], measured['mfe'], measured['observations']) == (150, 300, 2)
+    assert (measured['mae_points'], measured['mfe_points']) == (3, 6)
+    assert any('History backfill' in note for note in measured['notes'])
+    assert not any('synthetic' in note or 'Replay generated' in note for note in measured['notes'])
+    assert simulated['precision'] == 'replay-simulated' and simulated['provenance'] == 'replay-simulated'
+    # Ranked above the simulated replay prints, and the one measurement the tick-only policy keeps.
+    assert journal.best_metric(trade)['source'] == source
+    assert journal.display_settings()['excursion_policy'] == 'ticks-only'
+    assert [m['source'] for m in metric_options(journal, trade)] == [source]
+    # The chart draws it as real prints loaded afterwards, with this run's prices only.
+    chart = trade_chart(trade, journal.prices('ESZ6', source), source)
+    assert chart['provenance'] == 'replay-history'
+    assert any('history backfill' in note for note in chart['notes'])
+    assert not any('Generated/unknown replay ticks' in note for note in chart['notes'])
+    lows = [bar['low'] for bar in chart['series']['data'] if 'low' in bar]
+    assert min(lows) == 4990 and 4900 not in lows
+    runner = best_post_exit(journal, trade, minutes=5)
+    assert runner['precision'] == 'observed-ticks' and runner['provenance'] == 'replay-history'
+    # A trade of the other run is measured only with that run's prices.
+    other = SimpleNamespace(provider='motivewave-native:workspace:replay:run-b')
+    assert allows_source(other, 'motivewave-replay:run-b:history') and not allows_source(other, source)
+    # It is a replay stream: a live trade never uses it, and the live journal refuses it outright.
+    live_trade = SimpleNamespace(provider='motivewave-native:workspace:live')
+    assert not allows_source(live_trade, source)
+    assert preview_bridge(lines(history), dataset='live').errors
+    with pytest.raises(ValueError, match='other trading environment'):
+        apply_preview(Journal(tmp_path / 'live.db'), preview_bridge(lines(history)))
+    # Reading the file again adds nothing.
+    journal.set_bridge_offset('native', 'another-file', 0, b'')
+    SyncWorker(journal).poll()
+    assert len(journal.prices('ESZ6', source)) == 4 and journal.best_metric(trade)['source'] == source
 
 
 def test_gap_in_one_tick_stream_or_one_instrument_does_not_mark_another(tmp_path):

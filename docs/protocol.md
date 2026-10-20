@@ -80,17 +80,25 @@ never a reason to stop trusting the fills that did arrive.
 | `motivewave-bars:1m` | One-minute candles |
 | `motivewave-replay:<run>:ticks` | Replay prints declared as real tick data |
 | `motivewave-replay:<run>:simulated` | Replay prints generated from bars |
+| `motivewave-replay:<run>:history` | Real trade prints loaded afterwards from the platform's tick history, for the holding window of a replay position of that run (study 0.3.3) |
 
 A replay run is one pass through the replay clock. Rewinding starts a new run, and a replay trade is
-only ever measured against prices from its own run.
+only ever measured against prices from its own run. That holds for `:history` as for the others: its
+ticks measure the trades of `<run>` only, never a live trade or another run. A reader treats them as
+observed ticks, not as simulated, whatever the replay itself played.
 
 ## Field notes for the MotiveWave study
 
-What study 0.3.2 writes beyond the required fields. `native_position_id`, `native_entry`, `observed_at`
+What study 0.3.3 writes beyond the required fields. `native_position_id`, `native_entry`, `observed_at`
 and `capture_kind` have been written since 0.2. New in 0.3.1: `price_known`, `currency_assumed`, the two
 label clauses, the heartbeat's `warnings`, history ticks and a gap's `symbol`. Study 0.3.2 changes the
 default tick policy to continuous capture while the study is running; its event fields are unchanged.
-All optional fields remain backward compatible, and files written by study 0.1 through 0.3.1 stay valid.
+Study 0.3.3 adds the replay history provider `motivewave-replay:<run>:history`, and it is the first
+version whose live (`motivewave-ticks`) and replay (`motivewave-replay:<run>:ticks` / `:simulated`)
+prints actually arrive: earlier studies did not require MotiveWave's per-tick updates and so, with
+default settings, wrote none. No event or field changes shape. All optional fields remain backward
+compatible, and files written by study 0.1 through 0.3.2 stay valid. The heartbeat's `connector_version`
+says which study wrote a file; the app asks for an update when it is older than the study it bundles.
 
 **Fills (`execution`)**
 
@@ -167,6 +175,28 @@ be added together.
 A window with more than 2,000,000 ticks is cut there, and a `gap` event with provider
 `motivewave-ticks:history`, the `symbol`, the number of ticks left out as `dropped` and their time span
 as `start_ts`/`end_ts` says so.
+
+**Replay history ticks (`motivewave-replay:<run>:history`)**
+
+Study 0.3.3. Ordinary `tick` events in the replay file, `mode` `replay`, `proxy` `false`, `symbol` the
+exact contract of the fills, from the same tick history call as the live backfill (real trades, never
+generated from bars). `<run>` is the run of the position's fills, the one in their provider
+`motivewave-native:<workspace>:replay:<run>`, so each run has its own copy.
+
+A replay position is the replay fills that share a run, `account` and `native_position_id`. Its window
+is loaded when it is flat, its last fill is no later than the replay's current time, it lasted no longer
+than 24 hours, and it ended within `Backfill Trade Ticks (Days)` of the replay's current time (0 = off),
+while the study is on a replay chart of the exact contract with **Record Prices** on. The window is the
+same as live (first fill to last, five seconds either side) except that it never ends later than the
+replay's current time: nothing after the replay's present is asked for or written. The rest of a window
+cut that way is loaded once the replay has played past it.
+
+Each stretch is loaded once per run: the study remembers it in `<replay bridge file>.tick-backfill`
+beside the replay bridge (run ids, symbols and times only; a run not written to for 400 days is
+forgotten). A restart does not load it again, and neither does a rewind that plays the same moments
+again: the rewind starts a new run, and only that new run's own trades get a copy of their own. An empty
+answer is asked for again only the next time the study loads.
+The cap and its `gap` event are as live, with provider `motivewave-replay:<run>:history`.
 
 ## Example
 

@@ -23,7 +23,12 @@ from pathlib import Path
 APP_NAME = 'MotiveWave Journal'
 # The app's version. pyproject.toml, desktop/macos/Info.plist and desktop/macos/Main.swift say the same;
 # tests/test_version.py checks. The study has its own version (study/.../JournalPaths.java).
-VERSION = '0.4.3'
+VERSION = '0.4.4'
+# The study this app bundles (JournalPaths.CONNECTOR_VERSION; tests/test_version.py checks). Setup asks a
+# user whose study reports an older version to install this one: studies before 0.3.3 receive no live or
+# replay ticks.
+STUDY_VERSION = '0.3.3'
+STUDY_CONNECTOR = 'motivewave-journal-study'
 ENV = 'MWJ_HOME'
 DATASETS = ('live', 'replay')
 

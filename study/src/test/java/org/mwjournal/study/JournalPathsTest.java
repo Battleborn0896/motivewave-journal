@@ -46,7 +46,7 @@ public final class JournalPathsTest {
       assert actual.equals(JournalPaths.bridge(Path.of(configured.strip()))) : "MWJ_HOME must decide the default file";
     else assert actual.isAbsolute() : "Without MWJ_HOME the default is a full path";
 
-    assert JournalPaths.CONNECTOR.equals("motivewave-journal-study") && JournalPaths.CONNECTOR_VERSION.equals("0.3.2")
+    assert JournalPaths.CONNECTOR.equals("motivewave-journal-study") && JournalPaths.CONNECTOR_VERSION.equals("0.3.3")
         : "The heartbeat identity is part of the contract with the app";
     System.out.println("Journal paths passed: MWJ_HOME, macOS, Windows, Linux, the bridge files, and the heartbeat identity ("
         + actual + ").");

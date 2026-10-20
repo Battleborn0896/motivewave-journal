@@ -27,7 +27,11 @@ import static org.mwjournal.study.JournalTicks.IN_POSITION;
  * MNQZ6, another past trade, half an hour earlier: MotiveWave stored no price for the entry (price 0,
  *   price_known false, the 'platform reported no fill price' label); the exit is at 21020.
  * Because of that one fill every heartbeat is 'connected' with warnings '1 fill with no fill price'.
- * The replay file holds one ESZ6 trade, short 2 from 4800 and 4802 to 4797, and the same heartbeats.
+ * The replay file holds one ESZ6 trade, short 2 from 4800 and 4802 to 4797, and the same heartbeats. Its
+ *   replay prints are simulated (motivewave-replay:<run>:simulated). Once it is flat, the replay backfill
+ *   loads five real prints of its holding window (motivewave-replay:<run>:history), low 4795.5 and high
+ *   4806, with the replay clock three seconds past the exit: the history also answers with a print after
+ *   that clock, at 4700, which must never reach the file.
  *
  * Not a suite (its name does not end in Test): scripts/test.sh runs it and passes a fresh temporary path.
  * Fixtures only: no MotiveWave session, account or order is involved. */
@@ -115,6 +119,22 @@ public final class ContractSample {
     }, event -> writer.offerBelow(event, JournalBackfill.HIGH_WATER), () -> false);
     if (loaded.done() != 1 || loaded.ticks() != 5) throw new IllegalStateException("History backfill: " + loaded);
 
+    // The replay trade is flat: its real ticks are asked from the tick history for its own run, up to the
+    // replay's present and no further. The history answers with more than that, before and after.
+    long clock = REPLAY + 103_000;
+    var replayBackfill = new JournalBackfill(new JournalBackfill.Ledger(replayFile, true));
+    var replayed = replayBackfill.replayPass("ESZ6", capture.replayFills(), clock, System.currentTimeMillis(), 30,
+        (start, end, each) -> {
+          each.accept(print(REPLAY + 2_000, 4810));
+          each.accept(print(REPLAY + 8_000, 4799));
+          each.accept(print(REPLAY + 25_000, 4801.5f));
+          each.accept(print(REPLAY + 55_000, 4806));
+          each.accept(print(REPLAY + 85_000, 4795.5f));
+          each.accept(print(REPLAY + 101_000, 4797.5f));
+          each.accept(print(REPLAY + 104_000, 4700)); // after the replay clock: the future, never written
+        }, event -> replayWriter.offerBelow(event, JournalBackfill.HIGH_WATER), () -> false);
+    if (replayed.done() != 1 || replayed.ticks() != 5) throw new IllegalStateException("Replay backfill: " + replayed);
+
     // One-minute candles, as the history loader writes them; live only, replay never reads ahead.
     bar(writer, 0, 5000.25f, 5001.5f, 4997.75f, 5001, 1200);
     bar(writer, 1, 5001, 5004.25f, 5000.75f, 5004, 900);
@@ -136,7 +156,8 @@ public final class ContractSample {
   private static void requireFresh(Path file) throws IOException {
     for (Path candidate : List.of(file, JournalAccountCapture.replayFile(file),
         file.resolveSibling(file.getFileName() + ".capture-state"),
-        file.resolveSibling(file.getFileName() + ".replay-clock"), JournalBackfill.Ledger.sidecar(file)))
+        file.resolveSibling(file.getFileName() + ".replay-clock"), JournalBackfill.Ledger.sidecar(file),
+        JournalBackfill.Ledger.sidecar(JournalAccountCapture.replayFile(file))))
       if (Files.exists(candidate)) throw new IOException("Use a fresh temporary sample path: " + candidate);
   }
 

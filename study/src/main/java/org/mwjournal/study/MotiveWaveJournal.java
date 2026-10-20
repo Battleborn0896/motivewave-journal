@@ -10,6 +10,8 @@ import com.motivewave.platform.sdk.common.Tick;
 import com.motivewave.platform.sdk.common.desc.BooleanDescriptor;
 import com.motivewave.platform.sdk.common.desc.DiscreteDescriptor;
 import com.motivewave.platform.sdk.common.desc.IntegerDescriptor;
+import com.motivewave.platform.sdk.common.desc.LabelDescriptor;
+import com.motivewave.platform.sdk.common.desc.SettingDescriptor;
 import com.motivewave.platform.sdk.common.desc.SettingsDescriptor;
 import com.motivewave.platform.sdk.common.desc.StringDescriptor;
 import com.motivewave.platform.sdk.study.Study;
@@ -18,37 +20,31 @@ import com.motivewave.platform.sdk.study.StudyHeader;
 import java.io.IOException;
 import java.nio.file.Path;
 import java.time.Instant;
-import java.util.List;
 import java.util.UUID;
 import java.util.concurrent.ArrayBlockingQueue;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicLong;
+import java.util.function.BooleanSupplier;
 import org.mwjournal.study.JournalTicks.Held;
-import static org.mwjournal.study.JournalTicks.ALWAYS;
-import static org.mwjournal.study.JournalTicks.IN_POSITION;
+import static org.mwjournal.study.JournalSettings.*;
 import static org.mwjournal.study.JournalTicks.NEVER;
 
-/** Records what the MotiveWave Journal app needs from a chart: one-minute bars, trade prints around
- * the user's own positions, and (optionally, through a read-only internal observer) the fills and their
- * linked stop and target orders, live and replay. Everything goes to a local file; nothing is sent
- * anywhere and no order is ever placed, changed or cancelled. */
+/** Records what the MotiveWave Journal app needs from a chart: one-minute bars, every trade print the
+ * chart receives, real ticks for the holding time of closed trades, and (through a read-only internal
+ * observer) the fills and their linked stop and target orders, live and replay. Everything goes to a local
+ * file; nothing is sent anywhere and no order is ever placed, changed or cancelled.
+ *
+ * requiresBarUpdates: MotiveWave calls onTick only for a study that receives bar updates. With
+ * supportsBarUpdates alone that is a switch in the study's dialog, off unless the user turns it on, and
+ * study 0.3.2 and earlier, which declared only that, never recorded a live or replay print. Requiring
+ * bar updates makes every print reach onTick with the study's defaults. */
 @StudyHeader(namespace="org.mwjournal", id="MOTIVEWAVE_JOURNAL",
     name="MotiveWave Journal", label="MW Journal", menu="Journal",
     desc="Records prices and fills for the MotiveWave Journal app. Fill capture reads MotiveWave internals read-only and is not part of the supported SDK.",
-    overlay=true, supportsBarUpdates=true, allowTickAggregate=false, allowTickFilter=false)
+    overlay=true, supportsBarUpdates=true, requiresBarUpdates=true, allowTickAggregate=false, allowTickFilter=false)
 public class MotiveWaveJournal extends Study {
-  private static final String FILE = "journalFile";
-  private static final String SYMBOL = "journalSymbol";
-  private static final String DAYS = "historyDays", END = "historyEnd", TICKS = "historyTickMinutes";
-  private static final String BACKFILL = "backfillDays";
-  private static final String PROXY = "priceProxy";
-  private static final String ACCOUNTS = "nativeAccounts", REPLAY = "captureReplay", REAL_REPLAY = "realReplayTicks";
-  // v2 intentionally resets the old position-gated preference: continuous chart capture is now the
-  // product default so 5/15/30-minute runner windows exist without another switch.
-  private static final String RECORD = "recordTicksV2";
-  private static final String POST_EXIT = "postExitMinutes";
   private static final String LIVE_TICKS = "motivewave-ticks";
   // Resolved once: the environment cannot change under a running JVM, and this is read on every tick.
   private static final String DEFAULT_FILE = JournalPaths.defaultBridge();
@@ -57,6 +53,8 @@ public class MotiveWaveJournal extends Study {
   // once a minute, or straight away while a pass left windows over. After a failure, much later.
   private static final long BACKFILL_AFTER_LOAD_NANOS = 30_000_000_000L, BACKFILL_EVERY_NANOS = 60_000_000_000L,
       BACKFILL_MORE_NANOS = 1_000_000_000L, BACKFILL_AFTER_FAILURE_NANOS = 600_000_000_000L;
+  // A replay trade is over as soon as it is flat, and the trader is looking at it: ask more often.
+  private static final long REPLAY_BACKFILL_EVERY_NANOS = 5_000_000_000L;
 
   private record ReplaySource(String run, boolean real, String name) {}
 
@@ -77,9 +75,12 @@ public class MotiveWaveJournal extends Study {
   private volatile boolean disposed;
   private final Runnable backfillBeat = this::backfillDue;
   private volatile Capture liveChart; // the chart as last seen in live mode; null in replay and before the first callback
+  private volatile Capture replayChart; // the same in replay mode; null live and before the first callback
+  private volatile long replayNow; // the replay's current time as this chart last saw it; 0 before any
   private volatile long nextBackfill = System.nanoTime() + BACKFILL_AFTER_LOAD_NANOS;
   private volatile boolean backfilling;
-  private JournalBackfill backfill; // history thread only; one per study load, see JournalBackfill
+  // History thread only; one per study load and bridge file, see JournalBackfill.
+  private JournalBackfill backfill, replayBackfill;
   private volatile String lastWarnings = "";
 
   @Override public void initialize(Defaults defaults) {
@@ -87,58 +88,32 @@ public class MotiveWaveJournal extends Study {
     createRD();
   }
 
-  /** The settings dialog: one tab per family, short labels, the explanation in the tooltip. */
+  /** The settings dialog: a first tab that says there is nothing to set, and every setting under Advanced,
+   * with short labels and the explanation in the tooltip. The layout itself is JournalSettings'. */
   static void describe(SettingsDescriptor sd) {
-    var capture = sd.addTab("Capture");
-    capture.addGroup("Bridge File").addRow(new StringDescriptor(FILE, "File", DEFAULT_FILE, 440)
-        .setDescription("The file the MotiveWave Journal app reads. A full path. The default is where the app "
-            + "looks, so change it only when the app has been pointed somewhere else as well."));
-    var prices = capture.addGroup("Prices");
-    prices.addRow(new DiscreteDescriptor(RECORD, "Record Ticks", ALWAYS, List.of(
-        new NVP("Always While Study Runs", ALWAYS), new NVP("Trade + After Exit Only", IN_POSITION), new NVP("Never", NEVER)))
-        .setDescription("Always While Study Runs (default): every trade print delivered to this chart, for complete post-exit runner windows; the file gets larger. "
-            + "Trade + After Exit Only: a few seconds before entry, the whole position, and the After Exit window below. Never: no ticks. "
-            + "One-minute bars are written in every mode. Trade + After Exit Only relies on Capture Fills: "
-            + "when fills cannot be read, every trade is recorded."));
-    prices.addRow(new IntegerDescriptor(POST_EXIT, "After Exit (Minutes)", 30, 0, 120, 1)
-        .setDescription("Keep recording this instrument after exit for runner analysis. Uses market time in "
-            + "live and replay, so replay speed does not shorten the window. 0 = only the short fill-detection tail. "
-            + "No orders are kept open or changed; this records prices only."));
-    prices.addRow(
-        new StringDescriptor(SYMBOL, "Symbol", "", 110)
-            .setDescription("The symbol written with each price. Blank uses the chart's active contract. Set it "
-                + "when this chart stands in for the contract that is traded, and name that contract."),
-        new BooleanDescriptor(PROXY, "Proxy Prices", false)
-            .setDescription("Marks the prices as coming from another instrument than the one traded. "
-                + "A continuous-contract chart is marked automatically."));
-    capture.addGroup("Fills").addRow(new BooleanDescriptor(ACCOUNTS, "Capture Fills", true)
-        .setDescription("Reads fills and their linked stop and target orders, live and replay. Read-only: it "
-            + "never places, changes or cancels an order. It reads MotiveWave internals that are not part of "
-            + "the supported SDK, so a MotiveWave update can stop it working."));
+    for (var tab : JournalSettings.layout(DEFAULT_FILE)) {
+      var added = sd.addTab(tab.name());
+      for (var group : tab.groups()) {
+        var rows = added.addGroup(group.name());
+        for (var row : group.rows())
+          rows.addRow(row.stream().map(MotiveWaveJournal::descriptor).toArray(SettingDescriptor[]::new));
+      }
+    }
+  }
 
-    var history = sd.addTab("History");
-    var loaded = history.addGroup("Loaded With The Chart");
-    loaded.addRow(
-        new IntegerDescriptor(DAYS, "1m Bars (Days)", 3, 0, 14, 1)
-            .setDescription("Days of one-minute bars written when the chart loads and kept up to date after. 0 = off."),
-        new IntegerDescriptor(TICKS, "Ticks (Minutes)", 0, 0, 120, 1)
-            .setDescription("Also writes the real trades of the last N minutes when the chart loads. 0 = off."));
-    loaded.addRow(new StringDescriptor(END, "End (UTC)", "", 190)
-        .setDescription("Loads history up to this moment instead of the end of the chart, for example "
-            + "2026-01-05T21:00:00Z. Blank = the end of the loaded chart."));
-    history.addGroup("Past Trades").addRow(
-        new IntegerDescriptor(BACKFILL, "Backfill Trade Ticks (Days)", 30, 0, JournalBackfill.MAX_DAYS, 1)
-            .setDescription("Loads the real trades of this chart's contract around every position closed in the last "
-                + "N days, so trades that were not recorded live still get tick-based MAE and MFE. Each position "
-                + "is loaded once, in the background, in live mode only. 0 = off. Needs Capture Fills, a chart of "
-                + "the exact contract, and tick history from the data service for those days."));
-
-    sd.addTab("Replay").addGroup("Replay Prices").addRow(
-        new BooleanDescriptor(REPLAY, "Record Prices", true)
-            .setDescription("Records replay prices, in a file of their own beside the live one."),
-        new BooleanDescriptor(REAL_REPLAY, "Real Tick Data", false)
-            .setDescription("Switch on only when the replay runs on real tick data. Off, replay prices are "
-                + "labelled as simulated: generated from bars, so less exact."));
+  private static SettingDescriptor descriptor(JournalSettings.Setting setting) {
+    return switch (setting.kind()) {
+      case NOTE -> new LabelDescriptor(setting.label());
+      case TEXT -> new StringDescriptor(setting.key(), setting.label(), (String) setting.fallback(), setting.width())
+          .setDescription(setting.tip());
+      case WHOLE -> new IntegerDescriptor(setting.key(), setting.label(), (Integer) setting.fallback(),
+          setting.min(), setting.max(), 1).setDescription(setting.tip());
+      case SWITCH -> new BooleanDescriptor(setting.key(), setting.label(), (Boolean) setting.fallback())
+          .setDescription(setting.tip());
+      case CHOICE -> new DiscreteDescriptor(setting.key(), setting.label(), (String) setting.fallback(),
+          setting.choices().stream().map(choice -> new NVP(choice.label(), choice.value())).toList())
+          .setDescription(setting.tip());
+    };
   }
 
   @Override protected void calculateValues(DataContext ctx) {
@@ -147,16 +122,19 @@ public class MotiveWaveJournal extends Study {
     try {
       JournalAccountCapture observer = getAccounts();
       if (ctx.isReplayMode()) {
-        if (observer != null) observer.replayRun(capture(ctx).symbol(), ctx.getCurrentTime());
-        return; // Never prefetch the future price path during replay.
+        Capture capture = capture(ctx);
+        if (observer != null) observer.replayRun(capture.symbol(), ctx.getCurrentTime());
+        replayNow = ctx.getCurrentTime();
+        replayChart = capture;
+        return; // Never prefetch the future price path during replay; trade backfill stops at replayNow.
       }
       var series = ctx.getDataSeries();
       long end = series != null && series.size() > 0 ? series.getEndTime(series.size() - 1) : ctx.getCurrentTime();
       String configuredEnd = getSettings().getString(END, "").trim();
       if (!configuredEnd.isEmpty()) end = Instant.parse(configuredEnd).toEpochMilli();
       end = Math.min(end, ctx.getCurrentTime());
-      int days = Math.max(0, Math.min(14, getSettings().getInteger(DAYS, 3)));
-      int ticks = Math.max(0, Math.min(120, getSettings().getInteger(TICKS, 0)));
+      int days = Math.max(0, Math.min(DAYS_MAX, getSettings().getInteger(DAYS, DAYS_DEFAULT)));
+      int ticks = Math.max(0, Math.min(TICKS_MAX, getSettings().getInteger(TICKS, TICKS_DEFAULT)));
       Capture capture = capture(ctx);
       liveChart = capture;
       String request = capture.toString() + ":" + end / 900000 + ":" + days + ":" + ticks + ":" + configuredEnd;
@@ -182,15 +160,16 @@ public class MotiveWaveJournal extends Study {
     try {
       JournalAccountCapture observer = getAccounts();
       Capture capture = capture(ctx);
-      String record = getSettings().getString(RECORD, ALWAYS);
+      String record = getSettings().getString(RECORD, RECORD_DEFAULT);
       var print = JournalPriceEvents.Print.of(tick);
       if (isReplay) {
-        if (!getSettings().is(REPLAY, true)) return;
         // The run follows the replay clock on every tick, recorded or not: replay fills are labelled from it.
         String run = observer == null ? standaloneReplayRun(ctx.getCurrentTime())
             : observer.replayRun(capture.symbol(), ctx.getCurrentTime());
-        if (print == null || NEVER.equals(record)) return;
-        String source = replaySource(run, getSettings().is(REAL_REPLAY, false));
+        replayNow = ctx.getCurrentTime();
+        replayChart = capture;
+        if (print == null || !getSettings().is(REPLAY, REPLAY_DEFAULT) || NEVER.equals(record)) return;
+        String source = replaySource(run, getSettings().is(REAL_REPLAY, REAL_REPLAY_DEFAULT));
         Held observation = held(capture, source, print);
         JournalTicks.record(replayGate, getReplayWriter(capture.file()),
             observation, "replay", JournalTicks.armed(observer, record, true, observation));
@@ -206,14 +185,14 @@ public class MotiveWaveJournal extends Study {
       }
       long minute = print.time() / 60000;
       long previous = lastMinute.getAndSet(minute);
-      if (minute > previous && getSettings().getInteger(DAYS, 3) > 0)
+      if (minute > previous && getSettings().getInteger(DAYS, DAYS_DEFAULT) > 0)
         submitHistory(capture, (minute - 2) * 60000, minute * 60000, true, 0, false);
     } catch (IOException | RuntimeException exc) { report(exc); }
   }
 
   private Held held(Capture capture, String source, JournalPriceEvents.Print print) {
     return new Held(capture.symbol(), capture.proxy(), source, print, capture.instrument().getSymbol(),
-        capture.instrument().getActiveSymbol(), getSettings().getInteger(POST_EXIT, 30));
+        capture.instrument().getActiveSymbol(), getSettings().getInteger(POST_EXIT, POST_EXIT_DEFAULT));
   }
 
   private String replaySource(String run, boolean real) {
@@ -228,7 +207,9 @@ public class MotiveWaveJournal extends Study {
   private synchronized void observeMode(boolean replay) {
     if (replayMode != null && replayMode != replay) stopHistory();
     replayMode = replay;
-    if (replay) liveChart = null; // No history is ever asked for in replay, and none for replay fills.
+    // Each mode backfills only its own fills, from a chart seen in that mode.
+    if (replay) liveChart = null;
+    else replayChart = null;
   }
 
   private synchronized String standaloneReplayRun(long time) {
@@ -242,7 +223,7 @@ public class MotiveWaveJournal extends Study {
   private synchronized JournalAccountCapture getAccounts() throws IOException {
     Path file = Path.of(getSettings().getString(FILE, defaultFile())).normalize();
     if (!file.isAbsolute()) throw new IOException("Choose an absolute capture path.");
-    boolean wanted = getSettings().is(ACCOUNTS, true);
+    boolean wanted = getSettings().is(ACCOUNTS, ACCOUNTS_DEFAULT);
     if (accounts != null && (!wanted || !file.equals(accountFile))) closeAccounts();
     if (wanted && accounts == null && System.nanoTime() - accountRetry >= 0) {
       try {
@@ -282,7 +263,7 @@ public class MotiveWaveJournal extends Study {
     if (symbol.isEmpty()) symbol = active == null || active.isBlank() ? instrument.getSymbol() : active;
     Path file = Path.of(getSettings().getString(FILE, defaultFile()));
     if (!file.isAbsolute()) throw new IllegalArgumentException("Choose an absolute export path.");
-    return new Capture(file, instrument, symbol, continuous || getSettings().is(PROXY, false));
+    return new Capture(file, instrument, symbol, continuous || getSettings().is(PROXY, PROXY_DEFAULT));
   }
 
   /** The one background thread for everything that asks MotiveWave for history. Call with the lock held. */
@@ -296,18 +277,23 @@ public class MotiveWaveJournal extends Study {
 
   /** Whether a backfill pass is due. Called by the account poller after each poll, twice a second and
    * with the market open or closed; never on the tick thread. It only decides and queues: the pass
-   * itself runs on the history thread. */
+   * itself runs on the history thread. A chart in replay backfills replay trades, one in live mode live
+   * ones; Record Prices off leaves replay without ticks of either kind. */
   private void backfillDue() {
-    Capture chart = liveChart;
+    Capture live = liveChart, replay = replayChart;
+    Capture chart = live != null ? live : replay;
     if (disposed || chart == null || backfilling || System.nanoTime() - nextBackfill < 0) return;
-    nextBackfill = System.nanoTime() + BACKFILL_EVERY_NANOS;
-    submitBackfill(chart, Math.max(0, Math.min(JournalBackfill.MAX_DAYS, getSettings().getInteger(BACKFILL, 30))));
+    boolean isReplay = live == null;
+    if (isReplay && !getSettings().is(REPLAY, REPLAY_DEFAULT)) return;
+    nextBackfill = System.nanoTime() + (isReplay ? REPLAY_BACKFILL_EVERY_NANOS : BACKFILL_EVERY_NANOS);
+    int days = Math.max(0, Math.min(JournalBackfill.MAX_DAYS, getSettings().getInteger(BACKFILL, BACKFILL_DEFAULT)));
+    submitBackfill(chart, days, isReplay);
   }
 
-  private synchronized void submitBackfill(Capture chart, int days) {
+  private synchronized void submitBackfill(Capture chart, int days, boolean replay) {
     JournalAccountCapture observer = accounts;
     if (disposed || observer == null || !JournalBackfill.applies(chart.instrument().getSymbol(), chart.symbol(),
-        chart.proxy(), replayMode, days)) return;
+        chart.proxy(), replayMode, replay, days)) return;
     long token = generation.get();
     history().submit(() -> {
       if (disposed || generation.get() != token || backfilling) return;
@@ -317,18 +303,34 @@ public class MotiveWaveJournal extends Study {
       String symbol = chart.instrument().getSymbol(), outcome = "";
       JournalBackfill.Result result = null;
       try {
-        var fills = observer.fills();
-        if (fills == null) return; // no snapshot yet; the next beat asks again
-        var ledger = JournalBackfill.Ledger.shared(chart.file());
-        if (backfill == null || backfill.ledger() != ledger) backfill = new JournalBackfill(ledger);
-        // A separate reference keeps the writer alive while settings/destroy close the live one.
-        JournalEventWriter target = output = JournalEventWriter.acquire(chart.file());
-        result = backfill.pass(symbol, fills, System.currentTimeMillis(), days,
-            // false is essential: true would manufacture ticks from OHLC and overstate precision.
-            (start, end, each) -> chart.instrument().forEachTick(start, end, false, false,
-                tick -> each.accept(JournalPriceEvents.Print.of(tick))),
-            event -> target.offerBelow(event, JournalBackfill.HIGH_WATER),
-            () -> disposed || generation.get() != token || Thread.currentThread().isInterrupted());
+        // Read once: the pass never asks for anything later than the replay's time when it began.
+        long clock = replayNow;
+        Path file = replay ? JournalAccountCapture.replayFile(chart.file()) : chart.file();
+        var ledger = JournalBackfill.Ledger.shared(file, replay);
+        JournalBackfill load = replay ? replayBackfill : backfill;
+        if (load == null || load.ledger() != ledger) {
+          load = new JournalBackfill(ledger);
+          if (replay) replayBackfill = load;
+          else backfill = load;
+        }
+        // false is essential: true would manufacture ticks from OHLC and overstate precision.
+        JournalBackfill.TickSource ticks = (start, end, each) -> chart.instrument().forEachTick(start, end, false, false,
+            tick -> each.accept(JournalPriceEvents.Print.of(tick)));
+        BooleanSupplier cancelled = () -> disposed || generation.get() != token || Thread.currentThread().isInterrupted();
+        if (replay) {
+          var fills = observer.replayFills();
+          if (fills == null || clock <= 0) return; // no snapshot or no replay time yet; the next beat asks again
+          // A separate reference keeps the writer alive while settings/destroy close the study's own.
+          JournalEventWriter target = output = JournalEventWriter.acquire(file);
+          result = load.replayPass(symbol, fills, clock, System.currentTimeMillis(), days, ticks,
+              event -> target.offerBelow(event, JournalBackfill.HIGH_WATER), cancelled);
+        } else {
+          var fills = observer.fills();
+          if (fills == null) return; // no snapshot yet; the next beat asks again
+          JournalEventWriter target = output = JournalEventWriter.acquire(file);
+          result = load.pass(symbol, fills, System.currentTimeMillis(), days, ticks,
+              event -> target.offerBelow(event, JournalBackfill.HIGH_WATER), cancelled);
+        }
         if (result.remaining() > 0) nextBackfill = System.nanoTime() + BACKFILL_MORE_NANOS;
       } catch (java.util.concurrent.CancellationException exc) {
         outcome = null; // settings changed or the study was removed: the window is done again later
@@ -346,7 +348,7 @@ public class MotiveWaveJournal extends Study {
             + (result.cut() > 0 ? ", " + result.cut() + " cut at " + JournalBackfill.MAX_TICKS + " ticks" : "")
             + (result.remaining() > 0 ? ", " + result.remaining() + " still to do" : "");
         if (!disposed && outcome != null && !(counts + outcome).isEmpty())
-          info("MotiveWave Journal: " + symbol + " trade tick backfill: " + counts
+          info("MotiveWave Journal: " + symbol + (replay ? " replay" : "") + " trade tick backfill: " + counts
               + (counts.isEmpty() || outcome.isEmpty() ? "" : ", ") + outcome
               + " in " + (System.nanoTime() - began) / 1_000_000 + " ms.");
       }
@@ -409,7 +411,7 @@ public class MotiveWaveJournal extends Study {
 
   /** connected, starting (no poll has finished yet), failing, or off. */
   private String fillCapture() {
-    if (!getSettings().is(ACCOUNTS, true)) return "off";
+    if (!getSettings().is(ACCOUNTS, ACCOUNTS_DEFAULT)) return "off";
     JournalAccountCapture observer;
     synchronized (this) { observer = accounts; }
     if (observer == null) return "failing";
@@ -478,6 +480,7 @@ public class MotiveWaveJournal extends Study {
     lastRequest = "";
     lastMinute.set(0);
     liveChart = null; // seen under the old settings or mode; the next callback brings the current one
+    replayChart = null;
     if (history != null) history.shutdownNow();
     history = null;
   }

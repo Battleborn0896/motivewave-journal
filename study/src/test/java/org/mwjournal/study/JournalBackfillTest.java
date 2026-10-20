@@ -46,15 +46,22 @@ public final class JournalBackfillTest {
 
   public static void main(String[] args) throws Exception {
     var folder = Files.createTempDirectory("mwj-backfill-fixture-");
-    // Which charts load history at all: live, switched on, and showing the very contract of the fills.
-    assert JournalBackfill.applies("ESZ6", "ESZ6", false, false, 30);
-    assert !JournalBackfill.applies("ESZ6", "ESZ6", false, false, 0) : "0 days is off";
-    assert !JournalBackfill.applies("ESZ6", "ESZ6", false, true, 30) : "Never in replay";
-    assert !JournalBackfill.applies("ESZ6", "ESZ6", false, null, 30) : "Not before the chart has said live or replay";
-    assert !JournalBackfill.applies("@ES", "ESZ6", true, false, 30) : "A continuous chart is not the contract";
-    assert !JournalBackfill.applies("ESZ6", "MESZ6", false, false, 30) : "Nor is a chart standing in for another symbol";
-    assert !JournalBackfill.applies("ESZ6", "ESZ6", true, false, 30) : "Nor one marked as proxy prices";
-    assert !JournalBackfill.applies(null, null, false, false, 30) && !JournalBackfill.applies(" ", " ", false, false, 30);
+    // Which charts load history at all: switched on, in the mode of the fills (a live chart loads live
+    // trades, a replay chart replay trades), and showing the very contract of the fills.
+    assert JournalBackfill.applies("ESZ6", "ESZ6", false, false, false, 30) : "A live chart, live trades";
+    assert JournalBackfill.applies("ESZ6", "ESZ6", false, true, true, 30) : "A replay chart, replay trades";
+    assert !JournalBackfill.applies("ESZ6", "ESZ6", false, true, false, 30) : "A replay chart never loads live trades";
+    assert !JournalBackfill.applies("ESZ6", "ESZ6", false, false, true, 30) : "A live chart never loads replay trades";
+    for (boolean replay : new boolean[]{false, true}) {
+      assert !JournalBackfill.applies("ESZ6", "ESZ6", false, replay, replay, 0) : "0 days is off";
+      assert !JournalBackfill.applies("ESZ6", "ESZ6", false, null, replay, 30) : "Not before the chart has said live or replay";
+      // The same alias rules live and replay: the chart must show the contract the fills are in.
+      assert !JournalBackfill.applies("@ES", "ESZ6", true, replay, replay, 30) : "A continuous chart is not the contract";
+      assert !JournalBackfill.applies("ESZ6", "MESZ6", false, replay, replay, 30) : "Nor is a chart standing in for another symbol";
+      assert !JournalBackfill.applies("ESZ6", "ESZ6", true, replay, replay, 30) : "Nor one marked as proxy prices";
+      assert !JournalBackfill.applies(null, null, false, replay, replay, 30)
+          && !JournalBackfill.applies(" ", " ", false, replay, replay, 30);
+    }
     windows();
     spans();
     bookkeeping(folder);
@@ -62,12 +69,17 @@ public final class JournalBackfillTest {
     cap(folder);
     backpressure(folder);
     cancelling(folder);
+    replayWindows();
+    replayPasses(folder);
+    replayLedger(folder);
     try (var left = Files.walk(folder)) {
       for (var path : left.sorted(java.util.Comparator.reverseOrder()).toList()) Files.delete(path);
     }
     System.out.println("Journal backfill passed: windows from fills (scale-in, partial exits, back to back, a missing "
         + "entry, replay and other symbols left out), done once across restarts, an empty answer asked again only "
-        + "by a later load, the tick cap and its gap event, waiting for the writer's queue, cancelling, two charts.");
+        + "by a later load, the tick cap and its gap event, waiting for the writer's queue, cancelling, two charts; "
+        + "replay: windows per run and position, clamped to the replay clock, nothing past it written, the rest "
+        + "loaded once the replay plays on, its own provider and sidecar, rewinds and restarts, no live leakage.");
   }
 
   private static void windows() {
@@ -383,6 +395,183 @@ public final class JournalBackfillTest {
     assert seen.size() == 1 && seen.getFirst().attempted() == 0 && seen.getFirst().remaining() == 0
         && otherHistory.asked.isEmpty() : "Two charts on one instrument must not both load the window: " + seen;
     assert otherChart.pass("ESZ6", fills, NOW, 30, otherHistory, events::add, NEVER).attempted() == 0 && events.size() == 280;
+  }
+
+  // ---------------------------------------------------------------- replay
+
+  /** Replay time: a session in 2021, years before the wall clock. */
+  private static final long R = Instant.parse("2021-01-04T15:00:00Z").toEpochMilli();
+
+  /** Replay positions: per run, account and position id, flat, closed no later than the replay clock,
+   * and the window cut at that clock. */
+  private static void replayWindows() {
+    var fills = new ArrayList<JournalBackfill.ReplayFill>();
+    fills.add(replay("run-a", "ESZ6", "RPLY-1", true, 0));
+    fills.add(replay("run-a", "ESZ6", "RPLY-1", false, 60));
+    fills.add(replay("run-a", "ESZ6", "RPLY-2", false, 120));
+    fills.add(replay("run-a", "ESZ6", "RPLY-2", true, 150));
+    fills.add(replay("run-a", "ESZ6", "RPLY-3", true, 200));           // still open
+    // After a rewind MotiveWave can number positions from the start again: the same id in another run
+    // is another position, with a window of its own.
+    fills.add(replay("run-b", "ESZ6", "RPLY-1", true, 30));
+    fills.add(replay("run-b", "ESZ6", "RPLY-1", false, 90));
+    // Never a window: a live fill, another instrument, no run, no position id.
+    fills.add(new JournalBackfill.ReplayFill("run-a", new Fill("live-in", "paper", "ESZ6", true, 1, 5000, R + 10_000, 2, 50,
+        "USD", "o", "live", true, false)));
+    fills.add(new JournalBackfill.ReplayFill("run-a", new Fill("live-out", "paper", "ESZ6", false, 1, 5000, R + 20_000, 2, 50,
+        "USD", "o", "live", false, false)));
+    fills.add(replay("run-a", "NQZ6", "RPLY-9", true, 0));
+    fills.add(replay("run-a", "NQZ6", "RPLY-9", false, 60));
+    fills.add(replay(" ", "ESZ6", "RPLY-7", true, 0));
+    fills.add(replay(" ", "ESZ6", "RPLY-7", false, 60));
+    fills.add(replay("run-a", "ESZ6", "", true, 0));
+    fills.add(replay("run-a", "ESZ6", "", false, 60));
+    long clock = R + 152_000;
+    var windows = JournalBackfill.replayWindows(fills, "ESZ6", clock - DAY, clock);
+    assert windows.equals(List.of(
+        new JournalBackfill.RunWindow("run-a", new Window(R - PAD, R + 60_000 + PAD)),
+        new JournalBackfill.RunWindow("run-b", new Window(R + 30_000 - PAD, R + 90_000 + PAD)),
+        new JournalBackfill.RunWindow("run-a", new Window(R + 120_000 - PAD, clock))))
+        : "Oldest first, one per run and position, the last cut at the clock: " + windows;
+    assert JournalBackfill.replayWindows(fills, "ESZ6", R + 140_000 - DAY, R + 140_000).size() == 2
+        : "A position that closes after the replay's present is not over yet";
+    assert JournalBackfill.replayWindows(fills, "ESZ6", R + 10_000 - DAY, R + 10_000).isEmpty()
+        : "Rewound to before every exit: nothing is over";
+    assert JournalBackfill.replayWindows(fills, "NQZ6", clock - DAY, clock).size() == 1;
+    assert JournalBackfill.replayWindows(fills, "ESZ6", R + 3 * DAY - DAY, R + 3 * DAY).isEmpty()
+        : "Days count back from the replay clock";
+    // Live windows never include replay positions, and the replay ones never include live positions.
+    assert JournalBackfill.windows(fills.stream().map(JournalBackfill.ReplayFill::fill).toList(), "ESZ6", 0, Long.MAX_VALUE)
+        .equals(List.of(new Window(R + 10_000 - PAD, R + 20_000 + PAD))) : "Only the live position";
+    assert JournalBackfill.replaySource("run-a").equals("motivewave-replay:run-a:history");
+  }
+
+  /** Loading replay windows: the run's own provider, replay mode, nothing past the clock however much
+   * the history answers with, the rest once the replay has played past it, and a cut window's gap. */
+  private static void replayPasses(Path folder) throws Exception {
+    var replayFile = folder.resolve("replay-passes.replay.ndjson");
+    var liveFile = folder.resolve("replay-passes.ndjson");
+    var fills = List.of(replay("run-a", "ESZ6", "RPLY-1", true, 0), replay("run-a", "ESZ6", "RPLY-1", false, 60),
+        replay("run-b", "ESZ6", "RPLY-1", true, 30), replay("run-b", "ESZ6", "RPLY-1", false, 90),
+        replay("run-a", "ESZ6", "RPLY-2", false, 120), replay("run-a", "ESZ6", "RPLY-2", true, 150));
+    var history = new History(); // answers with prints up to a second past whatever it is asked for
+    var events = new ArrayList<String>();
+    var load = new JournalBackfill(new Ledger(replayFile, true));
+    long clock = R + 152_000, wall = NOW;
+    assert load.replayPass("ESZ6", fills, clock, wall, 0, history, events::add, NEVER).attempted() == 0 : "0 days is off";
+    assert load.replayPass("ESZ6", fills, 0, wall, 30, history, events::add, NEVER).attempted() == 0 : "No replay time yet";
+    assert load.replayPass("ESZ6", null, clock, wall, 30, history, events::add, NEVER).attempted() == 0 : "No snapshot yet";
+    assert history.asked.isEmpty();
+    var result = load.replayPass("ESZ6", fills, clock, wall, 30, history, events::add, NEVER);
+    assert result.done() == 3 && result.empty() == 0 && result.remaining() == 0 : result;
+    // The two runs overlap in time, and each gets its own copy: the app measures a trade with its own run's prices.
+    assert history.asked.equals(List.of(new Window(R - PAD, R + 65_000), new Window(R + 25_000, R + 95_000),
+        new Window(R + 115_000, clock))) : history.asked;
+    assert result.ticks() == 280 + 280 + 148 && events.size() == 708 : result;
+    var runA = events.stream().filter(e -> e.contains("\"provider\":\"motivewave-replay:run-a:history\"")).toList();
+    var runB = events.stream().filter(e -> e.contains("\"provider\":\"motivewave-replay:run-b:history\"")).toList();
+    assert runA.size() == 280 + 148 && runB.size() == 280 : runA.size() + " " + runB.size();
+    assert events.stream().allMatch(e -> e.startsWith("{\"version\":1,\"type\":\"tick\",\"mode\":\"replay\",\"provider\":"
+        + "\"motivewave-replay:run-") && e.contains("\"symbol\":\"ESZ6\"") && e.endsWith(",\"proxy\":false}"));
+    assert events.stream().noneMatch(e -> e.contains("motivewave-ticks")) : "Never the live provider";
+    // No look-ahead: the history answered with prints past the replay's present; none of them is written.
+    assert events.stream().allMatch(e -> stamp(e) < clock) : "Nothing at or after the replay clock";
+    assert runA.getLast().contains("\"ts\":\"2021-01-04T15:02:31.750Z\"") : runA.getLast();
+    assert !Files.exists(Ledger.sidecar(liveFile)) : "Replay bookkeeping stays beside the replay bridge";
+
+    // The same load, the clock unchanged: nothing to do. The replay plays on: only the rest of the cut window.
+    assert load.replayPass("ESZ6", fills, clock, wall, 30, history, events::add, NEVER).attempted() == 0;
+    history.asked.clear();
+    long later = R + 600_000;
+    result = load.replayPass("ESZ6", fills, later, wall, 30, history, events::add, NEVER);
+    assert result.done() == 1 && history.asked.equals(List.of(new Window(clock, R + 150_000 + PAD))) : history.asked;
+    assert result.ticks() == 12 && events.size() == 720 : result;
+
+    // A window with more ticks than the cap: cut, and a gap event under the run's own provider.
+    var capped = new ArrayList<String>();
+    var small = new JournalBackfill(new Ledger(folder.resolve("replay-cap.replay.ndjson"), true), 30, 4);
+    result = small.replayPass("ESZ6", fills.subList(0, 2), later, wall, 30, new History(), capped::add, NEVER);
+    assert result.done() == 1 && result.cut() == 1 && capped.size() == 31 : result;
+    assert capped.getLast().startsWith("{\"version\":1,\"type\":\"gap\",\"provider\":\"motivewave-replay:run-a:history\","
+        + "\"symbol\":\"ESZ6\"") && capped.getLast().contains("\"dropped\":250,") : capped.getLast();
+  }
+
+  /** The replay bridge's own sidecar: restarts and rewinds never load a run's window twice, a new run
+   * gets its own copy, an empty answer is asked again only by a later load, and old runs are forgotten. */
+  private static void replayLedger(Path folder) throws Exception {
+    var replayFile = folder.resolve("ledger.replay.ndjson");
+    var fills = new ArrayList<JournalBackfill.ReplayFill>(List.of(
+        replay("run-a", "ESZ6", "RPLY-1", true, 0), replay("run-a", "ESZ6", "RPLY-1", false, 60)));
+    Window window = new Window(R - PAD, R + 60_000 + PAD);
+    var history = new History();
+    var events = new ArrayList<String>();
+    long clock = R + 600_000;
+    assert new JournalBackfill(new Ledger(replayFile, true)).replayPass("ESZ6", fills, clock, NOW, 30, history, events::add,
+        NEVER).done() == 1 && events.size() == 280;
+    String sidecar = Files.readString(Ledger.sidecar(replayFile));
+    assert Ledger.sidecar(replayFile).getFileName().toString().equals("ledger.replay.ndjson.tick-backfill");
+    assert sidecar.contains("done.run-a\\:ESZ6=" + window.start() + "-" + window.end()) && sidecar.contains("used.run-a\\:ESZ6=" + NOW)
+        : "Filed by run and contract, with when it was written: " + sidecar;
+    assert !sidecar.contains("REPLAY-1") && !sidecar.contains("RPLY-1") : "Run ids, symbols and times only";
+    assert new Ledger(replayFile, true).written(JournalBackfill.replayKey("run-a", "ESZ6"), window);
+    assert !new Ledger(replayFile, true).written(JournalBackfill.replayKey("run-b", "ESZ6"), window);
+    assert !new Ledger(replayFile, true).written("ESZ6", window) : "Not a live contract's history";
+
+    // A restart, and the replay rewound to before the trade and played past it again in the same run: not again.
+    history.asked.clear();
+    var restarted = new JournalBackfill(new Ledger(replayFile, true));
+    assert restarted.replayPass("ESZ6", fills, clock, NOW, 30, history, events::add, NEVER).attempted() == 0;
+    assert restarted.replayPass("ESZ6", fills, R + 10_000, NOW, 30, history, events::add, NEVER).attempted() == 0;
+    assert history.asked.isEmpty() && events.size() == 280;
+    // A rewind starts a new run, and its trade at the same times is loaded again, for that run.
+    fills.add(replay("run-c", "ESZ6", "RPLY-1", true, 0));
+    fills.add(replay("run-c", "ESZ6", "RPLY-1", false, 60));
+    var result = restarted.replayPass("ESZ6", fills, clock, NOW, 30, history, events::add, NEVER);
+    assert result.done() == 1 && history.asked.equals(List.of(window)) && events.size() == 560 : result;
+    assert events.subList(280, 560).stream().allMatch(e -> e.contains("motivewave-replay:run-c:history"));
+
+    // No ticks in the history: asked again only by a later load.
+    fills.add(replay("run-d", "ESZ6", "RPLY-1", true, 300));
+    fills.add(replay("run-d", "ESZ6", "RPLY-1", false, 330));
+    Window quiet = new Window(R + 300_000 - PAD, R + 330_000 + PAD);
+    history.empty.add(quiet);
+    history.asked.clear();
+    result = restarted.replayPass("ESZ6", fills, clock, NOW, 30, history, events::add, NEVER);
+    assert result.empty() == 1 && result.done() == 0 && history.asked.equals(List.of(quiet)) : result;
+    assert restarted.replayPass("ESZ6", fills, clock, NOW, 30, history, events::add, NEVER).attempted() == 0;
+    history.empty.clear();
+    result = new JournalBackfill(new Ledger(replayFile, true)).replayPass("ESZ6", fills, clock, NOW, 30, history,
+        events::add, NEVER);
+    assert result.done() == 1 && history.asked.size() == 2 : result;
+
+    // One bridge file is one kind: the replay sidecar is not opened as a live one.
+    assert Ledger.shared(replayFile, true) == Ledger.shared(replayFile, true);
+    try {
+      Ledger.shared(replayFile, false);
+      throw new AssertionError("A replay ledger must not be shared as a live one");
+    } catch (IOException expected) { }
+
+    // A run nothing has been written for in longer than any setting reaches is forgotten; a live ledger
+    // would instead drop these 2021 stretches at once, by their times.
+    var ledger = new Ledger(replayFile, true);
+    long much = NOW + JournalBackfill.KEEP_MILLIS + DAY;
+    assert ledger.claim(JournalBackfill.replayKey("run-z", "ESZ6"), window);
+    ledger.finish(JournalBackfill.replayKey("run-z", "ESZ6"), window, true, much);
+    var reread = new Ledger(replayFile, true);
+    assert reread.written(JournalBackfill.replayKey("run-z", "ESZ6"), window)
+        && !reread.written(JournalBackfill.replayKey("run-a", "ESZ6"), window) : Files.readString(Ledger.sidecar(replayFile));
+  }
+
+  /** The epoch milliseconds of an event's "ts". */
+  private static long stamp(String event) {
+    int at = event.indexOf("\"ts\":\"") + 6;
+    return Instant.parse(event.substring(at, event.indexOf('"', at))).toEpochMilli();
+  }
+
+  /** One replay fill of a position, at R plus so many seconds, filed under run. */
+  private static JournalBackfill.ReplayFill replay(String run, String symbol, String position, boolean buy, long second) {
+    return new JournalBackfill.ReplayFill(run, new Fill("replay-" + next++, "REPLAY-1", symbol, buy, 1, 5000,
+        R + second * 1000, 2, 50, "USD", "order", position, buy, true));
   }
 
   /** One fill of a position, at T plus so many seconds. */

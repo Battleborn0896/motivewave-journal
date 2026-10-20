@@ -10,7 +10,7 @@ import datetime as dt
 from collections import defaultdict
 
 from .model import finite, instant
-from .scope import allows_source, provenance
+from .scope import allows_source, is_simulated, provenance
 
 
 def post_exit(trade, samples, source, *, minutes=15, now=None, initial_risk=None, gaps=(),
@@ -77,7 +77,7 @@ def post_exit(trade, samples, source, *, minutes=15, now=None, initial_risk=None
                            'increase After Exit (Minutes), or supply matching history.']
         return result
     bars = any(s.resolution_seconds for s in used)
-    simulated = source.startswith('motivewave-replay:') and source.endswith(':simulated')
+    simulated = is_simulated(source)
     precision = ('replay-simulated' if simulated else 'proxy-estimate' if any(s.proxy for s in used)
                  else 'estimated-bars' if bars else 'observed-ticks')
     peak = max(path, key=lambda p: p['high']) if path else None

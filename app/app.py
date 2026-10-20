@@ -46,7 +46,7 @@ def badge(dataset: str, selected_journal=None) -> None:
     if journal is None:
         return
     _, _, _, link = common.study_link(journal)
-    # The state word only: 'Connected · study 0.3.2' is wider than the sidebar. Setup shows the version.
+    # The state word only: 'Connected · study 0.3.3' is wider than the sidebar. Setup shows the version.
     st.markdown(theme.chip(link.state, link.tone, state=link.state) + "<span class='mwj-go'>Setup ›</span>",
                 unsafe_allow_html=True)
     seen_key = common.key(journal, SEEN_KEY) if not selected_journal else f'{SEEN_KEY}-{dataset}-{selected_journal}'
@@ -150,8 +150,8 @@ if global_filter:
                     'Setup → Display to see everything.')
 
 if dataset == 'replay':
-    st.info('Replay journal · its own trades, reviews and stats. Prices built from bars are marked simulated, '
-            'never tick-accurate.')
+    st.info('Replay journal · its own trades, reviews and stats. The study adds real ticks to each replay trade '
+            'once it is flat; prices built from bars are marked simulated.')
 if view == 'Settings':
     def tool(page):
         target = capture if page == 'Connection' and selected_journal else journal

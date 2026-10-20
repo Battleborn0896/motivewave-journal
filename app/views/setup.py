@@ -51,7 +51,7 @@ STATUS_COPY = {
     'Connected': 'MotiveWave is sending data. Trade as usual: each trade appears in Trades by itself.',
     'Waiting For Study': 'Waiting for the MotiveWave Journal study. Follow the three steps below; this turns green by itself.',
     'Stale': 'The study has gone quiet. Check that MotiveWave is open and the study is still on your chart.',
-    'No Heartbeat': 'Prices arrive but the study is not reporting in. Switch on Capture Fills in the study settings.',
+    'No Heartbeat': 'Prices arrive but the study is not reporting in. Switch on Capture Fills under the study\'s Advanced tab.',
     'Paused': 'Capture is switched off. Switch it back on under Data → Connection.',
     'Needs Attention': 'Capture needs attention. Open Data → Connection to see what the study reported.',
 }
@@ -59,8 +59,20 @@ FLAT_TO_FLAT = ('One trade runs flat to flat for one provider, account and exact
                 'the position away from zero opens it. Scale-ins and partial exits stay inside that same trade. The '
                 'fill that returns the position to zero closes it. A reversal closes the old trade at the crossing '
                 'fill and opens a new one; other accounts and contracts stay separate. Replay works the same way and '
-                'is kept in the separate Replay journal. Its MAE / MFE is tick-accurate only when the replay itself '
-                'runs from real tick data.')
+                'is kept in the separate Replay journal. Once a replay trade is flat, the study loads the real ticks '
+                'of its holding time from MotiveWave\'s history, never past the replay\'s current time, so its MAE / '
+                'MFE comes from real ticks, where that history has them, even when the replay itself plays from bars.')
+STEP_TWO = ('**2 · Add It to Your Chart**  \nAdd **Journal → MotiveWave Journal** to the chart of each contract you '
+            'trade. There is nothing to set.')
+
+
+def update_line(link) -> str | None:
+    """One line for a study older than the one this app bundles, which receives no live or replay ticks; else None."""
+    if not common.study_outdated(link):
+        return None
+    how = ('click Install MotiveWave Study below' if connection.JAR.is_file()
+           else 'import the new motivewave-journal.jar under Study → All Studies → Import')
+    return f'Study {link.version} records no live or replay ticks: {how}, then restart MotiveWave.'
 
 
 def page_for(view: str | None) -> str:
@@ -121,6 +133,9 @@ def render_status(journal):
     name, _, _, link = common.study_link(journal)
     note = STATUS_COPY.get(link.state, 'Waiting for the MotiveWave study to report its capture status.')
     notes = [(note, link.tone == 'critical')]
+    update = update_line(link)
+    if update:
+        notes.append((update, True))
     try:
         others = common.other_problems(journal, name)
     except (AttributeError, TypeError, KeyError):
@@ -133,8 +148,10 @@ def render_status(journal):
 
 
 def steps(link) -> None:
-    # Steps 1 and 2 are done once the study has ever reported in, even if it has gone quiet since.
+    # Steps 1 and 2 are done once the study has ever reported in, even if it has gone quiet since; step 1
+    # is open again while that study is older than the one this app bundles.
     connected = link is not None and (link.state == 'Connected' or getattr(link, 'heard', None) is not None)
+    outdated = connected and common.study_outdated(link)
     theme.section('Get Started')
     one, two, three = st.columns(3)
     with one.container(border=True, height='stretch'):
@@ -142,23 +159,21 @@ def steps(link) -> None:
                     help='Copies the study into your MotiveWave Extensions folder and keeps the previous copy. '
                          'By hand instead: in MotiveWave choose Study → All Studies → Import and pick '
                          'motivewave-journal.jar. To install it again after an update, use Data → Connection.')
-        if connected:
+        if connected and not outdated:
             st.markdown(':green[✓ Done]')
         elif connection.JAR.is_file():
             if st.button('Install MotiveWave Study', type='primary', key='simple-study-install'):
                 try:
                     connection.install_study()
-                    st.success('Installed. Restart MotiveWave, then do step 2.')
+                    st.success('Installed. Restart MotiveWave' + (' to use it.' if connected else ', then do step 2.'))
                 except (OSError, ValueError) as exc:
                     st.error('The study could not be installed: ' + str(exc))
         else:
             st.markdown('In MotiveWave choose **Study → All Studies → Import**.')
     with two.container(border=True, height='stretch'):
-        st.markdown('**2 · Add It to Your Chart**  \nRestart MotiveWave, then add **Journal → MotiveWave Journal** '
-                    'to the chart of each contract you trade.',
-                    help='Use the exact contract, such as ESZ6, not a continuous contract. Leave the study\'s File '
-                         'setting as it is: the journal already watches that file. Live and paper trades go to the '
-                         'Live journal, replay trades to the Replay journal.')
+        st.markdown(STEP_TWO,
+                    help='Use the exact contract, such as ESZ6, not a continuous contract. Live and paper trades go '
+                         'to the Live journal, replay trades to the Replay journal.')
         if connected:
             st.markdown(':green[✓ Done]')
     with three.container(border=True, height='stretch'):

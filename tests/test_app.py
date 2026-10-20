@@ -131,11 +131,12 @@ def display_setting(app, label, value, back='Trades'):
     return show(app, back)
 
 
-def heartbeat(status='connected', *, age=0, mode='live', detail='Read-only capture'):
+def heartbeat(status='connected', *, age=0, mode='live', detail='Read-only capture', version=paths.STUDY_VERSION):
+    """A heartbeat of the study this app bundles, unless another version is named."""
     stamp = dt.datetime.now(dt.timezone.utc) - dt.timedelta(seconds=age)
     return {'version': 1, 'type': 'heartbeat', 'mode': mode, 'provider': 'motivewave-native', 'ts': stamp.isoformat(),
             'workspace': 'paper', 'status': status, 'detail': detail,
-            'connector': 'motivewave-journal-study', 'connector_version': '0.1.0'}
+            'connector': 'motivewave-journal-study', 'connector_version': version}
 
 
 def study_writes(events, dataset='live'):
@@ -228,6 +229,35 @@ def test_replay_environment_views_render_separately(view):
     app.radio(key='journal-environment').set_value('Live').run()
     assert not app.exception and not said(app.info, 'Replay journal')
     assert not listed(app, 'replay') and not listed(app, 'live')
+
+
+def test_a_replay_trade_without_ticks_says_the_study_fills_them_in_after_it_closes():
+    replay = Journal(dataset='replay')
+    apply_preview(replay, preview_bridge(lines([fill('a'), fill('b', 'sell', 5002, ts='2022-01-03T14:32:00Z')]),
+                                         dataset='replay'))
+    replay.set_excursion_policy('ticks-only')
+    app = open_app('Trades', 'Replay')
+    assert chosen(app, 'replay') == replay.trades()[0].id
+    assert [c.value for c in app.main.caption].count(common.REPLAY_TICKS_LATER) == 1
+    assert not said(app.main.caption, 'MAE / MFE need recorded ticks')
+    assert said(app.info, common.REPLAY_TICKS_LATER)                   # More → MAE / MFE says the same
+    # Once the study has backfilled it, the line goes and the real ticks measure the trade.
+    apply_preview(replay, preview_bridge(lines([tick(price, suffix='history', ts=f'2022-01-03T14:3{minute}:00Z')
+                                                for minute, price in ((0, 5000.25), (1, 4998))]), dataset='replay'))
+    from mwjournal.sync import SyncWorker
+    worker = SyncWorker(replay)
+    worker.rebuild = True
+    worker.recalculate()
+    app.run()
+    assert not app.exception and not said(app.main.caption, common.REPLAY_TICKS_LATER)
+    assert widget(app.metric, 'MAE').value == '$100.00'
+    assert said(app.main.caption, 'Observed ticks · Backfilled from MotiveWave history')
+    # A live trade never gets the line, ticks or not.
+    live = Journal()
+    apply_preview(live, preview_bridge(lines([fill('l1', mode='live', ts='2026-10-07T14:00:00Z'),
+                                              fill('l2', 'sell', 5002, mode='live', ts='2026-10-07T14:02:00Z')])))
+    app.radio(key='journal-environment').set_value('Live').run()
+    assert not app.exception and not said(app.main.caption, common.REPLAY_TICKS_LATER)
 
 
 def test_view_switcher_always_shows_a_view_and_empty_journal_shortcuts_open_theirs():
@@ -633,8 +663,8 @@ def test_connection_turns_connected_once_the_study_writes_a_fresh_heartbeat():
     app.run()
     assert not app.exception
     assert states(app.main) == ['Connected'] and states(app.sidebar) == ['Connected']
-    assert said(app.main.markdown, 'Connected · study 0.1.0')
-    assert not said(app.sidebar.markdown, 'study 0.1.0')      # too wide for the sidebar badge; Setup shows it
+    assert said(app.main.markdown, f'Connected · study {paths.STUDY_VERSION}')
+    assert not said(app.sidebar.markdown, 'study ' + paths.STUDY_VERSION)   # too wide for the sidebar badge; Setup shows it
     assert said(app.main.markdown, 'The study says: Read-only capture · workspace paper')
     assert not said(app.sidebar.markdown, 'has not appeared yet')
     connected = shape(app)

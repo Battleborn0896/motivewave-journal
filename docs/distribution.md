@@ -39,13 +39,16 @@ bounded pre-roll and exit tail. The resulting path drives observed-tick MAE/MFE 
 candles drawn from those prints. Put the study on the exact contract chart; another contract's chart
 cannot supply its ticks.
 
-Version 0.3.2 defaults to **Always While Study Runs**, retaining every trade print MotiveWave sends
-to that chart. This supports 5/15/30-minute runner comparisons by individual tag, tag category or
+Since version 0.3.2 the study defaults to **Always While Study Runs**, retaining every trade print
+MotiveWave sends to that chart; version 0.3.3 is the first that MotiveWave actually sends them to, because
+it requires bar updates. This supports 5/15/30-minute runner comparisons by individual tag, tag category or
 setup. The lower-storage position-gated mode remains available when its After Exit window is long
 enough for the selected comparison horizon.
 
-Replay uses only events the replay actually emits. It is tick-accurate only when MotiveWave replay is
-running from real tick data. Bar-generated replay remains labelled simulated/source-unverified.
+Replay records the events the replay actually emits. Its own prints are tick-accurate only when
+MotiveWave replay is running from real tick data; bar-generated replay remains labelled
+simulated/source-unverified. Once a replay trade is flat, study 0.3.3 also loads the real ticks of its
+holding time from MotiveWave's tick history for that replay run, never past the replay's current time.
 
 ## macOS release
 

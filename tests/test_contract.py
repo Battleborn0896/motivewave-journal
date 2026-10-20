@@ -10,6 +10,8 @@ import pytest
 from mwjournal import Journal
 from mwjournal.chart import trade_chart
 from mwjournal.importers import preview_bridge
+from mwjournal.model import instant
+from mwjournal.scope import PROVENANCE, replay_run
 from mwjournal.sync import SyncWorker
 
 
@@ -25,9 +27,11 @@ def bridges():
     return files
 
 
+# The replay trade is measured with the real prints the study backfilled for its run from MotiveWave's
+# history (low 4795.5, high 4806), not with the simulated replay prints (which would give 400 and 500).
 @pytest.mark.parametrize('dataset,gross,net,mae,mfe,precision,fill_count,trade_count', [
     ('live', 300, 295, 150, 350, 'observed-ticks', 7, 3),
-    ('replay', 400, 395, 400, 500, 'replay-simulated', 3, 1),
+    ('replay', 400, 395, 500, 550, 'observed-ticks', 3, 1),
 ])
 def test_java_bridge_to_journal_trade_chart_and_excursions(
         tmp_path, bridges, dataset, gross, net, mae, mfe, precision, fill_count, trade_count):
@@ -51,6 +55,20 @@ def test_java_bridge_to_journal_trade_chart_and_excursions(
         ['working', 'working', 'cancelled'] if dataset == 'live' else ['working', 'filled'])
     assert all(event.order_id != 'resting-limit' for event in protection)
     sources = journal.price_sources('ESZ6', trade)
+    if dataset == 'replay':
+        run = replay_run(trade.provider)
+        history = f'motivewave-replay:{run}:history'
+        assert sources == [history, f'motivewave-replay:{run}:simulated']
+        assert metric['source'] == history and metric['provenance'] == 'replay-history'
+        assert PROVENANCE[metric['provenance']] == 'Backfilled from MotiveWave history'
+        prints = journal.prices('ESZ6', history)
+        # Five prints inside the window; the one the history gave after the replay clock never reached the file.
+        assert [p.high for p in prints] == [4799, 4801.5, 4806, 4795.5, 4797.5]
+        assert max(instant(p.ts) for p in prints) < instant('2022-01-03T14:31:43Z')
+        simulated = next(m for m in journal.metric_options(trade) if m['source'].endswith(':simulated'))
+        assert (simulated['mae'], simulated['mfe'], simulated['precision']) == (400, 500, 'replay-simulated')
+    else:
+        assert not any(s.startswith('motivewave-replay:') for s in sources)
     source = 'motivewave-bars:1m' if dataset == 'live' else sources[0]
     payload = trade_chart(trade, journal.prices('ESZ6', source), source, events=protection)
     assert len(payload['overlays']['fills']) == 3
