@@ -1,7 +1,10 @@
-"""Trades: a day-by-day list on the left; the selected trade's chart, tags and review on the right.
+"""Trades: a day-by-day list on the left; the selected trade's chart, tags, review and checklist on the right.
 
-One way to pick a trade: click its row, or step with Prev / Next. The list follows the background
-watcher by itself, without moving the selection, the open tab or a note being typed.
+One way to pick a trade: click its row, or step with Prev / Next. Click a day's header instead and its Daily
+Report Card takes the trade's place, until a trade is clicked or Back to Trades. Above both, the session
+tools (a check-in timer, check-ins, pre-trade drafts, a session checklist) share a row with Filters and
+Options. The list follows the background watcher by itself, without moving the selection, the open tab or a
+note being typed.
 """
 
 from __future__ import annotations
@@ -20,7 +23,7 @@ import theme
 import tvchart
 import runner_controls
 import tag_controls
-from views import checklists
+from views import checklists, daily, preferences, session
 from common import PRECISION, money
 from mwjournal.chart import ENTRY, EXIT, STOP, TARGET, chart_window, trade_chart
 from mwjournal.model import WHY_INCOMPLETE, finite, instant
@@ -31,22 +34,29 @@ from mwjournal import merging
 
 ADHERENCE = ['Unreviewed', 'Yes', 'No']
 LIST_LIMIT = 150           # rows drawn at once; Show Earlier Trades draws the next ones
+REPORT = 'report-card-open'  # per environment: the Daily Report Card is shown in place of the trade
 REFRESH = '3s'             # how often the page looks for trades the watcher has added or changed
 CONTEXT = [15, 30, 60, 120, 0]
 LONG, SHORT = theme.SERIES[0], theme.SERIES[1]
 
 CSS = f"""
 <style>
-.st-key-trade-list {{ gap:2px !important; max-height:calc(100dvh - 140px); min-height:220px; overflow-y:auto;
+.st-key-trade-list {{ gap:2px !important; max-height:calc(100dvh - 150px); min-height:220px; overflow-y:auto;
     padding-right:4px; }}
-[class*="st-key-trade-row-"] {{ position:relative; gap:0 !important; }}
+[class*="st-key-trade-row-"], [class*="st-key-trade-day-"] {{ position:relative; gap:0 !important; }}
 .st-key-trade-list [data-testid="stMarkdownContainer"] {{ margin-bottom:0 !important; }}
-[class*="st-key-trade-row-"] [data-testid="stElementContainer"]:has(.stButton) {{ position:absolute !important;
+[class*="st-key-trade-row-"] [data-testid="stElementContainer"]:has(.stButton),
+[class*="st-key-trade-day-"] [data-testid="stElementContainer"]:has(.stButton) {{ position:absolute !important;
     inset:0; z-index:2; margin:0 !important; }}
-[class*="st-key-trade-row-"] .stButton, [class*="st-key-trade-row-"] .stButton button {{ width:100%; height:100%;
+[class*="st-key-trade-row-"] .stButton, [class*="st-key-trade-row-"] .stButton button,
+[class*="st-key-trade-day-"] .stButton, [class*="st-key-trade-day-"] .stButton button {{ width:100%; height:100%;
     min-height:0 !important; padding:0; opacity:0; cursor:pointer; }}
 [class*="st-key-trade-row-"]:hover .mwj-trade {{ background:{theme.SURFACE_2}; }}
 [class*="st-key-trade-row-"]:has(button:focus-visible) .mwj-trade {{ outline:2px solid {theme.ACCENT}; }}
+[class*="st-key-trade-day-"]:hover .mwj-day {{ background:{theme.SURFACE_2}; }}
+[class*="st-key-trade-day-"]:hover .mwj-day .go {{ color:{theme.ACCENT}; }}
+[class*="st-key-trade-day-"]:has(button:focus-visible) .mwj-day {{ outline:2px solid {theme.ACCENT}; }}
+.st-key-trade-list > div:first-child .mwj-day {{ margin-top:0; }}
 .mwj-trade {{ display:flex; flex-wrap:wrap; align-items:baseline; column-gap:6px; row-gap:1px; padding:5px 7px;
     border-radius:4px; border:1px solid transparent; border-left:3px solid transparent; font-family:{theme.FONT};
     font-size:12.5px; line-height:1.35; color:{theme.INK}; font-variant-numeric:tabular-nums; }}
@@ -70,10 +80,14 @@ CSS = f"""
 .mwj-badge.open {{ color:{theme.ACCENT}; background:{theme.ACCENT}22; border:1px solid {theme.ACCENT}55; }}
 .mwj-badge.bad {{ color:{theme.DOWN}; background:{theme.DOWN}22; border:1px solid {theme.DOWN}55; }}
 .mwj-badge.info {{ color:{theme.INK_2}; background:{theme.SURFACE_2}; border:1px solid {theme.BORDER}; }}
-.mwj-day {{ display:flex; flex-wrap:wrap; align-items:baseline; column-gap:8px; margin:10px 0 1px; padding:0 8px 3px;
-    border-bottom:1px solid {theme.BORDER}; font-family:{theme.FONT}; font-size:12px; font-variant-numeric:tabular-nums; }}
+.mwj-day {{ display:flex; flex-wrap:wrap; align-items:baseline; column-gap:8px; margin:10px 0 1px; padding:3px 8px 3px;
+    border-bottom:1px solid {theme.BORDER}; border-radius:4px 4px 0 0; font-family:{theme.FONT}; font-size:12px;
+    font-variant-numeric:tabular-nums; }}
 .mwj-day:first-child {{ margin-top:0; }}
+.mwj-day.sel {{ background:{theme.SURFACE_2}; border-bottom-color:{theme.ACCENT}; }}
 .mwj-day .d {{ color:{theme.INK}; font-weight:650; white-space:nowrap; }}
+.mwj-day .go {{ color:{theme.MUTED}; font-size:11px; white-space:nowrap; }}
+.mwj-day.sel .go {{ color:{theme.ACCENT}; }}
 .mwj-day .n {{ margin-left:auto; font-weight:650; white-space:nowrap; }}
 .mwj-day .k {{ color:{theme.MUTED}; white-space:nowrap; }}
 .mwj-title {{ font-family:{theme.FONT}; font-size:15px; color:{theme.INK}; line-height:1.4; }}
@@ -83,6 +97,17 @@ CSS = f"""
 .mwj-legend .mwj-dot {{ display:inline-block; width:8px; height:8px; border-radius:50%; margin:0 5px 1px 0;
     vertical-align:middle; }}
 .st-key-trade-review-workspace [data-testid="stMetricValue"] {{ font-size:21px; }}
+/* The session bar: a large count, small square buttons, a narrow duration box. */
+.st-key-session-timer {{ gap:6px !important; }}
+.st-key-session-timer .stButton button {{ min-height:32px; height:32px; width:34px; padding:0; }}
+.st-key-session-timer [data-testid="stNumberInputContainer"] {{ height:32px; }}
+.mwj-timer {{ font-family:{theme.FONT}; font-size:26px; font-weight:600; line-height:32px; color:{theme.INK};
+    font-variant-numeric:tabular-nums; letter-spacing:.01em; min-width:3.1em; }}
+.mwj-timer.off, .mwj-timer.paused {{ color:{theme.MUTED}; }}
+.mwj-timer.due {{ color:{theme.ACCENT}; }}
+.mwj-timer-unit {{ color:{theme.MUTED}; font-size:12.5px; margin-left:-2px; }}
+[class*="st-key-session-check-in-"] [data-testid="stWidgetLabel"] p {{ color:{theme.ACCENT} !important;
+    font-weight:650; }}
 </style>
 """
 
@@ -137,31 +162,40 @@ def row_label(row, zone) -> str:
                      f"{row['max_qty']:g} {result} {state}")
 
 
-def day_html(day, rows, zone) -> str:
+def day_html(day, rows, zone, selected=False) -> str:
+    """A day's header: its date, a hint that it opens the Daily Report Card, its net result and trade count."""
     known = [r['net'] for r in rows if r['status'] == 'closed' and r.get('net') is not None]
     net = sum(known)
     tone = 'mwj-win' if net > 0 else 'mwj-loss' if net < 0 else 'mwj-flat'
     total = _money(net, rows[0]['currency']) if known else '—'
-    return (f"<div class='mwj-day'><span class='d'>{common.day_label(day, zone, weekday=True)}</span>"
+    return (f"<div class='mwj-day{' sel' if selected else ''}'><span class='d'>{common.day_label(day, zone, weekday=True)}</span>"
+            "<span class='go'>Report Card ›</span>"
             f"<span class='n {tone}'>{total}</span>"
             f"<span class='k'>{len(rows)} trade{'' if len(rows) == 1 else 's'}</span></div>")
 
 
 # ---------------------------------------------------------------- the page
 
-def render(journal, rows) -> None:
-    if not rows:
-        empty()
-        return
+def render(journal, rows, *, every=None) -> None:
+    """`rows` have passed the saved filter; `every` has not, so a new saved filter can name any trade's details."""
+    every = rows if every is None else every
     st.markdown(CSS, unsafe_allow_html=True)
+    report_key = common.key(journal, REPORT)
+    if st.session_state.pop(common.REPORT_KEY, False):         # asked for from elsewhere, such as a calendar day
+        st.session_state[report_key] = True
+    open_rows = [r for r in every if r['status'] == 'open']
+    if not every:
+        top_row(journal, every, open_rows)
+        if st.session_state.get(report_key):
+            report_card(journal, rows)
+        else:
+            empty()
+        return
     zone = common.display_zone(journal)
     capture = getattr(journal, 'capture_journal', journal)
     seen = common.changes(capture)
     selected = common.key(journal, 'selected-trade')
-    heading, filter_col, options_col = st.columns([5, 1, 1], vertical_alignment='center')
-    with filter_col.popover('Filters', width='stretch',
-                            help='Narrow the list by market, date, account, tag, playbook or rating.'):
-        shown = common.filter_rows(journal, rows)
+    shown, options_slot = top_row(journal, every, open_rows, rows)
     filter_state = {k: st.session_state[k] for k in st.session_state
                     if k.startswith('filter-') and k.endswith('-' + getattr(journal, 'ui_scope', journal.dataset))}
     signature = json.dumps(filter_state, sort_keys=True, default=str)
@@ -170,24 +204,26 @@ def render(journal, rows) -> None:
     st.session_state[signature_key] = signature
     # A tag edit that drops the open trade out of the filters keeps it open until the filters change.
     pinned = next((r for r in rows if unchanged and r['id'] == st.session_state.get(selected) and r not in shown), None)
-    with heading:
-        theme.section('Trades', f'{len(shown)} of {len(rows)}' if len(shown) != len(rows) else '')
+    count = f'{len(shown)} of {len(rows)}' if len(shown) != len(rows) else ''
     shown = sorted(shown, key=lambda r: r['opened'], reverse=True)
     review_rows = [*shown, *([pinned] if pinned else [])]
     ids = [r['id'] for r in review_rows]
     if ids and st.session_state.get(selected) not in ids:
         st.session_state[selected] = ids[0]
     trade = next((t for t in journal.trades() if t.id == st.session_state.get(selected)), None) if ids else None
-    with options_col.popover('Options', width='stretch', help='Chart settings, and merging or splitting trades.'):
+    with options_slot:
         options_menu(journal, rows, trade)
     list_col, review_col = st.columns([1.75, 3.25], gap='medium')
     with list_col:
+        theme.section('Trades', count)
         if shown:
             trade_list(journal, shown, zone)
         else:
             st.info('No trades match these filters.')
     with review_col.container(key='trade-review-workspace'):
-        if trade is None:
+        if st.session_state.get(report_key):
+            report_card(journal, rows)
+        elif trade is None:
             if ids:                            # the watcher regrouped fills between two reads
                 st.info('This trade was just regrouped by new fills. Pick it again from the list.')
         else:
@@ -195,6 +231,33 @@ def render(journal, rows) -> None:
                 st.caption('Kept open: this trade no longer matches your filters.')
             detail(journal, trade, ids, zone)
     follow(capture, seen)
+
+
+def top_row(journal, every, open_rows, rows=None):
+    """The session tools, then Filters and Options: one row above the list. Returns the trades the filters
+    keep and the Options menu, which is filled in once the selected trade is known."""
+    timer_col, menu_col = st.columns([1, 1.25], vertical_alignment='top')
+    with timer_col:
+        session.timer(journal, open_rows)
+    with menu_col.container(horizontal=True, horizontal_alignment='right', vertical_alignment='center', gap='small'):
+        session.menus(journal, every)
+        if rows is None:
+            return [], None
+        with st.popover('Filters', help='Narrow the list by market, date, account, tag, playbook or rating. The '
+                                        'saved filter here applies to every page.'):
+            shown = preferences.filter_menu(journal, rows, every)
+        options = st.popover('Options', help='Chart settings, and merging or splitting trades.')
+    return shown, options
+
+
+def report_card(journal, rows) -> None:
+    """The Daily Report Card in place of the trade, with the way back to it."""
+    def back():
+        st.session_state[common.key(journal, REPORT)] = False
+
+    st.button('← Back to Trades', key=common.key(journal, 'back-to-trades'), type='tertiary', on_click=back,
+              help='Shows the selected trade again. Clicking any trade in the list does too.')
+    daily.render(journal, rows)
 
 
 @st.fragment(run_every=REFRESH)
@@ -211,8 +274,17 @@ def trade_list(journal, shown, zone) -> None:
     position = next((i for i, r in enumerate(shown) if r['id'] == st.session_state.get(selected)), 0)
     limit = max(st.session_state.get(limit_key, LIST_LIMIT), position + 1)
 
+    report_key = common.key(journal, REPORT)
+    reporting = bool(st.session_state.get(report_key))
+    day_key, zone_key = common.key(journal, 'review-day'), common.key(journal, 'review-tz')
+
     def pick(id):
         st.session_state[selected] = id
+        st.session_state[report_key] = False
+
+    def open_day(day):
+        # The report card's own boxes take this day, in the zone the list groups days by.
+        st.session_state.update({report_key: True, day_key: day, zone_key: zone})
 
     drawn = 0
     with st.container(key='trade-list'):
@@ -220,10 +292,16 @@ def trade_list(journal, shown, zone) -> None:
             if drawn >= limit:
                 break
             day_rows = list(day_rows)
-            st.markdown(day_html(day, day_rows, zone), unsafe_allow_html=True)
+            chosen_day = reporting and st.session_state.get(day_key) == day and st.session_state.get(zone_key) == zone
+            with st.container(key='trade-day-' + day.isoformat()):
+                st.markdown(day_html(day, day_rows, zone, chosen_day), unsafe_allow_html=True)
+                st.button(common.md(f'Daily Report Card for {common.day_label(day, zone, weekday=True)}'),
+                          key=common.key(journal, 'open-day-' + day.isoformat()), on_click=open_day, args=(day,),
+                          width='stretch')
             for row in day_rows:
                 with st.container(key='trade-row-' + hashlib.sha256(row['id'].encode()).hexdigest()[:16]):
-                    st.markdown(row_html(row, zone, row['id'] == st.session_state.get(selected)), unsafe_allow_html=True)
+                    st.markdown(row_html(row, zone, not reporting and row['id'] == st.session_state.get(selected)),
+                                unsafe_allow_html=True)
                     st.button(row_label(row, zone), key=common.key(journal, 'pick-' + row['id']),
                               on_click=pick, args=(row['id'],), width='stretch')
                 drawn += 1
@@ -317,12 +395,13 @@ def detail(journal, trade, ids, zone) -> None:
         st.caption(common.REPLAY_TICKS_LATER)
     elif not metric and journal.display_settings()['excursion_policy'] == 'ticks-only':
         st.caption('MAE / MFE need recorded ticks · candle estimates are excluded',
-                   help='To show candle-based values, choose Allow labelled estimates under Setup → Display → '
-                        'MAE / MFE accuracy.')
+                   help='To show candle-based values, choose Allow labelled estimates under Setup → Advanced → '
+                        'MAE / MFE Accuracy.')
     if trade.point_value is None:
         st.warning(f'{trade.symbol} has no dollars-per-point multiplier yet, so its P&L cannot be calculated. Set it here.')
         common.multiplier_form(journal, 'trade-multiplier', trade.symbol)
-    overview, notes, more = st.tabs(['Chart & Tags', 'Notes', 'More'], key=common.key(journal, 'trade-tabs'))
+    overview, notes, checks, more = st.tabs(['Chart & Tags', 'Notes', 'Checklist', 'More'],
+                                            key=common.key(journal, 'trade-tabs'))
     with overview:
         chart_col, tag_col = st.columns([1.35, 1], gap='small')
         with chart_col:
@@ -331,10 +410,11 @@ def detail(journal, trade, ids, zone) -> None:
             tag_controls.render(journal, trade)
     with notes:
         review_form(journal, trade, annotation)
+    with checks:
+        checklists.run_panel(journal, trade, prefix='trade-' + trade.id)
     with more:
-        metrics, executions, runner, checks = st.tabs(
-            ['MAE / MFE', 'Executions', 'Runner', 'Checklists'],
-            key=common.key(journal, 'trade-more-tabs'))
+        metrics, executions, runner = st.tabs(['MAE / MFE', 'Executions', 'Runner'],
+                                              key=common.key(journal, 'trade-more-tabs'))
         with executions:
             executions_panel(journal, trade, zone)
         with metrics:
@@ -347,8 +427,6 @@ def detail(journal, trade, ids, zone) -> None:
                 runner_controls.trade_panel(journal, trade, annotation)
             else:
                 st.info('Post-exit runner analysis becomes available after the trade closes.')
-        with checks:
-            checklists.run_panel(journal, trade, prefix='trade-' + trade.id)
 
 
 def executions_panel(journal, trade, zone) -> None:
@@ -377,7 +455,7 @@ def empty() -> None:
              'and partial exits stay in one trade. Live and Replay are kept apart.')
     with st.container(horizontal=True, gap='small'):
         st.button('Open Setup', on_click=common.go('Setup'), type='primary',
-                  help='The three steps that connect MotiveWave, and every setting.')
+                  help='Whether the study is recording, the one step to take if it is not, and every setting.')
         st.button('Import Old Trades', on_click=common.go('Import'),
                   help='Trades from before the study was installed: a fills CSV from your platform or broker.')
 
@@ -444,8 +522,8 @@ def excursions_panel(journal, trade, a: dict, zone) -> None:
                 'OHLC, synthetic replay and recorded capture gaps do not qualify. '
                 'The one-minute chart can still be displayed independently.')
         if journal.metric_options(trade):
-            st.caption('Other measurements are kept. Allow labelled estimates under Setup → Display → MAE / MFE '
-                       'accuracy to see them.')
+            st.caption('Other measurements are kept. Allow labelled estimates under Setup → Advanced → MAE / MFE '
+                       'Accuracy to see them.')
     else:
         best = common.best_display_metric(journal, trade)
         index = next((i for i, m in enumerate(options) if m['source'] == best.get('source')

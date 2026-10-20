@@ -23,12 +23,20 @@ from mwjournal.sync import DEFAULT_CONNECTION
 
 VIEWS = ('Trades', 'Edge', 'Import', 'Connection', 'Daily review', 'Export')
 PRIMARY_VIEWS = ('Trades', 'Analytics', 'Settings')
-NAV_LABELS = {'Trades': 'Trades', 'Analytics': 'Stats', 'Settings': 'Setup',
-              'Daily review': 'Daily Report Card', 'Live session': 'Session tools'}
-TOOLS = ('Connection', 'Tags', 'Ratings', 'Journals', 'General', 'Import', 'Export',
-         'Dashboard', 'Daily review', 'Live session', 'Checklists')
+NAV_LABELS = {'Trades': 'Trades', 'Analytics': 'Stats', 'Settings': 'Setup'}
+# Every page that is not one of the three, by the name navigation() takes: (its Setup page, the tab it opens).
+# The Daily Report Card, the session tools and running a checklist are on Trades; dashboards are a Stats tab.
+SETUP_ROUTES = {'Setup': ('Setup', None), 'General': ('Setup', None),
+                'Tags': ('Tags', None), 'Checklists': ('Tags', 'Checklists'), 'Ratings': ('Ratings', None),
+                'Data': ('Data', None), 'Import': ('Data', 'Import Trades'), 'Export': ('Data', 'Export & Backup'),
+                'Journals': ('Data', 'Journals & Accounts'), 'Connection': ('Data', 'Connection')}
+TOOLS = tuple(view for view in SETUP_ROUTES if view != 'Setup')
 VIEW_KEY = 'journal-view'
 TOOL_KEY = 'journal-settings-page'
+# Requests for the page drawn next, taken by that page as it is drawn: which tab to open (tabs()), and
+# whether Trades opens the Daily Report Card instead of a trade.
+TAB_KEY = 'journal-open-tab'
+REPORT_KEY = 'journal-open-report-card'
 MAPPING_KEY = 'journal-import-mapping'      # the column mapping of the last CSV previewed in Import
 # The first four keep their places: older selectors default to the first one.
 TIMEZONES = ['America/New_York', 'America/Chicago', 'America/Los_Angeles', 'UTC',
@@ -69,11 +77,39 @@ def go(view: str):
 
 
 def navigation(view: str) -> dict:
-    if view in TOOLS:
-        return {VIEW_KEY: 'Settings', TOOL_KEY: view}
-    if view == 'Setup':                     # the first Setup page: status, the three steps, display settings
-        return {VIEW_KEY: 'Settings', TOOL_KEY: 'Setup'}
-    return {VIEW_KEY: 'Analytics' if view == 'Edge' else view}
+    """The session-state changes that show a view, by any name it has had: a Setup page and its tab, the
+    Daily Report Card on Trades, the Dashboards tab of Stats, or one of the three pages."""
+    if view in SETUP_ROUTES:
+        page, tab = SETUP_ROUTES[view]
+        return {VIEW_KEY: 'Settings', TOOL_KEY: page, TAB_KEY: tab}
+    if view == 'Dashboard':
+        return {VIEW_KEY: 'Analytics', TAB_KEY: 'Dashboards'}
+    if view == 'Daily review':
+        return {VIEW_KEY: 'Trades', REPORT_KEY: True}
+    if view == 'Live session':              # the session tools are the bar at the top of Trades
+        return {VIEW_KEY: 'Trades'}
+    return {VIEW_KEY: 'Analytics' if view in ('Edge', 'Analytics') else view}
+
+
+def tabs(labels, key: str):
+    """Tabs whose `.open` says which one is showing, that open the one navigation() asked for, and that come
+    back on the tab last opened. The choice is kept under its own key as well as the widget's, because
+    Streamlit forgets a widget's value on a page that does not draw it. A tab that is no longer there (Stats
+    tabs can be removed) gives way to the first."""
+    chosen = key + '-chosen'
+    wanted = st.session_state.pop(TAB_KEY, None)
+    if wanted in labels:
+        st.session_state[chosen] = wanted
+    if st.session_state.get(chosen) in labels:
+        st.session_state[key] = st.session_state[chosen]
+    else:
+        st.session_state.pop(chosen, None)
+        st.session_state.pop(key, None)
+
+    def remember():
+        st.session_state[chosen] = st.session_state.get(key)
+
+    return st.tabs(list(labels), key=key, on_change=remember)
 
 
 def stamp(journal):
@@ -122,8 +158,8 @@ def md(text: str) -> str:
 
 
 def display_zone(journal=None) -> str:
-    """The one time zone every time is shown in: the choice saved in Setup → Display,
-    else this computer's own zone. Stored times stay UTC."""
+    """The one time zone every time is shown in: the Time Zone chosen on Setup, else this computer's own
+    zone. Stored times stay UTC."""
     try:
         chosen = journal.workspace()['preferences'].get('display_timezone') if journal is not None else None
     except (sqlite3.Error, ValueError, KeyError):
@@ -209,23 +245,30 @@ def money_table(frame, currency='USD', *, results=()):
     return styled.format(formats, subset=list(formats))
 
 
-def unit_selector(journal):
+def unit_selector(journal, container=st):
+    """MAE / MFE Units, saved for this journal the moment it is chosen."""
     widget_key = key(journal, 'excursion-unit')
     st.session_state.setdefault(widget_key, journal.display_settings()['excursion_unit'])
     def save():
         journal.set_excursion_unit(st.session_state[widget_key])
-    st.selectbox('MAE / MFE units', units.UNITS, format_func=units.LABELS.get, key=widget_key, on_change=save,
-                 help='Display preference only: fills and the raw currency measurements stay unchanged. '
-                      'Points/ticks measure price movement, not quantity-weighted position profit.')
+    container.selectbox('MAE / MFE Units', units.UNITS, format_func=units.LABELS.get, key=widget_key, on_change=save,
+                        help='How MAE and MFE are shown everywhere. Display only: fills and the raw currency '
+                             'measurements stay unchanged. Points and ticks measure price movement, not '
+                             'quantity-weighted position profit.')
+
+
+def policy_selector(journal, container=st):
+    """MAE / MFE Accuracy: whether only recorded ticks measure a trade. Saved the moment it is chosen."""
     policy_key = key(journal, 'excursion-policy')
     st.session_state.setdefault(policy_key, journal.display_settings()['excursion_policy'])
     def save_policy():
         journal.set_excursion_policy(st.session_state[policy_key])
-    st.selectbox('MAE / MFE accuracy', ['ticks-only', 'best-available'],
-                 format_func=lambda p: 'Recorded ticks only' if p == 'ticks-only' else 'Allow labelled estimates',
-                 key=policy_key, on_change=save_policy,
-                 help='Tick-only excludes OHLC, proxies, platform-only reports, simulated replay and recorded capture gaps. '
-                      'Missing tick history means unavailable, not zero. The candle chart is independent.')
+    container.selectbox('MAE / MFE Accuracy', ['ticks-only', 'best-available'],
+                        format_func=lambda p: 'Recorded ticks only' if p == 'ticks-only' else 'Allow labelled estimates',
+                        key=policy_key, on_change=save_policy,
+                        help='Tick-only excludes OHLC, proxies, platform-only reports, simulated replay and recorded '
+                             'capture gaps. Missing tick history means unavailable, not zero. The candle chart is '
+                             'independent.')
 
 
 def excursion_unit(journal):
@@ -542,7 +585,8 @@ def link_state(profile: dict | None, status: dict | None, *, worker_error: str |
     if profile is None:
         return Link('Needs Attention', 'critical', 'No bridge file is being watched. Choose one under Bridge File below.')
     if not profile.get('enabled'):
-        return Link('Paused', 'neutral', 'Capture is switched off. Nothing is read until it is switched on again.')
+        return Link('Paused', 'neutral', 'Read Trades From MotiveWave is off, so nothing is read. The study keeps '
+                    'writing, and reading carries on from the same place once it is on again.')
     if worker_error:
         return Link('Needs Attention', 'critical', f'The background reader failed ({worker_error}) and is retrying.')
     heartbeat = status.get('heartbeat') or {}

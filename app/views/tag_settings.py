@@ -1,15 +1,51 @@
-"""Click-first, non-destructive tag and playbook management."""
+"""Tags, Playbooks & Checklists, a Setup page: click-first, non-destructive tag and playbook management, and the
+checklist editor. Running a checklist happens on Trades, in the selected trade's Checklist tab."""
 import streamlit as st
 
 import common
 import theme
 from mwjournal import tagging
+from views import checklists
+
+TABS = ('Tags', 'Categories', 'Playbooks', 'Checklists')
 
 
 def render(journal, rows):
-    theme.section('Tags & Playbooks', help='Categories such as Setup or Mindset hold reusable tags. Renaming and '
-                  'retiring never change a trade\'s history; only an unused tag or an empty category can be deleted.')
+    theme.section('Tags, Playbooks & Checklists', help='Categories such as Setup or Mindset hold reusable tags. '
+                  'Renaming and retiring never change a trade\'s history; only an unused tag or an empty category can '
+                  'be deleted. Checklists are built here and run on Trades, in a trade\'s Checklist tab.')
     library = journal.tag_library()
+    tags_tab, groups_tab, books_tab, checks_tab = common.tabs(TABS, common.key(journal, 'tag-settings-tabs'))
+    with tags_tab:
+        create(journal, library)
+        ordered = sorted(library['tags'], key=lambda id: (library['tags'][id]['retired'], library['tags'][id]['group'],
+                                                         library['tags'][id]['order']))
+        if ordered:
+            tag_editor(journal, library, ordered)
+        else:
+            st.info('No tags yet. Create one above.')
+    with groups_tab:
+        if library['groups']:
+            group_editor(journal, library)
+        else:
+            st.info('No categories yet. Create one under Tags.')
+        zones = common.timezone_choices(library['session_timezone'])
+        timezone = st.selectbox('Day-tag time zone', zones, index=zones.index(library['session_timezone']),
+                                key=common.key(journal, 'day-tag-zone'),
+                                help='A day tag belongs to the calendar date of entry in this zone, not to an '
+                                     'exchange session. Changing it does not move existing day reviews or tags.')
+        if timezone != library['session_timezone']:
+            journal.set_tag_timezone(timezone)
+            st.rerun()
+    with books_tab:
+        playbooks(journal, library)
+    if checks_tab.open:                        # the node editor is only drawn when its tab is open
+        with checks_tab:
+            checklists.render(journal, rows)
+
+
+def create(journal, library):
+    """A new category and a new tag, side by side."""
     with st.container(border=True):
         st.markdown('### Create')
         category_col, tag_col = st.columns(2)
@@ -32,53 +68,34 @@ def render(journal, rows):
                         st.rerun()
                     except ValueError as exc:
                         st.error(str(exc))
-    tags_tab, groups_tab, books_tab = st.tabs(['Tags', 'Categories', 'Playbooks'])
-    with tags_tab:
-        ordered = sorted(library['tags'], key=lambda id: (library['tags'][id]['retired'], library['tags'][id]['group'],
-                                                         library['tags'][id]['order']))
-        if ordered:
-            tag_editor(journal, library, ordered)
-        else:
-            st.info('No tags yet. Create one above.')
-    with groups_tab:
-        if library['groups']:
-            group_editor(journal, library)
-        else:
-            st.info('No categories yet. Create one above.')
-        zones = common.timezone_choices(library['session_timezone'])
-        timezone = st.selectbox('Day-tag time zone', zones, index=zones.index(library['session_timezone']),
-                                key=common.key(journal, 'day-tag-zone'),
-                                help='A day tag belongs to the calendar date of entry in this zone, not to an '
-                                     'exchange session. Changing it does not move existing day reviews or tags.')
-        if timezone != library['session_timezone']:
-            journal.set_tag_timezone(timezone)
-            st.rerun()
-    with books_tab:
-        books = library['playbooks']
-        choice = st.selectbox('Edit playbook', ['＋ New playbook', *books],
-                              format_func=lambda id: books[id]['name'] if id in books else '+ New playbook',
-                              key=common.key(journal, 'edit-playbook'))
-        old = books.get(choice, {})
-        with st.form(common.key(journal, 'playbook-editor-' + choice)):
-            name = st.text_input('Playbook name', old.get('name', ''), max_chars=64,
-                                 help='Choose the tags that fit within each category: any one of them will do. '
-                                      'Every category with a chosen tag must match; other categories are free. This '
-                                      'describes a setup, not a claim that it makes money.')
-            retired = st.checkbox('Retire playbook · keep its definition', value=old.get('retired', False))
-            rules = {}
-            for group, tags in tagging.ordered_groups(library, include_retired=True).items():
-                options = [t['id'] for t in tags]
-                selected = st.multiselect(group, options,
-                                           default=[id for id in old.get('rules', {}).get(group, []) if id in options],
-                                           format_func=lambda id: library['tags'][id]['name'])
-                if selected:
-                    rules[group] = selected
-            if st.form_submit_button('Save Playbook', type='primary'):
-                try:
-                    journal.save_playbook(name, rules, id=choice if choice in books else None, retired=retired)
-                    st.rerun()
-                except ValueError as exc:
-                    st.error(str(exc))
+
+
+def playbooks(journal, library):
+    books = library['playbooks']
+    choice = st.selectbox('Edit playbook', ['＋ New playbook', *books],
+                          format_func=lambda id: books[id]['name'] if id in books else '+ New playbook',
+                          key=common.key(journal, 'edit-playbook'))
+    old = books.get(choice, {})
+    with st.form(common.key(journal, 'playbook-editor-' + choice)):
+        name = st.text_input('Playbook name', old.get('name', ''), max_chars=64,
+                             help='Choose the tags that fit within each category: any one of them will do. '
+                                  'Every category with a chosen tag must match; other categories are free. This '
+                                  'describes a setup, not a claim that it makes money.')
+        retired = st.checkbox('Retire playbook · keep its definition', value=old.get('retired', False))
+        rules = {}
+        for group, tags in tagging.ordered_groups(library, include_retired=True).items():
+            options = [t['id'] for t in tags]
+            selected = st.multiselect(group, options,
+                                       default=[id for id in old.get('rules', {}).get(group, []) if id in options],
+                                       format_func=lambda id: library['tags'][id]['name'])
+            if selected:
+                rules[group] = selected
+        if st.form_submit_button('Save Playbook', type='primary'):
+            try:
+                journal.save_playbook(name, rules, id=choice if choice in books else None, retired=retired)
+                st.rerun()
+            except ValueError as exc:
+                st.error(str(exc))
 
 
 def tag_editor(journal, library, ordered):

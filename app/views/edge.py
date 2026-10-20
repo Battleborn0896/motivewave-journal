@@ -1,8 +1,9 @@
 """Stats: the headline numbers first, then charts of what the closed trades say. Descriptive, never a forecast.
 
-One row holds the page title, Filters and Customize; the numbers come straight after it. The equity
-curve counts trades along the bottom (1, 2, 3, ...) so nights and weekends take no room; a toggle
-puts it on the clock instead, in the display time zone.
+One row holds the page title, Filters (with the saved filter every page uses) and Customize; the numbers
+come straight after it, then a tab each for Overview, Compare, MAE / MFE and Runners, and Dashboards, your
+own pages of widgets, always last. The equity curve counts trades along the bottom (1, 2, 3, ...) so nights
+and weekends take no room; a toggle puts it on the clock instead, in the display time zone.
 """
 
 from __future__ import annotations
@@ -17,6 +18,7 @@ import streamlit as st
 import common
 import theme
 import runner_controls
+from views import preferences
 from common import money
 from mwjournal.analytics import cost_summary, grouped, summary
 from mwjournal.model import instrument_market
@@ -24,6 +26,7 @@ from mwjournal import units
 
 SEGMENTS = ['Market', 'Exact contract', 'Entry hour', 'Weekday', 'Direction', 'Followed my plan', 'Process rating']
 SECTIONS = ['Overview', 'Compare', 'MAE / MFE', 'Runners']
+DASHBOARDS = 'Dashboards'          # always the last tab, so Customize can never hide it
 AXES = {'trade': 'By Trade', 'time': 'By Date'}
 LABELS = {'closed': 'Exit', 'net': 'Net P&L', 'mae': 'MAE', 'mfe': 'MFE', 'max_qty': 'Size',
           'precision': 'Measured from', 'symbol': 'Instrument', 'setup': 'Setup', 'giveback': 'Giveback'}
@@ -33,26 +36,36 @@ COMPARE_HELP = ('Start with Trades, the sample size, then Average Trade, the net
                 'samples mislead.')
 
 
-def render(journal, rows) -> None:
-    every = [r for r in rows if r['status'] == 'closed' and r['net'] is not None]
+def render(journal, rows, *, every=None) -> None:
+    """`rows` have passed the saved filter; `every` has not, so a new saved filter can name any trade's details."""
+    every = rows if every is None else every
+    all_closed = [r for r in rows if r['status'] == 'closed' and r['net'] is not None]
     heading, filter_col, custom_col = st.columns([5, 1, 1], vertical_alignment='center')
     with filter_col.popover('Filters', width='stretch',
-                            help='Narrow the stats by market, date, account, tag, playbook or rating.'):
-        rows = common.filter_rows(journal, rows)
+                            help='Narrow the stats by market, date, account, tag, playbook or rating. The saved '
+                                 'filter here applies to every page.'):
+        rows = preferences.filter_menu(journal, rows, every)
     with custom_col.popover('Customize', width='stretch', help='Choose which tabs Stats shows, and their order.'):
         customize(journal)
     closed = [r for r in rows if r['status'] == 'closed' and r['net'] is not None]
     with heading:
         count = f'{len(closed)} closed trade{"" if len(closed) == 1 else "s"}'
-        theme.section('Stats', f'{len(closed)} of {len(every)} closed trades' if len(closed) != len(every) else count)
-    if not closed:
+        theme.section('Stats', f'{len(closed)} of {len(all_closed)} closed trades' if len(closed) != len(all_closed) else count)
+    # Without a closed trade there is nothing to count, but the dashboards (and their calendar) still open.
+    sections = journal.display_settings()['dashboard_sections'] if closed else []
+    if closed:
+        stat = summary(closed)
+        tiles(stat, closed[0]['currency'])
+    else:
         st.info('Statistics need at least one closed round trip with a known multiplier.')
+    labels = [*sections, DASHBOARDS]
+    panels = dict(zip(labels, common.tabs(labels, common.key(journal, 'analytics-tabs'))))
+    if panels[DASHBOARDS].open:                # drawn only when open: every widget is a chart of its own
+        from views import dashboard
+        with panels[DASHBOARDS]:
+            dashboard.render(journal, rows)
+    if not closed:
         return
-    stat = summary(closed)
-    currency = closed[0]['currency']
-    tiles(stat, currency)
-    sections = journal.display_settings()['dashboard_sections']
-    panels = dict(zip(sections, st.tabs(sections, key=common.key(journal, 'analytics-tabs'))))
     frame = pd.DataFrame(closed).sort_values('closed')
     if 'Overview' in panels:
         with panels['Overview']:
@@ -74,8 +87,8 @@ def render(journal, rows) -> None:
 def customize(journal) -> None:
     with st.form(common.key(journal, 'dashboard-preferences'), border=False):
         sections = st.multiselect('Tabs, in order', SECTIONS, default=journal.display_settings()['dashboard_sections'],
-                                  help='Remove a tab to hide it; add it again to put it at the end. '
-                                       'Saved separately for Live and Replay.')
+                                  help='Remove a tab to hide it; add it again to put it at the end. Dashboards '
+                                       'is always last. Saved separately for Live and Replay.')
         if st.form_submit_button('Save Tabs'):
             try:
                 journal.set_dashboard_sections(sections)
@@ -236,8 +249,8 @@ def excursion(journal, closed):
     shown = pd.DataFrame(common.display_excursion_rows(journal, closed))
     measured = shown[shown.display_mfe.notna() & shown.display_mae.notna()].copy()
     st.caption(f'{len(measured)} of {len(closed)} closed trades measured',
-               help='Only trades with a price path that meets your MAE / MFE accuracy and unit settings (Setup → '
-                    'Display). Unavailable values are left out, never counted as zero.')
+               help='Only trades with a price path that meets your MAE / MFE Units and Accuracy (Setup and Setup → '
+                    'Advanced). Unavailable values are left out, never counted as zero.')
     if measured.empty:
         st.info('No MAE / MFE values in these units yet. They need recorded prices; R also needs a planned risk, '
                 'and ticks need a known tick size.')

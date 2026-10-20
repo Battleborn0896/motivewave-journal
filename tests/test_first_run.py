@@ -172,7 +172,7 @@ def test_options_hold_the_chart_settings_and_merging_next_to_filters(home):
     journal.ingest([fill('n1', 'buy', 1, 5010, '2026-10-07T15:10:00Z'), fill('n2', 'sell', 1, 5012, '2026-10-07T15:12:00Z')])
     app = open_app()
     popovers = [p.proto.popover.label for p in app.main.get('popover')]
-    assert popovers[:2] == ['Filters', 'Options']
+    assert popovers[3:5] == ['Filters', 'Options']                 # after the session tools' three menus
     assert not any(label in popovers for label in ('More', 'Chart settings', 'Trade filters'))
     assert widget(app.selectbox, 'Chart price source').value == 'motivewave-bars:1m'
     assert widget(app.selectbox, 'Chart price source').format_func('motivewave-bars:1m') == 'Platform candles'
@@ -278,7 +278,7 @@ def test_starter_tags_can_be_deleted_in_settings_and_used_ones_are_kept(home):
 
 def test_the_display_time_zone_is_chosen_once_in_settings_for_live_and_replay(home):
     app = open_app('General')
-    choice = widget(app.selectbox, 'Display time zone')
+    choice = widget(app.selectbox, 'Time Zone')
     assert choice.value == NY and not any(s.label == 'Chart timezone' for s in app.selectbox)
     choice.set_value('Asia/Tokyo').run()                    # saved the moment it is chosen
     assert not app.exception

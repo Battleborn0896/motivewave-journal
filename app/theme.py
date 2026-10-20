@@ -71,6 +71,9 @@ html, body, [data-testid="stAppViewContainer"], .stApp {{ background:{PAGE}; fon
 [data-stale="true"], .stale-element, [data-testid="stElementContainer"][data-stale] {{ opacity:1 !important;
     transition:none !important; filter:none !important; }}
 .block-container {{ padding:0.8rem 1.6rem 3rem 1.6rem !important; max-width:none !important; }}
+/* An element that only carries a stylesheet takes no room. Without this each one adds a row gap at the top of
+   the page, and the trade list starts lower than it needs to. Its styles apply all the same. */
+[data-testid="stElementContainer"]:has([data-testid="stMarkdownContainer"] > style:only-child) {{ display:none; }}
 [data-testid="stSidebar"] {{ background:{SIDEBAR}; border-right:1px solid {BORDER}; }}
 [data-testid="stSidebar"] {{ min-width:230px !important; max-width:230px !important; }}
 [data-testid="stSidebarHeader"] {{ height:32px; min-height:32px; }}
@@ -120,9 +123,23 @@ h3 {{ font-size:15px !important; font-weight:600 !important; color:{INK} !import
 [class*="st-key-tile-"][class*="-negative"] [data-testid="stMetricValue"] p {{ color:{DOWN}; }}
 .st-key-cost-tiles [data-testid="stMetricValue"] {{ font-size:17px; }}
 .st-key-cost-tiles [data-testid="stMetricLabel"] p {{ font-size:12px; }}
-/* Setup's page buttons, in three titled groups, sit close together. */
-[class*="st-key-setup-group-"] [data-testid="stVerticalBlock"] {{ gap:8px; }}
+/* Setup's three pages: a tile each, its title a link, the tabs it opens small links under it. */
+[class*="st-key-setup-page-"] {{ gap:4px !important; }}
+[class*="st-key-setup-page-"] [data-testid="stVerticalBlock"] {{ gap:2px; }}
+[class*="st-key-setup-page-"] [data-testid="stHorizontalBlock"] {{ gap:4px 14px !important; }}
+[class*="st-key-setup-page-"] .stButton button {{ padding:0 !important; min-height:0 !important; justify-content:flex-start; }}
+[class*="st-key-setup-open-"] button p {{ font-size:14.5px; font-weight:650; color:{INK} !important; }}
+[class*="st-key-setup-open-"] button:hover p {{ color:{ACCENT} !important; }}
+[class*="st-key-setup-tab-"] button p {{ font-size:12.5px; color:{INK_2} !important; }}
+[class*="st-key-setup-tab-"] button:hover p {{ color:{ACCENT} !important; }}
+.st-key-setup-fine-print [data-testid="stCaptionContainer"], .st-key-setup-fine-print p {{ font-size:11px !important;
+    line-height:1.45; }}
+.mwj-subsection {{ margin:10px 0 2px; color:{MUTED}; font-family:{FONT}; font-size:11px; font-weight:600;
+                  letter-spacing:.1em; text-transform:uppercase; }}
 div[data-testid="stExpander"] details {{ background:{SURFACE}; border:1px solid {BORDER}; border-radius:6px; }}
+/* Inside a menu (Filters: More Filters, Save a Filter) a folding section keeps the menu's own background: on the
+   panel colour its text boxes and pickers, which are that colour too, would have no visible edge. */
+[data-testid="stPopoverBody"] div[data-testid="stExpander"] details {{ background:{PAGE}; }}
 div[role="radiogroup"] label p {{ font-size:13px; }}
 [data-testid="stButtonGroup"] button {{ font-family:{FONT}; font-size:12.5px; border-radius:4px; {TABULAR}; }}
 .stButton button, .stFormSubmitButton button, .stDownloadButton button, .stLinkButton a {{ border-radius:4px; }}
@@ -224,6 +241,11 @@ def section(title: str, hint: str = '', *, help: str | None = None) -> None:
                 unsafe_allow_html=True, help=help)
 
 
+def subsection(title: str, *, help: str | None = None) -> None:
+    """A small plain heading inside a section, such as Advanced: never a menu that folds."""
+    st.markdown(f"<div class='mwj-subsection'>{html.escape(title)}</div>", unsafe_allow_html=True, help=help)
+
+
 def chip(text: str, tone: str = 'neutral', *, state: str | None = None, big: bool = False) -> str:
     """A status word with its dot. The word carries the meaning; the colour only repeats it."""
     colour = STATUS.get(tone, MUTED)
@@ -231,17 +253,17 @@ def chip(text: str, tone: str = 'neutral', *, state: str | None = None, big: boo
             f"style='background:{colour}26;color:{colour};border:1px solid {colour}55'>{html.escape(text)}</span>")
 
 
-def status(label: str, tone: str, state: str, notes=(), *, big: bool = False) -> None:
+def status(label: str, tone: str, state: str, notes=(), *, big: bool = False, help: str | None = None) -> None:
     """A status chip and the lines under it, as one element however many lines there are.
 
     The status is drawn by fragments that redraw themselves every few seconds. A fragment that draws
     fewer elements than last time can leave the old ones on screen (seen in the sidebar: 'Connected'
     above the note of the state before it), so what varies is kept inside a single element.
-    `notes` are (text, is_warning) pairs.
+    `notes` are (text, is_warning) pairs; `help` is the ? beside it.
     """
     st.markdown(chip(label, tone, state=state, big=big) + ''.join(
         f"<div class='mwj-status-note{' warn' if warn else ''}'>{html.escape(text)}</div>" for text, warn in notes),
-        unsafe_allow_html=True)
+        unsafe_allow_html=True, help=help)
 
 
 # ---------------------------------------------------------------- charts

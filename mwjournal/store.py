@@ -693,6 +693,65 @@ class Journal(Workspace):
                                                      (symbol.upper(),))]
         return [s for s in sources if trade is None or allows_source(trade, s)]
 
+    def recent_contracts(self, *, now: dt.datetime | None = None, within=dt.timedelta(hours=1)) -> list[str]:
+        """The exact contracts the study recorded prices or fills for recently, traded ones first.
+
+        Only what the study wrote counts: 'motivewave-' prices and 'motivewave-native:' fills, never an
+        import. Live times are wall-clock times, so live means within `within` of now. Replay times are the
+        replay's own clock and a rewound run starts over, so replay means the run the study wrote last, within
+        `within` of that run's newest price or fill. Prices are found through the (symbol, source, ts) index
+        one contract at a time, so a journal of millions of ticks answers as fast as an empty one."""
+        replay = self.dataset == 'replay'
+        with self.connect() as db:
+            run = None
+            if replay:
+                row = db.execute("SELECT source FROM prices WHERE source LIKE 'motivewave-replay:%' "
+                                 'ORDER BY rowid DESC LIMIT 1').fetchone()
+                if row:
+                    run = row[0][len('motivewave-replay:'):].split(':', 1)[0]
+                else:
+                    row = db.execute("SELECT json_extract(payload, '$.provider') FROM executions "
+                                     "WHERE json_extract(payload, '$.provider') LIKE 'motivewave-native:%:replay:%' "
+                                     'ORDER BY rowid DESC LIMIT 1').fetchone()
+                    run = row[0].rsplit(':replay:', 1)[1] if row else None
+                if not run:
+                    return []
+            priced, last = {}, ''
+            for _ in range(500):                       # one indexed step per contract, never a scan
+                symbol = db.execute('SELECT min(symbol) FROM prices WHERE symbol>?', (last,)).fetchone()[0]
+                if symbol is None:
+                    break
+                last, source = symbol, ''
+                while True:
+                    source = db.execute('SELECT min(source) FROM prices WHERE symbol=? AND source>?',
+                                        (symbol, source)).fetchone()[0]
+                    if source is None:
+                        break
+                    ours = (source.startswith(f'motivewave-replay:{run}:') if replay
+                            else source.startswith('motivewave-') and not source.startswith('motivewave-replay:')
+                            and source != 'motivewave-ticks:history')       # a backfill of a past window
+                    if ours:
+                        newest = db.execute('SELECT max(ts) FROM prices WHERE symbol=? AND source=?',
+                                            (symbol, source)).fetchone()[0]
+                        if newest and newest > priced.get(symbol, ''):
+                            priced[symbol] = newest
+            filled = {}
+            for symbol, provider, ts in db.execute(
+                    "SELECT json_extract(payload, '$.symbol'), json_extract(payload, '$.provider'), "
+                    "json_extract(payload, '$.ts') FROM executions "
+                    "WHERE json_extract(payload, '$.provider') LIKE 'motivewave-native:%'"):
+                if (provider.endswith(f':replay:{run}') if replay else ':replay:' not in provider) and ts:
+                    filled[symbol] = max(filled.get(symbol, ''), timestamp(ts))
+        stamps = {symbol: instant(ts) for symbol, ts in priced.items()}
+        for symbol, ts in filled.items():
+            stamps[symbol] = max(stamps.get(symbol, instant(ts)), instant(ts))
+        if not stamps:
+            return []
+        clock = max(stamps.values()) if replay else (now or dt.datetime.now(dt.timezone.utc))
+        recent = {symbol for symbol, at in stamps.items() if at >= clock - within}
+        traded = sorted((s for s in recent if s in filled), key=lambda s: filled[s], reverse=True)
+        return traded + sorted(recent - set(traded))
+
     def trade_clock(self, trade):
         """Open replay positions advance on recorded replay time, never today's wall clock."""
         if trade.closed or ':replay:' not in trade.provider:

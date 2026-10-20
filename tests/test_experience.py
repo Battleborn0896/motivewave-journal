@@ -73,15 +73,15 @@ def test_tick_policy_uses_ticks_not_platform_reports_and_excludes_reported_captu
 def test_accuracy_control_is_distinct_from_units_and_propagates_to_headers_and_analytics(home):
     journal = seed_preview(home)
     app = open_app('General')
-    assert widget(app.selectbox, 'MAE / MFE accuracy').value == 'ticks-only'
+    assert widget(app.selectbox, 'MAE / MFE Accuracy').value == 'ticks-only'
     show(app, 'Trades')
     assert widget(app.metric, 'MAE').value == widget(app.metric, 'MFE').value == '—'
     assert said(app.caption, 'candle estimates are excluded')
-    display_setting(app, 'MAE / MFE units', 'ticks')
+    display_setting(app, 'MAE / MFE Units', 'ticks')
     assert widget(app.metric, 'MFE').value == '—'
-    display_setting(app, 'MAE / MFE accuracy', 'best-available')
+    display_setting(app, 'MAE / MFE Accuracy', 'best-available')
     assert not app.exception and widget(app.metric, 'MFE').value == '12.00 ticks'
-    display_setting(app, 'MAE / MFE accuracy', 'ticks-only', back='Edge')
+    display_setting(app, 'MAE / MFE Accuracy', 'ticks-only', back='Edge')
     assert said(app.caption, '0 of 1 closed trades measured')
     assert widget(app.metric, 'Net P&L').value == '+$242.00'
     assert journal.best_metric(journal.trades()[0])['precision'] == 'estimated-bars'
@@ -93,12 +93,12 @@ def test_ticks_survive_unit_change_and_selected_trade_remains_visible_with_list(
     app = open_app()
     assert listed(app) == [journal.trades()[0].id]
     assert widget(app.metric, 'MFE').value != '—'
-    display_setting(app, 'MAE / MFE units', 'points')
+    display_setting(app, 'MAE / MFE Units', 'points')
     assert widget(app.metric, 'MFE').value == '4.00 pts' and listed(app) == [journal.trades()[0].id]
-    display_setting(app, 'MAE / MFE units', 'ticks')
+    display_setting(app, 'MAE / MFE Units', 'ticks')
     assert widget(app.metric, 'MFE').value == '16.00 ticks'
     show(app, 'General')
-    assert widget(app.selectbox, 'MAE / MFE accuracy').value == 'ticks-only'
+    assert widget(app.selectbox, 'MAE / MFE Accuracy').value == 'ticks-only'
 
 
 def test_tag_manager_rename_color_retirement_and_exclusive_group_work_on_existing_trade(home):
@@ -156,7 +156,7 @@ def test_dashboard_preferences_persist_per_environment_and_empty_selection_is_re
     app = open_app('Edge')
     widget(app.multiselect, 'Tabs, in order').set_value(['Compare', 'Overview'])
     press(app, 'Save Tabs')
-    assert [t.label for t in app.tabs] == ['Compare', 'Overview']
+    assert [t.label for t in app.tabs] == ['Compare', 'Overview', 'Dashboards']        # Dashboards is always last
     assert Journal().display_settings()['dashboard_sections'] == ['Compare', 'Overview']
     assert Journal(dataset='replay').display_settings()['dashboard_sections'] == ['Overview', 'Compare', 'MAE / MFE', 'Runners']
     widget(app.multiselect, 'Tabs, in order').set_value([])

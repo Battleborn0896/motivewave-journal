@@ -2,8 +2,9 @@
 
 Only the frame lives here: page setup, and a sidebar that holds nothing but the logo, the Live /
 Replay switch, the three pages and the study's connection badge (a journal picker or a currency picker
-appears only when there is a choice to make). Every setting lives on Setup. What views share is in
-common.py; each view is one module in views/.
+appears only when there is a choice to make). Trades holds the session tools and the Daily Report Card,
+Stats the dashboards, and both their Filters menus the saved filter; Setup holds the settings, tags,
+ratings and data pages. What views share is in common.py; each view is one module in views/.
 """
 
 from __future__ import annotations
@@ -23,13 +24,11 @@ import common
 import runtime
 import theme
 from mwjournal import paths
-from views import connection, daily, edge, export, importing, trades, tag_settings, dashboard, checklists, session, ratings, preferences, journal_settings, setup
+from views import data, edge, preferences, ratings, setup, tag_settings, trades
 from mwjournal import journals, merging
 from mwjournal.workspace import filter_sample
 
-VIEWS = dict(zip(common.VIEWS, (trades, edge, importing, connection, daily, export)))
-VIEWS.update(Tags=tag_settings, Ratings=ratings, Journals=journal_settings, General=preferences, Dashboard=dashboard, Checklists=checklists,
-             **{'Live session': session})
+SETUP_PAGES = {'Tags': tag_settings, 'Ratings': ratings}         # Data is drawn with the capture journal too
 ENVIRONMENTS = {'Live': 'live', 'Replay': 'replay'}
 SHOWN_KEY, SEEN_KEY = 'journal-view-shown', 'journal-seen'
 
@@ -61,12 +60,16 @@ def open_setup() -> None:
 
 def keep_view() -> None:
     """Clicking the selected view again clears the control; the journal still shows that view. Choosing
-    Setup in the sidebar, or choosing it again, always shows its first page."""
+    Setup in the sidebar, or choosing it again, always shows its first page; choosing Trades shows the
+    selected trade rather than a Daily Report Card."""
     if st.session_state.get(common.VIEW_KEY) not in common.PRIMARY_VIEWS:
         previous = st.session_state.get(SHOWN_KEY, 'Trades')
         st.session_state[common.VIEW_KEY] = previous if previous in common.PRIMARY_VIEWS else 'Trades'
     if st.session_state[common.VIEW_KEY] == 'Settings':
         st.session_state[common.TOOL_KEY] = setup.HOME
+    elif st.session_state[common.VIEW_KEY] == 'Trades':
+        for name in [k for k in st.session_state if str(k).startswith(trades.REPORT + '-')]:
+            st.session_state[name] = False
 
 
 with st.sidebar:
@@ -90,8 +93,9 @@ if capture is not None:
         with st.sidebar:
             selected_journal = st.selectbox('Local journal', [None, *active_journals], key=named_key,
                                             format_func=lambda id: active_journals[id]['name'] if id else 'All captures',
-                                            help='A named journal from Setup → Journals & Accounts, with its own '
-                                                 'reviews and stats. All captures is everything the study recorded.')
+                                            help='A named journal from Setup → Data → Journals & Accounts, with '
+                                                 'its own reviews and stats. All captures is everything the study '
+                                                 'recorded.')
     journal = capture
     if selected_journal:
         try:
@@ -133,7 +137,7 @@ with st.sidebar:
         with st.container(key='connection-badge'):
             badge(dataset, selected_journal)
             st.button('Open Setup', key='connection-badge-open', on_click=open_setup,
-                      help='The study connection, the three setup steps and every setting.')
+                      help='Whether the study is recording, the one step to take if it is not, and every setting.')
 if journal is None:
     st.stop()
 
@@ -141,24 +145,25 @@ for pending, target in [('dashboard-next', 'dashboard-page'), ('checklist-next',
     if common.key(journal, pending) in st.session_state:
         st.session_state[common.key(journal, target)] = st.session_state.pop(common.key(journal, pending))
 saved_filters = journal.workspace()['filters']
-global_filter = preferences.chosen_filter(journal, saved_filters)      # chosen under Setup → Display
-every_row = rows                           # the filter editor on Setup offers every account, contract and tag
+global_filter = preferences.chosen_filter(journal, saved_filters)      # chosen in Filters on Trades or Stats
+every_row = rows                           # saving a new filter offers every account, contract and tag
 if global_filter:
     rows = filter_sample(rows, saved_filters[global_filter])
     st.caption(common.md(f'Saved filter: {global_filter}'),
                help='Only trades this saved filter keeps are shown on every page. Choose All trades under '
-                    'Setup → Display to see everything.')
+                    'Filters on Trades or Stats to see everything.')
 
 if dataset == 'replay':
     st.info('Replay journal · its own trades, reviews and stats. The study adds real ticks to each replay trade '
             'once it is flat; prices built from bars are marked simulated.')
 if view == 'Settings':
     def tool(page):
-        target = capture if page == 'Connection' and selected_journal else journal
-        target_rows = common.rows_for(capture) if target is capture else rows
-        VIEWS[page].render(target, target_rows)
+        if page == 'Data':                 # its Connection tab belongs to the environment, not a named journal
+            data.render(journal, rows, capture=capture if selected_journal else None)
+        else:
+            SETUP_PAGES[page].render(journal, rows)
     setup.render(journal, rows, tool=tool, display=lambda target, _: preferences.render(target, every_row))
 elif view == 'Analytics':
-    VIEWS['Edge'].render(journal, rows)
+    edge.render(journal, rows, every=every_row)
 else:
-    VIEWS[view].render(journal, rows)
+    trades.render(journal, rows, every=every_row)

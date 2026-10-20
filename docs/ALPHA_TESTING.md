@@ -62,7 +62,7 @@ with missing prices, recorded capture gaps or ambiguous OHLC stop ordering.
 
 - macOS or Windows version and CPU architecture
 - MotiveWave version
-- Journal app version and study version shown under Connection details
+- Journal app version and study version, from the About line at the bottom of Setup
 - Live simulation or Replay, plus whether Replay used real tick data
 - Exact contract (for example `NQZ6`) and the chart type/timeframe
 - Steps to reproduce and what was expected

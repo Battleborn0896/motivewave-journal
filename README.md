@@ -7,10 +7,39 @@ Live/paper and replay have separate databases. No routine CSV export/import is r
 MotiveWave Journal is an independent open-source project. It is not affiliated with, endorsed by or
 supported by MotiveWave Software.
 
+## What's new in 0.4.5: a short Setup, and tools where they are used
+
+Setup now holds only setup. When the study is recording it is one green line, for example
+*Connected · recording NQZ6, ESZ6 · study 0.3.3* (the contracts the study wrote prices or fills for in
+the last hour). Only when something is missing does a step appear, and only the one that is needed:
+install the study, add it to a chart, update an older study (Install, then restart MotiveWave), or a
+study that has gone quiet. Below it are **Time Zone** and **MAE / MFE Units**, then accuracy and hiding
+weekends under a small **Advanced** heading, then three pages: **Tags, Playbooks & Checklists**,
+**Rating Systems** and **Data** (Import Trades, Export & Backup, Journals & Accounts, Connection). Each of
+their tabs has its own link on Setup, so every page is still two clicks from the sidebar. About is one line:
+app version, study version and data folder.
+
+- **Daily Report Card**: click a day's header in the Trades list. The card takes the trade's place for that
+  date; **← Back to Trades**, or any trade in the list, brings the trade back. A day in a dashboard
+  calendar opens it too.
+- **Checklists** run in the selected trade's new **Checklist** tab; they are built under Setup → Tags,
+  Playbooks & Checklists.
+- **Session tools** are a bar at the top of Trades: a large count with play, pause and stop and a duration
+  box, and small **Check-Ins**, **Drafts** (pre-trade drafts) and **Checklist** (a session checklist)
+  menus. When the timer runs out, one click on a tag is the check-in.
+- **Dashboards** are the last tab of Stats, always there; the Stats filters narrow them too.
+- The **saved filter** and **Save a Filter** are in the Filters menus of Trades and Stats, and still apply
+  on every page.
+- Connection's **Capture enabled** switch is now **Read Trades From MotiveWave**, under Advanced at the
+  bottom of Data → Connection. It is on unless you switched it off.
+
+Nothing in your journals changes, and the study stays 0.3.3.
+
 ## What's new in 0.4.4: ticks that actually arrive, and a study with nothing to set
 
 This release comes with study **0.3.3**. Install it from **Setup → Install MotiveWave Study** and
-restart MotiveWave; Setup says so in one line while MotiveWave still runs an older study.
+restart MotiveWave; Setup says so in one line while MotiveWave still runs an older study. (Since 0.4.5 that
+button is in Setup's **Update the Study** step, and always under Data → Connection.)
 
 - **Live and replay ticks are recorded.** Study 0.3.2 and earlier declared that they *could* take
   MotiveWave's per-tick updates but not that they *needed* them. MotiveWave then never sent a single
@@ -86,8 +115,10 @@ tags, categories and reviews are kept exactly as they are.
 
 ## Using the journal
 
-The sidebar has three pages: **Trades**, **Stats** and **Setup**. Every other page (dashboards,
-the Daily Report Card, session tools, checklists, tags, imports, backups) is one click away on Setup.
+The sidebar has three pages: **Trades**, **Stats** and **Setup**. Trades holds the session tools (the bar
+at the top), the Daily Report Card (click a day's header) and each trade's checklist; Stats holds the
+dashboards (its last tab); Setup holds tags and checklists, rating systems, and data (imports, backups,
+journals, the connection), each two clicks from the sidebar.
 The trade list stays on the left while the selected trade's chart and tags stay on the right.
 Click a row, or use Prev / Next; no separate opening/back-navigation step is needed.
 **Chart & Tags** puts the chart and a grouped, clickable tagging panel side by side. Click a tag to
@@ -95,15 +126,15 @@ toggle it; changes save automatically. **+ Tag** creates a reusable tag and appl
 trade; **+ Category** creates a category. **More Tagging Tools → Copy Tags From Another Trade** adds
 another trade's tags without replacing existing tags or notes. Day tags you explicitly select are
 inherited by trades opened on that local calendar date; otherwise no trade is automatically tagged.
-Setup → Connection also lets you pick a captured instrument instead of retyping its symbol.
+Setup → Data → Connection also lets you pick a captured instrument instead of retyping its symbol.
 **Notes → Use saved setup** applies an existing setup/playbook name in one selection;
 new setup names can still be entered normally.
 
-**MAE / MFE units** is under **Setup → Display**: choose account currency, points, ticks or R. The
+**MAE / MFE Units** is on **Setup**: choose account currency, points, ticks or R. The
 preference is remembered independently for Live and Replay, and applies to the trade list, detail
 cards, excursion plots and runner views. Actual net P&L is unchanged.
 
-**MAE / MFE accuracy** is a separate control. **Recorded ticks only** is the default: OHLC bounds,
+**MAE / MFE Accuracy** is a separate control, under Setup's **Advanced** heading. **Recorded ticks only** is the default: OHLC bounds,
 proxies, platform-only reports, simulated replay and sources with reported capture gaps do not
 qualify. Missing qualifying ticks show unavailable, not zero. **Allow labelled estimates** is an
 explicit opt-in. One-minute candles can still be used as chart context without estimating MAE/MFE.
@@ -115,7 +146,7 @@ measurement alternatives; summary excursions/CSV follow the accuracy policy in a
   Scale-ins update that average; partial-exit realised profit is not added to price movement.
 - Ticks: those points divided by the contract's confirmed minimum price increment. Outright
   ES/MES/NQ/MNQ are detected automatically; other symbols need a one-time size in MAE/MFE or
-  Setup → Connection. Unknown sizes stay unavailable, not guessed. Average entries can produce fractional ticks.
+  Setup → Data → Connection. Unknown sizes stay unavailable, not guessed. Average entries can produce fractional ticks.
 - R: whole-position currency excursion divided by saved **initial total planned risk**. Missing
   risk stays unavailable, not zero.
 
@@ -125,15 +156,15 @@ cannot safely be divided by an arbitrary size to invent a price path. Source qua
 replay simulation and capture-gap warnings remain visible. Points and currency can therefore select
 different measurement sources. Points remain available without a cash multiplier; currency/R do not.
 
-Stats uses four in-place tabs: **Overview** for cumulative results, **Compare** for tag/setup or
-market/time comparisons, **MAE / MFE** for price/position excursions, and **Runners** for the separate
-post-exit hypothesis. Tables lead with sample count and average net result per trade. Comparisons
+Stats uses in-place tabs: **Overview** for cumulative results, **Compare** for tag/setup or
+market/time comparisons, **MAE / MFE** for price/position excursions, **Runners** for the separate
+post-exit hypothesis, and **Dashboards**, always last. Tables lead with sample count and average net result per trade. Comparisons
 are descriptions of your recorded sample, not proof of an edge. **Customize** saves the
-visible tabs and their order per environment. Filters support all/any selected tags, excluded
+visible tabs and their order per environment (Dashboards always stays). Filters support all/any selected tags, excluded
 tags, direction, process rating and playbook combinations. Required historical tag aliases still
 resolve after a rename; unknown required names match nothing, not everything.
 
-**Setup → Tags & Playbooks** edits names, colors, group membership, order and availability on
+**Setup → Tags, Playbooks & Checklists** edits names, colors, group membership, order and availability on
 trades/days, and deletes a tag or category that nothing uses. Stable tag IDs and aliases preserve historical associations when renamed. Retirement
 hides a tag from new choices without deleting its history; unretire it to restore the choice.
 Exclusive groups allow one current choice; enabling exclusivity does not erase historical conflicts.
@@ -153,7 +184,7 @@ The outright index tick defaults follow CME's [Micro equity product overview](ht
 and [MNQ specifications](https://www.cmegroup.com/markets/equities/nasdaq/micro-e-mini-nasdaq-100.contractSpecs.html).
 These are not spread/option specifications; contract-specific overrides are stored separately.
 
-Use the in-place **Notes** tab and the **More** tab (MAE / MFE, Executions, Runner, Checklists)
+Use the in-place **Notes** and **Checklist** tabs and the **More** tab (MAE / MFE, Executions, Runner)
 instead of scrolling through a long stacked page. Setup/notes autosave when leaving the field;
 planned risk/SL/TP use **Save Plan**. **Prev / Next** reviews adjacent trades while
 the list remains visible. A tag edit that removes the current trade from your filters keeps it
@@ -183,13 +214,13 @@ no rollover price gaps are silently adjusted, and one expiry's ticks never subst
 
 ## Dashboard and session workflows (0.3)
 
-**Setup → Dashboards → Customize** creates/clones/renames pages, chooses 1–3 columns, adds/edits/removes
+**Stats → Dashboards → Customize Page** creates/clones/renames pages, chooses 1–3 columns, adds/edits/removes
 and reorders widgets. Summary, equity, drawdown, calendar, comparisons, distributions, MAE/MFE,
 tag scores, ratings, radar, trades and custom-statistics widgets are independently configurable.
 The default uses two independently stacked columns so the calendar doesn't push the equity curve
 below an unnecessarily tall row. Global saved filters, page filters and widget filters intersect;
 they never modify captured trades. Saved tag rules use stable identities. Calendar buttons open
-the exact day's Report Card. **Setup → Display** can hide weekends and sets the display time zone.
+the exact day's Report Card on Trades. **Setup** sets the time zone, and hides weekends under Advanced.
 
 Tag scores are signed values configured on each tag. A trade's score is the sum of its selected
 tag scores; a widget can restrict the contributing tags. **Setup → Rating Systems** creates
@@ -197,18 +228,20 @@ weighted tag criteria, optionally applicable only when a playbook matches. Ratin
 weight / applicable weight × 100, or unavailable when no criterion applies. Manual stars stay
 independent. These are process measures, not P&L, forecasts, or claims of Tradecraft's exact formula.
 
-**Checklists** contains an offline drag-and-connect node canvas: questions, answers, pass-through
+**Setup → Tags, Playbooks & Checklists → Checklists** contains an offline drag-and-connect node canvas: questions, answers, pass-through
 and counter nodes; selection, duplication, color/text/tag edits, alignment, start-node choice,
 undo/redo, and explicit save. Questions may branch only to answers. Answer loops must reach a
 manual question; automatic endless loops are rejected. Definitions have JSON export/import and
-non-destructive local versions. Runs in trade review or Session tools retain their definition
-snapshot, answers, counters and collected tags. Applying those tags is explicit; no checklist can
+non-destructive local versions. Runs retain their definition
+snapshot, answers, counters and collected tags: a trade's run in its Checklist tab, a session run from the
+Checklist menu above the trade list. Applying those tags is explicit; no checklist can
 place, modify or block an order. This editor is not pixel/shortcut/format compatible with CheckMate.
 
-**Session tools** provides an optional repeating check-in timer. Groups are configured by clicking;
-check-ins are logged to the session or an explicitly selected captured position. Timer state is not
+**Session tools**, the bar at the top of Trades, provide an optional repeating check-in timer (play, pause,
+stop and a duration in minutes). Groups are chosen under **Check-Ins**; when the timer runs out, one click
+on a tag is the check-in, logged to the session or an explicitly selected open position. Timer state is not
 persisted or restarted automatically, and there are no background notifications or sounds.
-Pre-trade drafts are not fake executions. An armed draft needs a precise provider/account/exact
+Pre-trade drafts (the **Drafts** menu) are not fake executions. An armed draft needs a precise provider/account/exact
 contract and a market-clock window, at most 24 hours. Only newly captured trades qualify. Ambiguous
 matches attach nothing; cancellation preserves the draft record. Existing reviewed groups, notes
 and risk take precedence. Reconciliation runs after bridge polling, not during a read-only render.
@@ -344,8 +377,8 @@ previous copy and asks for a MotiveWave restart. Manual alternative: use **Study
 Import**. Then add **Journal → MotiveWave Journal** to each exact contract
 chart you trade. There is nothing to set: every setting is under the study's **Advanced** tab and the
 defaults are what the app expects. The app starts watching both files by itself.
-Check **Setup** in the app: it should change from Waiting For Study to Connected. To install the
-study again after an app update, use **Setup → Connection → Install MotiveWave Study**.
+Check **Setup** in the app: it should change from Waiting For Study to one green Connected line. To install the
+study again after an app update, use **Setup → Data → Connection → Install MotiveWave Study**.
 See [MotiveWave's import instructions](https://docs.motivewave.com/knowledge-base/study/add-a-custom-study).
 
 Use `MOTIVEWAVE_SDK` for a non-default SDK path and `JAVA_HOME` for the JDK. No SDK/native platform
@@ -364,7 +397,7 @@ Default data folders:
 The study writes `bridge/motivewave.ndjson` and `bridge/motivewave.replay.ndjson`; databases are
 `trades.sqlite3` and `replay/trades.sqlite3`. Set `MWJ_HOME` to override the folder, but a desktop
 MotiveWave will not necessarily inherit your terminal environment. If overriding only the app,
-copy the live bridge path shown in Connection into the study's File setting (under Advanced).
+copy the live bridge path shown in Data → Connection into the study's File setting (under Advanced).
 
 ## Tick accuracy and replay
 

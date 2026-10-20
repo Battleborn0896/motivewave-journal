@@ -1,4 +1,7 @@
-"""Daily review: one saved note per trading day and timezone, beside that day's result."""
+"""The Daily Report Card: one saved grade and note per trading day and time zone, beside that day's result.
+
+It opens on Trades, in place of a trade, from a day's header in the trade list or a day in a dashboard
+calendar. Its own date box picks any other day."""
 
 from __future__ import annotations
 
@@ -11,6 +14,7 @@ import common
 import tag_controls
 import theme
 from common import money
+from mwjournal import tagging
 from mwjournal.analytics import summary
 
 
@@ -23,9 +27,12 @@ def render(journal, rows) -> None:
                             help='Which calendar day a trade belongs to. Each day and time zone keeps its own '
                                  'saved review.')
     days = [pd.Timestamp(r['opened']).tz_convert(timezone).date() for r in rows]
-    # Opens on the latest day that has trades: in Replay that day is rarely today.
-    date = c1.date_input('Trading day', max(days) if days else dt.datetime.now().date(),
-                         key=common.key(journal, 'review-day'))
+    # Opens on the day that was clicked, else the latest day that has trades: in Replay that is rarely today.
+    # The day lives in session state rather than in the box's default, so a clicked day is never overridden.
+    day_key = common.key(journal, 'review-day')
+    latest = max(days) if days else dt.datetime.now().date()
+    st.session_state.setdefault(day_key, latest)
+    date = c1.date_input('Trading day', value=None, key=day_key) or latest
     day_rows = [r for r, day in zip(rows, days) if day == date]
     s = summary(day_rows)
     currency = rows[0]['currency'] if rows else 'USD'
@@ -41,10 +48,15 @@ def render(journal, rows) -> None:
         metrics[3].metric('Average Trade', money(s['expectancy'], currency), border=True)
     saved = f'{date.isoformat()}:{timezone}'
     old = journal.get('sessions').get(saved, {})
-    if timezone == journal.tag_library()['session_timezone']:
-        tag_controls.day_panel(journal, date)
-    else:
-        st.info('Day tags use the day-tag time zone set in Setup → Tags & Playbooks. Choose it above to edit them.')
+    # Day tags belong to calendar days in the day-tag time zone. The card's own zone (the trade list's, when a
+    # day header opened it) can be another one; the tags are still this date's, and their ? names the zone.
+    library = journal.tag_library()
+    tag_zone = library['session_timezone']
+    tag_controls.day_panel(journal, date)
+    if timezone != tag_zone and tagging.ordered_groups(library, level='day'):
+        st.caption(f'Day tags follow calendar days in {tag_zone}, the day-tag time zone.',
+                   help='Set under Setup → Tags, Playbooks & Checklists → Categories. A trade opened late in the '
+                        'evening can fall on another date there than in the session time zone above.')
     with st.form(common.key(journal, 'day-report-' + saved)):
         planned = st.checkbox('I had a plan before entry', value=old.get('planned', False))
         risk = st.checkbox('I respected my risk limits', value=old.get('risk_limits', False))

@@ -78,3 +78,12 @@ def test_result_colours_reach_the_paragraph_a_metric_value_is_drawn_in():
                      '[class*="st-key-tile-"][class*="-negative"] [data-testid="stMetricValue"] p'):
         rule = css[css.index(selector):].split('}', 1)[0]
         assert ('color:' + theme.UP) in rule or ('color:' + theme.DOWN) in rule
+
+
+def test_a_folding_section_inside_a_menu_keeps_the_menus_background_so_its_boxes_show():
+    # Text boxes and pickers are drawn in the panel colour. Seen in a browser in 0.4.5: inside Filters → Save a
+    # Filter, on the panel colour of a folding section, the Filter name box had no visible edge at all.
+    css = re.sub(r'\s+', ' ', theme.CSS)
+    selector = '[data-testid="stPopoverBody"] div[data-testid="stExpander"] details'
+    rule = css[css.index(selector):].split('}', 1)[0]
+    assert 'background:' + theme.PAGE in rule and theme.PAGE != theme.SURFACE

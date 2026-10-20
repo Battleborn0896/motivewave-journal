@@ -62,19 +62,46 @@ def open_review(app):
 
 
 def show(app, view):
-    """Open a view the way a person does: its page in the sidebar, then, for a page under Setup, its
-    button on Setup's first page."""
+    """Open a view the way a person does: its page in the sidebar, then, for a page under Setup, its tile or
+    the tile's link to one of its tabs on Setup's first page; for the dashboards, the Dashboards tab of Stats;
+    for the Daily Report Card, a day's header in the trade list. Two clicks at most."""
     route = common.navigation(view)
     app.segmented_control(key=common.VIEW_KEY).set_value(route[common.VIEW_KEY]).run()
     assert not app.exception
     if route[common.VIEW_KEY] == 'Settings':
         if app.session_state[common.TOOL_KEY] != setup.HOME:
             app.button(key='setup-back').click().run()        # already on Setup, on another of its pages
-        page = setup.page_for(view)
+        page, tab = route[common.TOOL_KEY], route[common.TAB_KEY]
         if page != setup.HOME:
-            app.button(key='setup-open-' + page).click().run()
+            app.button(key=f'setup-tab-{page}-{tab}' if tab else 'setup-open-' + page).click().run()
         assert not app.exception and app.session_state[common.TOOL_KEY] == page
+    elif view == 'Dashboard':
+        open_tab(app, 'Dashboards')
+    elif view == 'Daily review':
+        open_report_card(app)
+    elif view == 'Trades' and any(b.label == '← Back to Trades' for b in app.button):
+        press(app, '← Back to Trades')                 # the sidebar was already on Trades, showing a day
     return open_review(app) if view == 'Trades' else app
+
+
+def open_tab(app, label):
+    """Click a tab. AppTest cannot click one, so this asks for it the way another page's link does."""
+    app.session_state[common.TAB_KEY] = label
+    app.run()
+    assert not app.exception
+    return app
+
+
+def open_report_card(app):
+    """Click the newest day's header in the trade list; with no trades, ask for the card like a calendar day does."""
+    header = next((b for b in app.button if b.key and b.key.startswith('open-day-')), None)
+    if header is not None:
+        header.click().run()
+    else:
+        app.session_state[common.REPORT_KEY] = True
+        app.run()
+    assert not app.exception and any(b.label == 'Save Daily Review' for b in app.button)
+    return app
 
 
 def setup_page(app):
@@ -124,7 +151,7 @@ def helped(elements, text):
 
 
 def display_setting(app, label, value, back='Trades'):
-    """Change one display setting where it lives, on Setup, then go back to the page that shows it."""
+    """Change one setting where it lives, on Setup's first page, then go back to the page that shows it."""
     show(app, 'General')
     widget(app.selectbox, label).set_value(value).run()
     assert not app.exception
@@ -170,7 +197,7 @@ def landmarks(app, view, empty):
     if view == 'Import':
         return any(s.label == 'Import format' for s in app.selectbox) and len(app.file_uploader) == 2
     if view == 'Connection':
-        return (any(t.label == 'Capture enabled' for t in app.toggle) and len(states(app.main)) == 1
+        return (any(t.label == 'Read Trades From MotiveWave' for t in app.toggle) and len(states(app.main)) == 1
                 and any(c.value == str(paths.bridge_file(Journal().dataset)) for c in app.main.code))
     if view == 'Daily review':
         return any(b.label == 'Save Daily Review' for b in app.button)
@@ -265,17 +292,17 @@ def test_view_switcher_always_shows_a_view_and_empty_journal_shortcuts_open_thei
     assert not app.main.expander                    # nothing to unfold on an empty journal: two buttons
     press(app, 'Import Old Trades')
     assert app.segmented_control(key=common.VIEW_KEY).value == 'Settings'
-    assert setup_page(app) == 'Import'
+    assert setup_page(app) == 'Data' and landmarks(app, 'Import', True)          # Data, on its Import Trades tab
     # Clicking the selected view again clears a segmented control. AppTest cannot click one empty, so
     # the cleared state is set directly: the journal keeps showing the view it was on.
     app.session_state[common.VIEW_KEY] = None
     app.run()
     assert not app.exception and landmarks(app, 'Import', True)
     show(app, 'Trades')
-    press(app, 'Open Setup')                        # the three steps, not the diagnostics
+    press(app, 'Open Setup')                        # the one step that is missing, not the diagnostics
     assert app.segmented_control(key=common.VIEW_KEY).value == 'Settings'
-    assert setup_page(app) == setup.HOME and said(app.markdown, '1 · Install the Study')
-    assert said(app.markdown, '2 · Add It to Your Chart')
+    assert setup_page(app) == setup.HOME and said(app.markdown, '**Install the Study**')
+    assert not said(app.markdown, 'Add It to Your Chart')
 
 
 def test_a_journal_from_a_newer_version_is_refused_with_a_message_not_a_crash(home):
@@ -437,14 +464,16 @@ def test_simple_navigation_and_optional_controls_do_not_remove_reviews(home):
     open_review(app)
     assert widget(app.metric, 'MAE').value != '—' and widget(app.metric, 'MFE').value != '—'
     assert [t.label for t in app.tabs] == [
-        'Chart & Tags', 'Notes', 'More', 'MAE / MFE', 'Executions', 'Runner', 'Checklists']
-    assert [b.proto.popover.label for b in app.main.get('popover')][:2] == ['Filters', 'Options']
+        'Chart & Tags', 'Notes', 'Checklist', 'More', 'MAE / MFE', 'Executions', 'Runner']
+    # The session tools, then the list's own menus, all in the row above the list.
+    assert [b.proto.popover.label for b in app.main.get('popover')][:5] == [
+        'Check-Ins', 'Drafts', 'Checklist', 'Filters', 'Options']
     assert not any(b.proto.popover.label in ('Chart settings', 'More', 'Trade filters') for b in app.get('popover'))
     assert not any(s.label == 'Review a trade' for s in app.selectbox)
     assert not any(b.label.startswith('Refresh') for b in app.button)
     assert any(s.label == 'Markets' for s in app.multiselect)  # filters live in a popover, not above the chart
     show(app, 'Connection')
-    assert setup_page(app) == 'Connection'
+    assert setup_page(app) == 'Data'
     assert not any(button.label == 'Arm recording' for button in app.button)
     assert not any('FFmpeg' in field.label for field in app.text_input)
 
@@ -601,6 +630,7 @@ def test_manual_fill_keeps_the_time_that_was_typed_and_is_measured_against_store
 
 def test_daily_review_opens_on_the_latest_trading_day_and_is_saved(home):
     journal = seed_preview(home)
+    journal.save_preferences(display_timezone='America/New_York')      # the trade list's days, and the card's
     app = open_app('Daily review')
     assert widget(app.date_input, 'Trading day').value == dt.date(2026, 10, 7)
     assert widget(app.metric, 'Trades').value == '1' and widget(app.metric, 'Net P&L').value == '+$242.00'
@@ -642,10 +672,9 @@ def test_nothing_is_typed_the_app_watches_the_default_bridge_and_waits_for_the_s
             'path': str(paths.bridge_file(dataset)), 'mode': 'bridge', 'enabled': True}}
     assert not paths.bridge_file().exists()
     assert any(c.value == str(paths.bridge_file('live')) for c in app.main.code)
-    show(app, 'Setup')                              # the three steps are on Setup's first page
-    assert states(app.main) == ['Waiting For Study'] and said(app.main.markdown, 'Follow the three steps below')
+    show(app, 'Setup')                              # the step that is missing is on Setup's first page
+    assert states(app.main) == ['Waiting For Study'] and said(app.main.markdown, '**Install the Study**')
     assert any(b.label == 'Install MotiveWave Study' for b in app.button)
-    assert said(app.markdown, 'Journal → MotiveWave Journal')
     assert not any(str(paths.bridge_file('live')) in m.value for m in [*app.main.markdown, *app.main.code])
 
 
@@ -668,8 +697,10 @@ def test_connection_turns_connected_once_the_study_writes_a_fresh_heartbeat():
     assert said(app.main.markdown, 'The study says: Read-only capture · workspace paper')
     assert not said(app.sidebar.markdown, 'has not appeared yet')
     connected = shape(app)
-    show(app, 'Setup')
-    assert said(app.main.markdown, '✓ Done') and not any(b.label == 'Install MotiveWave Study' for b in app.button)
+    show(app, 'Setup')                              # one green line and no step
+    assert states(app.main) == ['Connected'] and said(app.main.markdown, f'Connected · study {paths.STUDY_VERSION}')
+    assert not any(b.label == 'Install MotiveWave Study' for b in app.button)
+    assert not any(f'**{title}**' in m.value for m in app.main.markdown for title, _, _ in setup.STEPS.values())
     show(app, 'Connection')
     assert shape(app) == connected
     # The status redraws itself in the browser every few seconds. Seen in a real browser: when such a
@@ -795,14 +826,14 @@ def test_connection_needs_attention_shows_the_error_the_study_reported():
 
 def test_capture_can_be_paused_and_resumed_from_the_connection_view():
     app = open_app('Connection')
-    widget(app.toggle, 'Capture enabled').set_value(False).run()
+    widget(app.toggle, 'Read Trades From MotiveWave').set_value(False).run()
     assert not app.exception and states(app.main) == ['Paused']
     assert Journal().get('profiles')[DEFAULT_CONNECTION]['enabled'] is False
     assert Journal(dataset='replay').get('profiles')[DEFAULT_CONNECTION]['enabled'] is True
     study_writes([heartbeat()])
     time.sleep(1.5)                                  # a reader that ignored the switch would have imported by now
     assert not status_of().get('heartbeat')
-    widget(app.toggle, 'Capture enabled').set_value(True).run()
+    widget(app.toggle, 'Read Trades From MotiveWave').set_value(True).run()
     wait_until(lambda: status_of().get('heartbeat'))
     app.run()
     assert states(app.main) == ['Connected']
@@ -891,32 +922,32 @@ def test_excursion_unit_picker_updates_detail_list_plot_and_persists_without_rew
     before = journal.best_metric(trade)
     reviews = journal.annotations()
     app = open_app('General')
-    assert widget(app.selectbox, 'MAE / MFE units').options == [
+    assert widget(app.selectbox, 'MAE / MFE Units').options == [
         'Dollars / account currency', 'Points', 'Ticks', 'R · planned risk']
-    display_setting(app, 'MAE / MFE units', 'points')
+    display_setting(app, 'MAE / MFE Units', 'points')
     assert widget(app.metric, 'MFE').value == '3.00 pts'
     path = next(json.loads(x.proto.spec) for x in app.get('plotly_chart') if 'Price move' in x.proto.spec)
     assert path['layout']['yaxis']['title']['text'].endswith('(pts)')
     assert common.display_excursion_rows(journal, common.rows_for(journal))[0]['display_mfe'] == pytest.approx(3)
     assert 'held average entry' in widget(app.metric, 'MAE').help     # the unit is explained on hover
     open_review(app)
-    display_setting(app, 'MAE / MFE units', 'ticks')
+    display_setting(app, 'MAE / MFE Units', 'ticks')
     assert widget(app.metric, 'MFE').value == '12.00 ticks'
-    display_setting(app, 'MAE / MFE units', 'r')
+    display_setting(app, 'MAE / MFE Units', 'r')
     assert widget(app.metric, 'MFE').value == '1.25R'
-    display_setting(app, 'MAE / MFE units', 'currency')
+    display_setting(app, 'MAE / MFE Units', 'currency')
     assert widget(app.metric, 'MFE').value == '$250.00'
     path = next(json.loads(x.proto.spec) for x in app.get('plotly_chart') if 'Gross position P&L' in x.proto.spec)
     assert path['layout']['yaxis']['tickformat'].startswith('$')        # its axis reads like every other amount
     assert journal.best_metric(trade) == before
     assert journal.annotations() == reviews
-    display_setting(app, 'MAE / MFE units', 'points')
+    display_setting(app, 'MAE / MFE Units', 'points')
     fresh = open_app('General')
-    assert widget(fresh.selectbox, 'MAE / MFE units').value == 'points'
+    assert widget(fresh.selectbox, 'MAE / MFE Units').value == 'points'
     fresh.radio(key='journal-environment').set_value('Replay').run()
-    assert widget(fresh.selectbox, 'MAE / MFE units').value == 'currency'
+    assert widget(fresh.selectbox, 'MAE / MFE Units').value == 'currency'
     fresh.radio(key='journal-environment').set_value('Live').run()
-    assert widget(fresh.selectbox, 'MAE / MFE units').value == 'points'
+    assert widget(fresh.selectbox, 'MAE / MFE Units').value == 'points'
 
 
 def test_missing_risk_and_unknown_tick_size_show_unavailable_with_one_time_setup(home):
@@ -929,10 +960,10 @@ def test_missing_risk_and_unknown_tick_size_show_unavailable_with_one_time_setup
     for metric in measurements(trade, [sample], 'custom'):
         journal.record_metric(trade, metric)
     app = open_app()
-    display_setting(app, 'MAE / MFE units', 'r')
+    display_setting(app, 'MAE / MFE Units', 'r')
     assert widget(app.metric, 'MFE').value == '—' and said(app.info, 'R needs your initial total risk')
     assert any(b.label == 'Recalculate From Stored Prices' for b in app.button)
-    display_setting(app, 'MAE / MFE units', 'ticks')
+    display_setting(app, 'MAE / MFE Units', 'ticks')
     assert widget(app.metric, 'MFE').value == '—'
     widget(app.number_input, 'Minimum price increment').set_value(.5)
     press(app, 'Save Tick Size')
@@ -958,7 +989,7 @@ def test_old_price_metrics_backfill_for_display_but_platform_only_dollars_are_no
     assert journal.best_metric(trade)['mfe'] == 9999
     app = open_app()
     assert widget(app.metric, 'MFE').value == '$9,999.00'
-    display_setting(app, 'MAE / MFE units', 'points')
+    display_setting(app, 'MAE / MFE Units', 'points')
     assert widget(app.metric, 'MFE').value == '3.00 pts'
     assert said(app.caption, 'OHLC estimate')
     assert journal.best_metric(trade)['mfe'] == 9999
@@ -975,12 +1006,12 @@ def test_old_price_metrics_backfill_for_display_but_platform_only_dollars_are_no
 def test_analytics_is_question_based_and_selected_units_change_only_excursion_axes(home):
     seed_preview(home)
     app = open_app('Edge')
-    assert [t.label for t in app.tabs] == ['Overview', 'Compare', 'MAE / MFE', 'Runners']
+    assert [t.label for t in app.tabs] == ['Overview', 'Compare', 'MAE / MFE', 'Runners', 'Dashboards']
     assert widget(app.metric, 'Average Trade').value == '+$242.00'
     assert widget(app.selectbox, 'Compare by').value == 'Tags'
     table = next(d.value for d in app.dataframe if 'Average Trade' in d.value.columns)
     assert 'Trades' in table.columns and 'Tag' in table.columns
-    display_setting(app, 'MAE / MFE units', 'ticks', back='Edge')
+    display_setting(app, 'MAE / MFE Units', 'ticks', back='Edge')
     assert not app.exception and widget(app.metric, 'Net P&L').value == '+$242.00'
     excursion = next(json.loads(x.proto.spec) for x in app.get('plotly_chart') if 'One dot per measured trade' in x.proto.spec)
     assert excursion['layout']['xaxis']['title']['text'] == 'Against me · MAE (ticks)'

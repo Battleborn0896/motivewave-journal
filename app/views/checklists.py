@@ -1,4 +1,6 @@
-"""Checklist definitions, offline node canvas and snapshot-based runs on selected trades."""
+"""Checklist definitions and the offline node canvas (Setup → Tags, Playbooks & Checklists), and runs that keep a
+snapshot of their checklist: on a trade in its Checklist tab on Trades, or for the session from the Checklist
+menu above the trade list."""
 import json
 import streamlit as st
 
@@ -71,7 +73,8 @@ def render(journal, rows):
     with runs:
         history = sorted(state['runs'].values(), key=lambda r: r['started'], reverse=True)
         if not history:
-            st.info('No runs yet. Run a checklist from a trade\'s Checklists tab in Trades, or from Session Tools.')
+            st.info('No runs yet. Run a checklist from a trade\'s Checklist tab on Trades, or for the whole '
+                    'session from the Checklist menu above the trade list.')
         else:
             zone = common.display_zone(journal)
             st.dataframe([{'Checklist': r['name'], 'Started': common.moment(r['started'], zone), 'Trade': r['trade_id'],

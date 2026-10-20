@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import calendar
+import contextlib
 import datetime as dt
 
 import pandas as pd
@@ -29,7 +30,9 @@ WIDGET_HELP = {'Radar': 'The share of this sample tagged in each category. Not a
 AXES = {'trade': 'Trade number', 'time': 'Date and time'}
 
 
-def filter_editor(journal, rows, prefix, old=None):
+def filter_editor(journal, rows, prefix, old=None, *, fold=True):
+    """A saved-filter rule. `fold=False` shows dates and number ranges under a heading instead of in an
+    expander, for a form that already sits inside one (Streamlit cannot nest expanders)."""
     old = old or {}
     library = journal.tag_library()
     key = lambda name: common.key(journal, prefix + '-' + name)
@@ -44,7 +47,9 @@ def filter_editor(journal, rows, prefix, old=None):
         result[field] = st.multiselect(title, options, default=old.get(field, []),
                                        format_func=lambda id: library['tags'][id]['name'], key=key(field))
     result['status'] = st.multiselect('Trade status', ['closed', 'open', 'incomplete'], default=old.get('status', []), key=key('status'))
-    with st.expander('Dates and Number Ranges'):
+    if not fold:
+        theme.subsection('Dates and Number Ranges')
+    with st.expander('Dates and Number Ranges') if fold else contextlib.nullcontext():
         date_filter = st.checkbox('Limit entry dates', value=bool(old.get('start') or old.get('end')), key=key('dates-on'),
                                   help='Calendar days in your display time zone.')
         if date_filter:
@@ -72,14 +77,16 @@ def filter_editor(journal, rows, prefix, old=None):
 
 
 def render(journal, rows):
+    """One dashboard page, on the Dashboards tab of Stats. `rows` are what the Stats filters keep."""
     state = journal.workspace()
     pages = state['dashboards']
-    top, selector, filter_col, actions = st.columns([2.4, 2, 1, 1], vertical_alignment='center')
+    selector, top, filter_col, actions = st.columns([2, 2.4, 1, 1], vertical_alignment='center')
     choices = ['default', *sorted(pages, key=lambda id: pages[id]['order'])]
     page_id = selector.selectbox('Dashboard page', choices, format_func=lambda id: pages[id]['name'] if id in pages else 'Overview',
                             key=common.key(journal, 'dashboard-page'), label_visibility='collapsed')
     page = pages.get(page_id, DEFAULT)
-    with filter_col.popover('Filters', width='stretch', help='Filters for this page. Each widget can add its own.'):
+    with filter_col.popover('Page Filters', width='stretch',
+                            help='Filters for this dashboard page, on top of the Stats filters. Each widget can add its own.'):
         with st.form(common.key(journal, 'page-filters-' + page_id), border=False):
             rule = filter_editor(journal, rows, 'page-filter-' + page_id, page.get('filters'))
             if st.form_submit_button('Save Page Filters', type='primary'):
@@ -87,12 +94,11 @@ def render(journal, rows):
                                                 columns=page['columns'], filters=rule)
                 st.session_state[common.key(journal, 'dashboard-next')] = saved
                 st.rerun()
-    with actions.popover('Customize', width='stretch', help='Name, columns and widgets of this page; clone it.'):
+    with actions.popover('Customize Page', width='stretch', help='Name, columns and widgets of this page; clone it.'):
         customize(journal, rows, page_id, page)
     rows = filter_sample(rows, page.get('filters', {}))
     closed = [r for r in rows if r['status'] == 'closed' and r['net'] is not None]
-    with top:
-        theme.section('Dashboard', f'{len(closed)} closed trade{"" if len(closed) == 1 else "s"}')
+    top.caption(f'{len(closed)} closed trade{"" if len(closed) == 1 else "s"} on this page')
     columns = page['columns']
     cols = st.columns(columns, gap='small')
     for index, widget in enumerate(page['widgets']):
@@ -309,9 +315,10 @@ def trading_calendar(journal, rows, key):
                 net = sum(r['net'] for r in sample)
                 title = f'{day}  \n' + common.md(common.money(net, currency, decimals=0)) if sample else str(day)
                 def open_day(date=date):
+                    # The Daily Report Card is on Trades, in place of a trade, for this date.
                     st.session_state.update(common.navigation('Daily review'))
                     st.session_state[common.key(journal, 'review-day')] = date
                     st.session_state[common.key(journal, 'review-tz')] = zone
                 col.button(title, key=key + '-day-' + str(date), on_click=open_day, width='stretch',
                            help=common.md(f'{common.day_label(date, zone, weekday=True)}: {len(sample)} closed trades, '
-                                          f'{common.money(net, currency)} · click for the Daily Report Card'))
+                                          f'{common.money(net, currency)} · click for its Daily Report Card on Trades'))

@@ -1,9 +1,11 @@
-"""Connection: the study writes a file on this computer and the app reads it. Nothing has to be typed.
+"""Connection, on the Data page: the study writes a file on this computer and the app reads it. Nothing has to be
+typed.
 
-The app starts watching the study's default bridge file by itself (runtime.start). This Setup page
-says what it currently hears from the study, in detail, and holds the less common settings in titled
-sections: installing the study again, another bridge file, extra watched CSV files, the instrument
-multiplier. The first install is one of the three steps on the first Setup page (views/setup.py).
+The app starts watching the study's default bridge file by itself (runtime.start). This tab says what it
+currently hears from the study, in detail, and holds the less common settings in titled sections: installing
+the study again, another bridge file, extra watched CSV files, the instrument multiplier, and under Advanced
+whether the app reads trades from MotiveWave at all. Setup's first page shows the one step that is missing
+before the study records (views/setup.py).
 """
 
 from __future__ import annotations
@@ -24,6 +26,7 @@ from mwjournal.model import instant
 from mwjournal.sync import DEFAULT_CONNECTION
 
 JAR = Path(__file__).resolve().parents[2] / 'study' / 'build' / 'libs' / 'motivewave-journal.jar'
+READ_TRADES = 'Read Trades From MotiveWave'
 FORMATS = {'executions': 'Execution CSV', 'prices': 'Prices CSV', 'bridge': 'Another bridge file · NDJSON'}
 RESERVED = (DEFAULT_CONNECTION, 'worker')      # 'worker' is the status row of the background reader itself
 
@@ -31,6 +34,14 @@ RESERVED = (DEFAULT_CONNECTION, 'worker')      # 'worker' is the status row of t
 def study_extension_folder() -> Path:
     configured = os.environ.get('MOTIVEWAVE_EXTENSIONS', '').strip()
     return Path(configured).expanduser() if configured else Path.home() / 'MotiveWave Extensions'
+
+
+def study_installed() -> bool:
+    """Whether MotiveWave's Extensions folder holds the study. Only looked at, never changed."""
+    try:
+        return (study_extension_folder() / JAR.name).is_file()
+    except OSError:
+        return False
 
 
 def install_study(jar: Path = JAR, destination: Path | None = None) -> tuple[Path, Path | None]:
@@ -74,14 +85,6 @@ def render(journal, rows) -> None:
     theme.section('Connection')
     status_card(journal.dataset)
     name, profile, _, _ = common.study_link(journal)
-    if profile is not None:
-        enabled = st.toggle('Capture enabled', value=bool(profile.get('enabled')),
-                            key=common.key(journal, 'capture-enabled'),
-                            help='Switch off to stop reading the bridge file. Nothing is lost: the study keeps '
-                                 'writing, and reading carries on from the same place when this is switched on.')
-        if enabled != bool(profile.get('enabled')):
-            journal.put('profiles', name, {**profile, 'enabled': enabled})
-            st.rerun()
     st.caption('What the study can and cannot see', help=LIMITS)
     gaps = journal.capture_gaps()
     if gaps:
@@ -94,11 +97,26 @@ def render(journal, rows) -> None:
     theme.section('Instrument Multiplier')
     common.multiplier_form(journal, 'multiplier')
     st.caption(f'Journal database: {journal.path}')
+    if profile is not None:
+        theme.subsection('Advanced')
+        reading(journal, name, profile)
+
+
+def reading(journal, name: str, profile: dict) -> None:
+    """Whether the app reads the study's bridge file. On unless someone switched it off; the study writes
+    either way."""
+    enabled = st.toggle(READ_TRADES, value=bool(profile.get('enabled')), key=common.key(journal, 'capture-enabled'),
+                        help='Off stops this journal reading the file the study writes, so no new trades or prices '
+                             'appear. Nothing is lost: the study keeps writing, and reading carries on from the same '
+                             'place when this is on again. Live and Replay each have their own switch.')
+    if enabled != bool(profile.get('enabled')):
+        journal.put('profiles', name, {**profile, 'enabled': enabled})
+        st.rerun()
 
 
 def study_section() -> None:
-    """Installing the study again, for example after an app update: Setup's step 1 shows ✓ Done once the
-    study has reported in, so this is where a second install lives."""
+    """Installing the study again, whatever its state: Setup offers the install only while the study is
+    missing or older than the one this app bundles, so this is where any other install lives."""
     theme.section('Study')
     if not JAR.is_file():
         st.caption('In MotiveWave choose Study → All Studies → Import and pick motivewave-journal.jar.')
