@@ -1,6 +1,8 @@
 """A product is its letters. Positions stay per contract; a trade's prices are those of its product,
 whatever contract month, chart or replay they were recorded under, and never another product's."""
+import dataclasses
 import json
+import sqlite3
 
 import pytest
 
@@ -177,6 +179,7 @@ def bridge_tick(symbol, price, ts, provider='motivewave-ticks', mode='live', pro
 
 
 def test_the_watcher_measures_an_nqz6_trade_again_when_nq_prices_arrive(tmp_path):
+    from common import metric_options
     journal = Journal(tmp_path / 'trades.sqlite3')
     path = tmp_path / 'motivewave.ndjson'
     journal.put('profiles', 'native', {'mode': 'bridge', 'path': str(path), 'enabled': True})
@@ -191,7 +194,8 @@ def test_the_watcher_measures_an_nqz6_trade_again_when_nq_prices_arrive(tmp_path
         fh.write(lines([bridge_tick('MNQ', 20500, '2026-10-07T14:00:30Z')]))
     SyncWorker(journal).poll()
     assert journal.metric_options(trade) == []
-    # Then its own chart's, labelled with the product only.
+    # Then its own chart's, labelled with the product only and, recorded as they traded, not proxy: what
+    # the study writes on a continuous NQ chart.
     with path.open('a', encoding='utf-8', newline='') as fh:
         fh.write(lines([bridge_tick('NQ', 19995, '2026-10-07T14:00:20Z'),
                         bridge_tick('NQ', 20030, '2026-10-07T14:00:40Z')]))
@@ -199,20 +203,26 @@ def test_the_watcher_measures_an_nqz6_trade_again_when_nq_prices_arrive(tmp_path
     metric, = journal.metric_options(trade)
     assert (metric['source'], metric['precision'], metric['observations']) == ('motivewave-ticks', 'observed-ticks', 2)
     assert (metric['mae_points'], metric['mfe_points'], metric['mae'], metric['mfe']) == (5, 30, 100, 600)
+    # Shown with the default accuracy policy, recorded ticks only.
+    assert journal.display_settings()['excursion_policy'] == 'ticks-only'
+    assert metric_options(journal, trade) == [metric]
 
 
-def test_a_replay_nqz6_trade_uses_its_own_runs_continuous_chart_prints(tmp_path):
+def test_a_replay_nqz6_trade_on_a_continuous_chart_is_measured_from_its_own_runs_prints_by_default(tmp_path):
+    """What the study writes with its defaults on a replay of a continuous NQ chart: prints labelled as the
+    chart is, real ticks of the run (Real Tick Data is on by default) and not proxy (only the user's Proxy
+    Prices setting marks prints recorded as they trade). The default accuracy policy shows the result."""
+    from common import metric_options
     journal = Journal(tmp_path / 'replay.sqlite3', dataset='replay')
     path = tmp_path / 'motivewave.replay.ndjson'
     journal.put('profiles', 'native', {'mode': 'bridge', 'path': str(path), 'enabled': True})
     own, other = 'motivewave-replay:run-a:ticks', 'motivewave-replay:run-b:ticks'
     events = [bridge_fill('in', 'buy', 20000, '2026-10-07T14:00:00Z', mode='replay'),
-              # A replay of a continuous NQ chart: its prints are labelled NQ and marked continuous.
-              bridge_tick('NQ', 19990, '2026-10-07T14:00:15Z', own, 'replay', True),
-              bridge_tick('NQ', 20025, '2026-10-07T14:00:45Z', own, 'replay', True),
+              bridge_tick('NQ', 19990, '2026-10-07T14:00:15Z', own, 'replay'),
+              bridge_tick('NQ', 20025, '2026-10-07T14:00:45Z', own, 'replay'),
               # The same moments in another run: never this trade's.
-              bridge_tick('NQ', 19000, '2026-10-07T14:00:30Z', other, 'replay', True),
-              bridge_tick('NQ', 21000, '2026-10-07T14:05:00Z', other, 'replay', True)]
+              bridge_tick('NQ', 19000, '2026-10-07T14:00:30Z', other, 'replay'),
+              bridge_tick('NQ', 21000, '2026-10-07T14:05:00Z', other, 'replay')]
     path.write_text(lines(events), encoding='utf-8', newline='')
     SyncWorker(journal).poll()
     trade, = journal.trades()
@@ -222,14 +232,20 @@ def test_a_replay_nqz6_trade_uses_its_own_runs_continuous_chart_prints(tmp_path)
     assert journal.price_sources('NQZ6', trade) == [own]
     metric, = journal.metric_options(trade)
     assert (metric['source'], metric['observations'], metric['mae_points'], metric['mfe_points']) == (own, 2, 10, 25)
-    assert metric['precision'] == 'proxy-estimate'      # a continuous chart's prints say so
+    assert (metric['precision'], metric['provenance']) == ('observed-ticks', 'replay-ticks')
+    assert journal.display_settings()['excursion_policy'] == 'ticks-only'
+    assert metric_options(journal, trade) == [metric]
     with path.open('a', encoding='utf-8', newline='') as fh:
         fh.write(lines([bridge_fill('out', 'sell', 20010, '2026-10-07T14:01:00Z', mode='replay')]))
     SyncWorker(journal).poll()
     trade, = journal.trades()
     metric, = journal.metric_options(trade)
-    assert (metric['observations'], metric['mae'], metric['mfe']) == (2, 200, 500)
+    assert (metric['observations'], metric['mae'], metric['mfe'], metric['precision']) == (2, 200, 500, 'observed-ticks')
+    assert metric_options(journal, trade) == [metric]
     assert excursions(trade, journal.prices('NQZ6', other), other)['mfe'] is None
+    # Prices the user marked with Proxy Prices are an estimate, which the default policy leaves out.
+    marked = [dataclasses.replace(sample, proxy=True) for sample in journal.prices('NQZ6', own)]
+    assert excursions(trade, marked, own)['precision'] == 'proxy-estimate'
 
 
 def test_a_named_journal_receives_the_prices_of_its_trades_products(tmp_path, monkeypatch):
@@ -240,3 +256,54 @@ def test_a_named_journal_receives_the_prices_of_its_trades_products(tmp_path, mo
     target = journals.open_named(capture, journals.create(capture, 'Paper', [('test', 'paper')]))
     assert target.prices(trade.symbol, 'motivewave-ticks') == [tick('NQ', 30, 20030)]
     assert target.price_sources('MNQZ6') == [] and target.price_sources('ESZ6') == []
+
+
+def as_before_the_product_rule(path):
+    """Put a journal back as app 0.4.4 left it: its trades imported, but measured only with prices under
+    their exact symbol (there are none here, so not at all), and no measurement rules recorded."""
+    db = sqlite3.connect(path)
+    with db:
+        db.execute('DELETE FROM metrics')
+        db.execute("DELETE FROM journal_meta WHERE key='measurement_rules'")
+    db.close()
+
+
+def test_journals_measured_before_the_product_rule_are_measured_again_once_when_the_watcher_starts(tmp_path):
+    """The owner's case: an NQZ6 position still open, imported before the product rule with its chart's
+    prints labelled NQ, and so never measured. Each journal, live and replay, measures every trade again
+    the first time its watcher starts, then records that it did and never repeats it."""
+    from common import metric_options
+    journals, trades = {}, {}
+    for dataset, source in (('live', 'motivewave-ticks'), ('replay', 'motivewave-replay:run-a:ticks')):
+        journal = journals[dataset] = Journal(tmp_path / dataset / 'trades.sqlite3', dataset=dataset)
+        assert not journal.recalculation_due()                 # a new journal has nothing older to measure
+        path = tmp_path / dataset / 'motivewave.ndjson'
+        path.write_text(lines([bridge_fill('in', 'buy', 20000, '2026-10-07T14:00:00Z', mode=dataset),
+                               bridge_tick('NQ', 19995, '2026-10-07T14:00:20Z', source, dataset),
+                               bridge_tick('NQ', 20030, '2026-10-07T14:00:40Z', source, dataset)]),
+                        encoding='utf-8', newline='')
+        journal.put('profiles', 'native', {'mode': 'bridge', 'path': str(path), 'enabled': True})
+        SyncWorker(journal).poll()
+        as_before_the_product_rule(journal.path)
+        trades[dataset], = journal.trades()
+        assert not trades[dataset].closed and journal.metric_options(trades[dataset]) == []
+        assert journal.recalculation_due()
+    # The live watcher starts: nothing new in its file, yet its trade is measured. The replay journal waits
+    # for a watcher of its own.
+    SyncWorker(Journal(journals['live'].path)).poll()
+    assert not journals['live'].recalculation_due() and journals['replay'].recalculation_due()
+    assert journals['replay'].metric_options(trades['replay']) == []
+    SyncWorker(Journal(journals['replay'].path, dataset='replay')).poll()
+    for dataset, journal in journals.items():
+        metric, = journal.metric_options(trades[dataset])
+        assert (metric['precision'], metric['observations'], metric['mae_points'], metric['mfe_points']) == (
+            'observed-ticks', 2, 5, 30)
+        assert journal.display_settings()['excursion_policy'] == 'ticks-only'
+        assert metric_options(journal, trades[dataset]) == [metric]
+        assert not journal.recalculation_due()
+    # Once only: with the measurements gone, the next start of either watcher measures nothing again.
+    for dataset, journal in journals.items():
+        with journal.connect() as db:
+            db.execute('DELETE FROM metrics')
+        SyncWorker(Journal(journal.path, dataset=dataset)).poll()
+        assert journal.metric_options(trades[dataset]) == [] and not journal.recalculation_due()

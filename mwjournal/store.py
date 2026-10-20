@@ -19,6 +19,10 @@ from .scope import event_mode, allows_source
 from .workspace import Workspace, read as read_workspace
 
 SCHEMA_VERSION = 3
+# The rules trades are measured by. Raise it when they change: the watcher then measures every trade of a
+# journal measured under older rules once more, from its stored prices, and records this number in it.
+# 1: a trade's prices are those of its product (model.trade_prices).
+MEASUREMENT_RULES = 1
 # What a writer may say differently about a fill it already sent, without it being another fill.
 LABELS = ('quality', *NATIVE)
 SCHEMA = '''
@@ -97,7 +101,7 @@ def _upgrade(db) -> dict:
             cleared += 1
     if rewritten:
         # The trades are grouped differently now; the watcher measures them again from stored prices.
-        db.execute("INSERT OR REPLACE INTO journal_meta VALUES('recalculate','1')")
+        db.execute("DELETE FROM journal_meta WHERE key='measurement_rules'")
     return {'executions_rewritten': rewritten, 'alarms_cleared': cleared}
 
 
@@ -133,6 +137,8 @@ class Journal(Workspace):
             db.execute('BEGIN IMMEDIATE')
             self._check_environment(db)
             db.execute("INSERT OR IGNORE INTO journal_meta VALUES('dataset',?)", (dataset,))
+            if not existing:                       # a new journal: nothing in it was measured under older rules
+                db.execute("INSERT OR IGNORE INTO journal_meta VALUES('measurement_rules',?)", (str(MEASUREMENT_RULES),))
             version = db.execute('PRAGMA user_version').fetchone()[0]
             if version > SCHEMA_VERSION:
                 raise ValueError(newer)
@@ -210,13 +216,17 @@ class Journal(Workspace):
         return json.loads(row[0]) if row else None
 
     def recalculation_due(self) -> bool:
-        """True after an upgrade regrouped trades, until the watcher has measured them again."""
+        """True while this journal's trades were measured under older MEASUREMENT_RULES than this version's
+        (or regrouped by a schema upgrade), until the watcher has measured them all again."""
         with self.connect() as db:
-            return db.execute("SELECT 1 FROM journal_meta WHERE key='recalculate'").fetchone() is not None
+            row = db.execute("SELECT value FROM journal_meta WHERE key='measurement_rules'").fetchone()
+        return row is None or int(row[0]) < MEASUREMENT_RULES
 
     def recalculation_done(self):
+        """Every trade has been measured under this version's rules."""
         with self.connect() as db:
-            db.execute("DELETE FROM journal_meta WHERE key='recalculate'")
+            db.execute("INSERT OR REPLACE INTO journal_meta VALUES('measurement_rules',?)", (str(MEASUREMENT_RULES),))
+            db.execute("DELETE FROM journal_meta WHERE key='recalculate'")    # what 0.4.4 and earlier set instead
 
     @staticmethod
     def _insert(db, fill: Execution, raw: dict) -> bool:

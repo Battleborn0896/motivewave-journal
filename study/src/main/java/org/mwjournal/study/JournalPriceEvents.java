@@ -24,6 +24,27 @@ final class JournalPriceEvents {
         + ",\"close\":" + close + vol + ",\"proxy\":" + proxy + "}";
   }
 
+  /** The provider of a replay chart's own prints. realTicks is the Real Tick Data setting, on by default:
+   * the prints are real ticks, unless the user says the replay is generated from bars. */
+  static String replayProvider(String run, boolean realTicks) {
+    return "motivewave-replay:" + run + (realTicks ? ":ticks" : ":simulated");
+  }
+
+  /** Whether the prices a chart writes are marked proxy: from another instrument than the one traded.
+   * marked: the Proxy Prices setting. history: loaded from MotiveWave's history when the chart loads, as
+   * opposed to recorded as they trade.
+   *
+   * Prints recorded as they trade (live ticks, the minute bars topped up as they close, replay prints) are
+   * the product's own prices on any chart of it, the contract's or a continuous one, and the app matches a
+   * trade's prices by product: only the setting marks them. History a continuous chart loads (its active
+   * contract differs from its own symbol) can be back-adjusted across rolls, so that is marked as well. */
+  static boolean proxy(Instrument chart, boolean marked, boolean history) {
+    if (marked) return true;
+    if (!history) return false;
+    String active = chart.getActiveSymbol();
+    return active != null && !active.isBlank() && !active.equals(chart.getSymbol());
+  }
+
   static String tick(String symbol, Tick tick, boolean proxy) {
     return tick(symbol, tick, proxy, "motivewave-ticks", "live");
   }

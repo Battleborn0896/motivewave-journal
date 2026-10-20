@@ -9,7 +9,8 @@ contains no screen, video or audio recorder.
 1. Install and open **MotiveWave Journal**.
 2. Open **Setup** and click **Install MotiveWave study**.
 3. Restart MotiveWave.
-4. Add **Journal → MotiveWave Journal** to every exact-contract chart that will be traded.
+4. Add **Journal → MotiveWave Journal** to the chart you trade on, the contract's own (`NQZ6`) or a
+   continuous one (`NQ`).
 5. Leave the study's file setting unchanged. The app and study use the same per-user folder by
    default.
 
@@ -36,8 +37,9 @@ side.
 
 The study records the chart's observed trade prints while its capture gate is open, including a
 bounded pre-roll and exit tail. The resulting path drives observed-tick MAE/MFE and the one-minute
-candles drawn from those prints. Put the study on the exact contract chart; another contract's chart
-cannot supply its ticks.
+candles drawn from those prints. Put the study on the chart you trade, the contract's or a continuous one:
+a trade is measured with the prices of its product (`NQZ6`, `NQ` and a continuous `NQ` are all `NQ`;
+`MNQ` is another product), its exact contract's first when both were recorded.
 
 Since version 0.3.2 the study defaults to **Always While Study Runs**, retaining every trade print
 MotiveWave sends to that chart; version 0.3.3 is the first that MotiveWave actually sends them to, because
@@ -45,10 +47,11 @@ it requires bar updates. This supports 5/15/30-minute runner comparisons by indi
 setup. The lower-storage position-gated mode remains available when its After Exit window is long
 enough for the selected comparison horizon.
 
-Replay records the events the replay actually emits. Its own prints are tick-accurate only when
-MotiveWave replay is running from real tick data; bar-generated replay remains labelled
-simulated/source-unverified. Once a replay trade is flat, study 0.3.3 also loads the real ticks of its
-holding time from MotiveWave's tick history for that replay run, never past the replay's current time.
+Replay records the events the replay actually emits. Its own prints count as real ticks by default;
+switch off **Advanced → Real Tick Data** when the replay is generated from bars, and they are labelled
+simulated. Once a replay trade is flat, study 0.3.3 also loads the real ticks of its holding time from
+MotiveWave's tick history for that replay run, never past the replay's current time, on a chart of the
+exact contract.
 
 ## macOS release
 

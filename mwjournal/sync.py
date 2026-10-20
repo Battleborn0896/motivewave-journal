@@ -62,7 +62,8 @@ class SyncWorker:
         self.metric_clock = 0
         self.dirty_executions = set()
         self.dirty_prices = {}      # (product, source): the time new prices span, for the trades of that product
-        self.rebuild = journal.recalculation_due()     # an upgrade regrouped the trades: measure them all again
+        # Measured under older rules, or regrouped by an upgrade: measure every trade again, once.
+        self.rebuild = journal.recalculation_due()
         self.thread = threading.Thread(target=self.run, name='mwj-sync', daemon=True)
 
     def start(self):

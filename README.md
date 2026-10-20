@@ -245,8 +245,8 @@ needs permission to see the desktop.
 
 ### Post-exit runner analysis
 
-The study now defaults to **Always While Study Runs**: every trade print MotiveWave delivers to that
-exact-contract chart is retained, so 5/15/30-minute post-exit windows do not depend on a separate
+The study now defaults to **Always While Study Runs**: every trade print MotiveWave delivers to the
+chart is retained, so 5/15/30-minute post-exit windows do not depend on a separate
 recorder. The lower-storage **Trade + After Exit Only** option keeps a bounded pre-roll, the holding
 window and **After Exit (Minutes)** (30 by default, 0–120 configurable). Neither mode holds a position
 or modifies an order. Both require the chart/study/feed to keep running; `Never` disables ticks.
@@ -341,8 +341,10 @@ bash study/scripts/build.sh
 The output is `study/build/libs/motivewave-journal.jar`. A packaged desktop user can click
 **Setup → Install MotiveWave Study**. The app atomically installs only this named JAR, preserves its
 previous copy and asks for a MotiveWave restart. Manual alternative: use **Study → All Studies →
-Import**. Then add **Journal → MotiveWave Journal** to each exact contract
-chart you trade. There is nothing to set: every setting is under the study's **Advanced** tab and the
+Import**. Then add **Journal → MotiveWave Journal** to the chart you trade, the contract's own (`NQZ6`)
+or a continuous one (`NQ`): a trade is measured with the prices of its product (`NQZ6`, `NQ` and a
+continuous `NQ` are all `NQ`; `MNQ` is another product), its exact contract's first when both were
+recorded. There is nothing to set: every setting is under the study's **Advanced** tab and the
 defaults are what the app expects. The app starts watching both files by itself.
 Check **Setup** in the app: it should change from Waiting For Study to Connected. To install the
 study again after an app update, use **Setup → Connection → Install MotiveWave Study**.
