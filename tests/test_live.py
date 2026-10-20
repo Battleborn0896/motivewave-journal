@@ -264,3 +264,19 @@ def test_cancelling_one_of_two_overlapping_drafts_lets_the_other_attach_at_the_n
     worker.poll()
     assert journal.workspace()['drafts'][ids[1]]['state'] == 'attached'
 
+
+def test_a_draft_waiting_for_its_trade_is_not_written_again_at_every_poll(tmp_path, monkeypatch):
+    from mwjournal import workspace
+    journal, bridge = watched(tmp_path)
+    id = journal.save_draft('Plan', provider='motivewave-native:ws:live', account='SIM', symbol='NQZ6',
+                            start='2026-10-07T15:00:00Z', end='2026-10-07T15:05:00Z')
+    write(bridge, [fill('buy', 'in', 20000, '2026-10-07T14:00:10Z')])         # outside its window
+    worker = SyncWorker(journal)
+    written = []
+    original = workspace.write
+    monkeypatch.setattr(workspace, 'write', lambda db, state: written.append(1) or original(db, state))
+    for second in range(3):
+        write(bridge, [tick(20001 + second, f'2026-10-07T14:00:1{second}Z')])
+        worker.poll()
+    assert journal.workspace()['drafts'][id]['state'] == 'armed' and written == []
+

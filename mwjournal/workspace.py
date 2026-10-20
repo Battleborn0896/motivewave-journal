@@ -366,6 +366,7 @@ class Workspace:
             db.execute('BEGIN IMMEDIATE')
             state, library = read(db), tagging.library(db)
             armed = [d for d in state['drafts'].values() if d['state'] in ('armed', 'ambiguous')]
+            before = [(d['state'], d.get('trade_id')) for d in armed]
             candidates = {d['id']: [t for t in trades if (t.provider, t.account, t.symbol) ==
                                    (d['provider'], d['account'], d['symbol']) and d['start'] <= t.opened < d['end']
                                    and t.id not in d.get('existing_trades', [])]
@@ -403,7 +404,9 @@ class Workspace:
                 review['draft_id'] = draft['id']
                 db.execute('INSERT OR REPLACE INTO annotations VALUES(?,?)', (trade.id, json.dumps(review, allow_nan=False)))
                 draft.update(state='attached', trade_id=trade.id)
-            write(db, state)
+            # The watcher asks every second, and a draft can wait armed for hours: write only what changed.
+            if [(d['state'], d.get('trade_id')) for d in armed] != before:
+                write(db, state)
 
     def cancel_draft(self, id):
         def cancel(state, library):
