@@ -372,9 +372,9 @@ def detail(journal, trade, ids, zone) -> None:
                     f"<span class='when'>{common.moment(trade.opened, zone)}</span></div>", unsafe_allow_html=True)
         st.caption(f'{position + 1} of {len(ids)}', width='content')
     annotation = journal.annotations().get(trade.id, {})
-    live = trade.status == 'open'          # an open trade follows the market: see live_numbers at the end
+    live = journals.live(journal, trade)   # an open trade follows the market: see live_numbers at the end
     if live:
-        live_numbers(journals.Live(journal, trade), trade, annotation, zone)
+        live_numbers(live, trade, annotation, zone)
     else:
         numbers(journal, trade, annotation, zone)
     if trade.point_value is None:
@@ -386,7 +386,7 @@ def detail(journal, trade, ids, zone) -> None:
         chart_col, tag_col = st.columns([1.35, 1], gap='small')
         with chart_col:
             if live:
-                live_chart(journals.Live(journal, trade), trade, annotation, zone)
+                live_chart(live, trade, annotation, zone)
             else:
                 chart_panel(journal, trade, annotation, zone)
         with tag_col:
@@ -714,6 +714,6 @@ def chart_panel(journal, trade, annotation: dict, zone) -> None:
 
 
 # An open trade's numbers and chart are drawn again every LIVE from what the watcher has stored by then, the
-# rest of the page staying as it is; they read through journals.Live. A closed trade's are drawn once.
+# rest of the page staying as it is; they read through journals.live. A closed trade's are drawn once.
 live_numbers = st.fragment(run_every=LIVE)(numbers)
 live_chart = st.fragment(run_every=LIVE)(chart_panel)

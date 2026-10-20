@@ -200,6 +200,7 @@ def apply_preview(journal, preview: Preview) -> dict:
     if preview.dataset is not None and preview.dataset != journal.dataset:
         raise ValueError('Preview belongs to the other trading environment.')
     with journal.connect() as db:
+        db.execute('BEGIN IMMEDIATE')          # one import, and a relabel count no other writer can add to
         before = journal.fills_revision(db)
         added = journal.ingest(preview.fills, db=db) if preview.fills else 0
         # Fills already held whose writer described them again: a reworded quality label, or the

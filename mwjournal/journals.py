@@ -130,21 +130,29 @@ def account_alias(capture, provider, account, name):
 
 class Live:
     """A journal as an open trade's one-second redraw reads it: its own settings, reviews and keys, with
-    prices, measurements, gaps and orders read where the watcher writes them as they arrive, the capture
-    journal. A named journal holds copies of those, brought up to date only when the whole page is drawn
-    (open_named), which a redraw does not do. Only for a trade the capture journal measures as this journal
-    holds it: fills or a multiplier added to a named journal alone make it another trade there, and its own
-    copy is then the only one."""
+    prices, measurements, gaps and orders read where the watcher writes them as they arrive. See live()."""
     MARKET = frozenset({'path', 'prices', 'price_sources', 'metric_options', 'best_metric', 'capture_gaps',
                         'trade_clock', 'protection_events'})
 
-    def __init__(self, journal, trade):
-        self.journal = journal
-        capture = getattr(journal, 'capture_journal', None)
-        self.market = capture if capture is not None and capture.metric_options(trade) else journal
+    def __init__(self, journal, market):
+        self.journal, self.market = journal, market
 
     def __getattr__(self, name):
         return getattr(self.market if name in self.MARKET else self.journal, name)
+
+
+def live(journal, trade):
+    """The journal an open trade's redraw reads, or None when nothing would change between redraws. The
+    watcher measures the capture journal as prices arrive; a named journal holds copies, brought up to date
+    only when the whole page is drawn (open_named), so its redraw reads the capture journal, but only for a
+    trade the capture measures as the named journal holds it: one changed there alone (a fill added by
+    hand, its own multiplier) is measured by nothing as it trades, and is drawn once like a closed trade."""
+    if trade.status != 'open':
+        return None
+    capture = getattr(journal, 'capture_journal', None)
+    if capture is None:
+        return Live(journal, journal)
+    return Live(journal, capture) if capture.metric_options(trade) else None
 
 
 def alias(capture, scope):

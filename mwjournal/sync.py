@@ -194,17 +194,16 @@ class SyncWorker:
                 self.journal.put('sync_status', name, {'checked': now, **waiting})
             except (OSError, ValueError, UnicodeError) as exc:
                 self.journal.put('sync_status', name, {'status': 'needs attention', 'checked': now, 'error': str(exc)})
-        self.trades()
+        # Drafts are matched at every poll, as cancelling one can settle another; from the kept trades.
+        self.journal.reconcile_drafts(self.trades())
         self.recalculate()
 
     def trades(self):
         """The journal's trades, built again only when its fills or multipliers changed: new prices arrive at
-        nearly every poll and change no trade. A pre-trade draft can only attach to a trade new fills made,
-        so drafts are matched then too."""
+        nearly every poll and change no trade."""
         version = self.journal.fills_version()
         if version != self.trades_version:
             self.trade_list, self.trades_version = self.journal.trades(), version
-            self.journal.reconcile_drafts(self.trade_list)
         return self.trade_list
 
     def recalculate(self):

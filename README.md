@@ -24,9 +24,9 @@ study: click **Install MotiveWave Study**, then quit MotiveWave completely and o
   when it opens is, because it can be back-adjusted after a roll.
 - **An open trade is live.** While a trade is open, its chart, **Open P&L** (at the newest price its
   MAE and MFE were measured with; the exit's fees are not in yet), MAE and MFE are drawn again every
-  second, in a named journal too. The minute in progress is drawn from the study's prints until MotiveWave's own candle for it
-  arrives. A chart you zoomed or panned keeps your view, and while it shows the newest candle it moves
-  along with new ones. The study writes to disk four times a second, the app reads it every second and the
+  second, in a named journal too. The minute in progress is drawn from the study's prints until
+  MotiveWave's own candle for it arrives. A chart you zoomed or panned keeps your view, and while it
+  shows the newest candle it moves along with new ones. The study writes to disk four times a second, the app reads it every second and the
   page redraws every second, so it runs one to three seconds behind MotiveWave. The **More → MAE / MFE**
   tab, with the price path, is drawn once and shows the trade as it was when the page opened.
 - **Trades already in your journal are measured again once**, in the background, the first time the new
