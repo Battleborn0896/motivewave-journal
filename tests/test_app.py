@@ -513,6 +513,27 @@ def test_trade_rows_are_built_again_only_when_something_they_show_changed(home, 
     assert clicks(app.run) == 1 and '17.00' in app.button(key=f'pick-{trade.id}-live').label
 
 
+def test_stats_choices_are_still_chosen_after_another_tab_was_open(home):
+    """Only the open Stats tab is drawn, and Streamlit forgets the value of a widget a run does not draw."""
+    seed_preview(home)
+    app = open_tab(open_app('Edge'), 'Compare')
+    assert widget(app.selectbox, 'Compare by').value == 'Tags'
+    widget(app.selectbox, 'Compare by').set_value('Playbooks').run()
+    open_tab(app, 'Runners')
+    assert widget(app.selectbox, 'Runner comparison horizon').value == 15
+    assert widget(app.checkbox, 'Only winning trades').value
+    widget(app.selectbox, 'Runner comparison horizon').set_value(120)
+    widget(app.selectbox, 'Compare runners by').set_value('tag_categories')
+    widget(app.checkbox, 'Only winning trades').uncheck()
+    press(app, 'Compare Runners')
+    open_tab(app, 'Overview')
+    open_tab(app, 'Compare')
+    assert widget(app.selectbox, 'Compare by').value == 'Playbooks'
+    open_tab(app, 'Runners')
+    assert (widget(app.selectbox, 'Runner comparison horizon').value, widget(app.selectbox, 'Compare runners by').value,
+            widget(app.checkbox, 'Only winning trades').value) == (120, 'tag_categories', False)
+
+
 def test_simple_navigation_and_optional_controls_do_not_remove_reviews(home):
     seed_preview(home)
     app = open_app(review=False)

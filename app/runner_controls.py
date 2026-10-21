@@ -92,19 +92,24 @@ def edge_panel(journal, rows):
     """Which tags leave room for a runner. It reads the prices after every exit, so it runs only when asked: the
     choices sit in a form, and the table is built when Compare Runners is pressed."""
     labels = {'tags': 'Individual tags', 'tag_categories': 'Tag categories', 'setup': 'Setup / playbook'}
+    # The choices last compared stay chosen while another Stats tab is open.
+    remember = common.keep({common.key(journal, name): default for name, default in (
+        ('runner-edge-horizon', 15), ('runner-edge-stop', 'original'), ('runner-winners', True),
+        ('runner-one-r', False), ('runner-group', 'tags'))})
     with st.form(common.key(journal, 'runner-edge'), border=False):
-        minutes = st.selectbox('Runner comparison horizon', HORIZONS, index=1, format_func=lambda n: f'{n} minutes',
+        minutes = st.selectbox('Runner comparison horizon', HORIZONS, format_func=lambda n: f'{n} minutes',
                                key=common.key(journal, 'runner-edge-horizon'),
                                help='The same time after exit for every trade. Ticks, candle estimates and simulated '
                                     'replay are grouped separately; incomplete windows are left out, not counted as zero.')
         stop_mode = st.selectbox('Runner comparison stop', list(STOPS), format_func=STOPS.get,
                                  key=common.key(journal, 'runner-edge-stop'))
-        winners = st.checkbox('Only winning trades', value=True, key=common.key(journal, 'runner-winners'))
+        winners = st.checkbox('Only winning trades', key=common.key(journal, 'runner-winners'))
         one_r = st.checkbox('Only exits near 1R · 0.8–1.2R', key=common.key(journal, 'runner-one-r'),
                             help='Needs the trade\'s stop. Uses the actual net result divided by the risk to that stop.')
         group = st.selectbox('Compare runners by', list(labels), format_func=labels.get,
                              key=common.key(journal, 'runner-group'))
-        asked = st.form_submit_button('Compare Runners', help='Reads the prices after every exit you selected.')
+        asked = st.form_submit_button('Compare Runners', on_click=remember,
+                                      help='Reads the prices after every exit you selected.')
     if not asked:
         return
     selected = [r for r in rows if r['status'] == 'closed' and r.get('net') is not None and not r.get('merge_leg_ids')

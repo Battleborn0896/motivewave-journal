@@ -274,8 +274,9 @@ def excursion(journal, closed):
 def comparisons(journal, closed):
     st.markdown('### What Worked Best?', help=COMPARE_HELP)
     options = [*SEGMENTS, 'Tags', 'Setups', 'Playbooks']
-    field = st.columns([1, 2])[0].selectbox('Compare by', options, index=options.index('Tags'),
-                                            key=common.key(journal, 'edge-segment'),
+    segment = common.key(journal, 'edge-segment')
+    remember = common.keep({segment: 'Tags'})          # still chosen after another tab has been open
+    field = st.columns([1, 2])[0].selectbox('Compare by', options, key=segment, on_change=remember,
                                             help='Times use your display time zone.')
     if field in ('Tags', 'Setups', 'Playbooks'):
         grouped_rows = grouped(closed, {'Tags': 'tags', 'Setups': 'setup', 'Playbooks': 'playbooks'}[field])

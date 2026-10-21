@@ -113,6 +113,23 @@ def tabs(labels, key: str):
     return st.tabs(list(labels), key=key, on_change=remember)
 
 
+def keep(defaults: dict):
+    """Gives each widget key in `defaults` that Streamlit has forgotten the value its widget last had (else its
+    default), before the widget is drawn, and returns the function that keeps new values: the widget's on_change,
+    or the on_click of the submit button of the form the widgets sit in. As in tabs(), the values are kept under
+    keys of their own, because Streamlit forgets the value of a widget a run does not draw, and a Stats tab is
+    drawn only while it is open. The widgets themselves take no default (Streamlit warns about a widget given
+    both)."""
+    for name, default in defaults.items():
+        if name not in st.session_state:
+            st.session_state[name] = st.session_state.get(name + '-chosen', default)
+
+    def remember():
+        for name in defaults:
+            st.session_state[name + '-chosen'] = st.session_state.get(name, defaults[name])
+    return remember
+
+
 def stamp(journal):
     """Changes when there is something new to show: a fill, or a trade's first excursions. Streaming
     prices revise excursions in place and leave it alone, so an open position does not redraw the page."""
