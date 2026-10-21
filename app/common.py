@@ -366,6 +366,8 @@ def no_excursions(journal, trade) -> str:
     prices at all."""
     if trade.incomplete:
         return UNKNOWN[trade.incomplete[0]]
+    if trade.closed is not None and trade.closed == trade.opened:
+        return 'Entered and exited at the same moment: there is no price path to measure.'
     if replay_ticks_pending(journal, trade):
         return REPLAY_TICKS_LATER
     kinds = {m.get('precision') for m in journal.metric_options(trade)} - {'pending', None}
@@ -554,7 +556,8 @@ def rows_for(journal) -> list[dict]:
                      'ratings': {id: rating(library, tag_ids, definition) for id, definition in workspace['ratings'].items()},
                      'mae': m.get('mae'), 'mfe': m.get('mfe'),
                      'precision': PRECISION.get(m.get('precision'), 'Waiting for data'),
-                     'r': trade.net / at_risk if trade.net is not None and at_risk else None,
+                     # An open trade's net is only its fees so far: it has no R until it is closed.
+                     'r': trade.net / at_risk if trade.status == 'closed' and trade.net is not None and at_risk else None,
                      'mae_r': m['mae'] / at_risk if m.get('mae') is not None and at_risk else None,
                      'mfe_r': m['mfe'] / at_risk if m.get('mfe') is not None and at_risk else None,
                      # The calendar day of entry in the display time zone: what date filters compare.

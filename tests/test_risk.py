@@ -324,7 +324,7 @@ def test_the_drafts_menu_arms_a_draft_with_a_stop_price(home):
     app = open_app()
     menu(app, 'Drafts')
     assert not any(w.label.startswith('Planned total risk') for w in app.number_input)
-    widget(app.text_input, 'Stop · optional').set_value('4995')
+    widget(app.text_input, 'Stop · optional').set_value('4,995')          # typed as prices are shown
     menu(app, 'Drafts', run=False)
     press(app, 'Arm Draft')
     (draft,) = journal.workspace()['drafts'].values()
@@ -353,3 +353,19 @@ def test_mae_and_mfe_in_r_divide_by_the_risk_to_the_stop_order(home):
     # $100 against and $300 for the trade, over the $200 its stop order risked.
     assert widget(app.metric, 'MAE').value == '0.50R' and widget(app.metric, 'MFE').value == '1.50R'
     assert common.rows_for(journal)[0]['mae_r'] == pytest.approx(.5)
+
+
+def test_a_trade_in_and_out_at_the_same_moment_keeps_its_stop_and_says_why_it_has_no_path(home):
+    journal = Journal()
+    t = trade(journal, ('in', 'buy', 1, 5000, 0), ('out', 'sell', 1, 4996, 0))
+    assert settles_at(t) == instant(at(0))                       # never before the first fill
+    assert plan(t, {}, [order(0, 4996)]).risk == 200
+    assert common.no_excursions(journal, t) == 'Entered and exited at the same moment: there is no price path to measure.'
+
+
+def test_an_open_trade_has_no_r_until_it_is_closed(home):
+    journal = Journal()
+    trade(journal, ('in', 'buy', 1, 5000, 0))
+    journal.ingest_protection([order(0, 4996)])
+    row, = common.rows_for(journal)
+    assert row['status'] == 'open' and row['r'] is None          # its net so far is only the commission

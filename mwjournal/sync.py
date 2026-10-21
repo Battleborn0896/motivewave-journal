@@ -203,6 +203,7 @@ class SyncWorker:
         version = self.journal.fills_version()
         if version != self.trades_version:
             self.trade_list, self.trades_version = self.journal.trades(), version
+            self.journal.reattach_reviews(self.trade_list)      # regrouped fills keep their reviews
         return self.trade_list
 
     def recalculate(self):
