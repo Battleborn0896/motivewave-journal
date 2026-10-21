@@ -61,8 +61,14 @@ public final class JournalProbesTest {
     for (int i = 0; i < 7; i++) capture.ticked(liveChart, false);
     capture.ticked(replayChart, false);                        // another chart's prints are not counted
     for (int i = 0; i < 5; i++) listeners.getFirst().onTick(tick(fillTime));
-    // A new fill, seen 2.5 s after its time: the largest delay so far.
-    fills.add(fill("n2", "NQZ6", System.currentTimeMillis() - 2500, false));
+    // An account that connects after the study started brings its earlier fills: history, not a delay.
+    fills.add(new Fill("p1", "prop", "ESZ6", true, 1, 100, fillTime + 2000, 1, 50, "USD", "o-p1", "", false, false));
+    capture.poll(now + SECOND / 2);
+    lines = drain(capture);
+    assert count(lines, "largest fill delay") == 0 : "A fill from before the study started: " + lines;
+    // A new fill, dated now: the largest delay so far.
+    Thread.sleep(5);
+    fills.add(fill("n2", "NQZ6", System.currentTimeMillis(), false));
     capture.poll(now + SECOND);
     lines = drain(capture);
     assert count(lines, "largest fill delay so far (live): ") == 1 && count(lines, "a NQZ6 fill at") == 1 : lines;

@@ -79,7 +79,7 @@ final class JournalAccountCapture {
   // The replay clock is saved when the run changes, and otherwise at most this often (and when the study closes).
   static final long CLOCK_EVERY_NANOS = 10_000_000_000L;
   static final String NO_POSITION = "no position on that account and contract",
-      OWN_SIDE = "only positions on the stop's own side", NOT_DURING = "no position at the stop's time";
+      OWN_SIDE = "the open position is on the stop's own side", NOT_DURING = "no position at the stop's time";
   private static final int LOG_CAP = 500;
   static final String QUALITY = "MotiveWave internal capture; fees may be estimated";
   static final String CURRENCY_ASSUMED = "account currency assumed from the instrument";
@@ -447,61 +447,115 @@ final class JournalAccountCapture {
 
   // ---------------------------------------------------------------- stops
 
-  /** One position of one account and contract, as the stop link rule sees it: the fills of that account and
-   * contract (and replay run) netted flat to flat in time order, a reversal starting the next position with
-   * the fill that crosses, which is how the app groups fills without a position id (matching.py). first is
-   * its first fill and provider the one that fill was written under; to is its last fill's time. */
+  /** One position of one account and contract, as the stop link rule sees it: a trade as the app groups the
+   * fills (matching.py). first is its first fill and provider the one that fill was written under; from and to
+   * are its first and last fills' times; open while contracts are held. */
   record Position(Book book, boolean longSide, JournalNativeAccess.Fill first, String provider, long from, long to,
                   boolean open) {}
 
-  /** The positions of these fills, by book. providerOf names the provider a fill was written under, or null
-   * for a fill not written yet, which is left out. Live books have the run "", replay books their provider. */
+  /** The positions of these fills, by account and contract (and replay run), grouped by matching.py's rules:
+   * fills with MotiveWave's position id are netted inside that position, the others flat to flat; a reversal
+   * starts the next position with the fill that crosses; at one instant a fill MotiveWave calls an entry of its
+   * position comes first. A position whose kept fills contradict its entry flags (its entry is not kept) is
+   * never open, nor is one that a newer position id of the same account and contract has replaced. Without the
+   * position ids, one fill MotiveWave does not hold (a SIM account reset in mid-trade, say) offsets every later
+   * position of that account and contract, and their stops go to the wrong one or to none.
+   * providerOf names the provider a fill was written under, or null for a fill not written yet, which is left
+   * out as the app has not got it. Live books have the run "", replay books their provider. */
   static Map<Book, List<Position>> positions(List<JournalNativeAccess.Fill> fills,
                                              Function<JournalNativeAccess.Fill, String> providerOf) {
     var ordered = new ArrayList<>(fills);
-    // matching.py's order: by time, and at one instant a fill MotiveWave calls an entry of its position first.
     ordered.sort(Comparator.comparingLong(JournalNativeAccess.Fill::time)
         .thenComparing(f -> f.positionId().isBlank() || !f.entry()));
-    final class Open { JournalNativeAccess.Fill first; String provider; double net; long last; }
-    var result = new HashMap<Book, List<Position>>();
-    var open = new HashMap<Book, Open>();
+    final class Trade {
+      final Book book; final String id; final boolean longSide; final JournalNativeAccess.Fill first; final String provider;
+      double held; long to; boolean entryMissing;
+      Trade(Book book, String id, boolean longSide, JournalNativeAccess.Fill first, String provider) {
+        this.book = book; this.id = id; this.longSide = longSide; this.first = first; this.provider = provider;
+      }
+    }
+    record Key(Book book, String id) {}
+    var trades = new ArrayList<Trade>();
+    var open = new HashMap<Key, Trade>();
+    var settled = new HashMap<Key, Trade>();
+    var newest = new HashMap<Book, Map<String, Integer>>(); // the last fill of each position id, as an index
+    int index = 0;
     for (var fill : ordered) {
       String provider = providerOf.apply(fill);
       if (provider == null) continue;
+      index++;
       Book book = new Book(fill.replay(), fill.account(), fill.symbol(), fill.replay() ? provider : "");
-      double signed = fill.buy() ? fill.qty() : -fill.qty();
-      Open held = open.get(book);
-      double after = held == null ? signed : held.net + signed;
-      if (held != null && (Math.abs(after) <= FLAT || Math.signum(after) != Math.signum(held.net))) {
-        result.computeIfAbsent(book, b -> new ArrayList<>()).add(
-            new Position(book, held.net > 0, held.first, held.provider, held.first.time(), fill.time(), false));
-        open.remove(book);
-        held = null;
+      String id = fill.positionId();
+      var key = new Key(book, id);
+      if (!id.isBlank()) newest.computeIfAbsent(book, b -> new HashMap<>()).put(id, index);
+      Trade trade = open.get(key);
+      if (!id.isBlank() && (trade == null || !trade.entryMissing)) {
+        boolean adds = trade != null && trade.longSide == fill.buy();
+        double held = trade == null ? 0 : trade.held;
+        // MotiveWave says this fill reduced its position but nothing kept was there to reduce, or that it
+        // opened or added to one while it reduces: the position began before its kept fills (ENTRY_MISSING).
+        if (!fill.entry() && (adds || fill.qty() > held + FLAT)
+            || fill.entry() && trade != null && !adds && fill.qty() <= held + FLAT) {
+          if (trade == null) {
+            trade = settled.get(key);
+            if (trade == null) trades.add(trade = new Trade(book, id, !fill.buy(), fill, provider));
+            open.put(key, trade);
+          }
+          trade.entryMissing = true;
+        }
       }
-      if (Math.abs(after) <= FLAT) continue;
-      if (held == null) { // a new position, or the rest of a fill that reversed one
-        held = new Open();
-        held.first = fill;
-        held.provider = provider;
-        open.put(book, held);
+      if (trade != null && trade.entryMissing) { // kept together, never netted
+        trade.held = 0;
+        trade.to = fill.time();
+        continue;
       }
-      held.net = after;
-      held.last = fill.time();
+      double remaining = fill.qty();
+      while (remaining > FLAT) {
+        if (trade == null) {
+          trades.add(trade = new Trade(book, id, fill.buy(), fill, provider));
+          open.put(key, trade);
+        }
+        boolean entry = trade.longSide == fill.buy();
+        double take = entry ? remaining : Math.min(remaining, trade.held);
+        trade.held += entry ? take : -take;
+        trade.to = fill.time();
+        remaining -= take;
+        if (trade.held < FLAT) { // flat: what is left of the fill starts the next position
+          trade.held = 0;
+          settled.put(key, open.remove(key));
+          trade = null;
+        }
+      }
     }
-    open.forEach((book, held) -> result.computeIfAbsent(book, b -> new ArrayList<>()).add(
-        new Position(book, held.net > 0, held.first, held.provider, held.first.time(), held.last, true)));
+    var result = new HashMap<Book, List<Position>>();
+    for (var trade : trades) {
+      Map<String, Integer> last = trade.id.isBlank() ? Map.of() : newest.get(trade.book);
+      // One account holds one position per contract: once MotiveWave moved on to another position id, this one
+      // ended in a fill it did not keep (EXIT_MISSING).
+      boolean replaced = !trade.id.isBlank() && last.entrySet().stream()
+          .anyMatch(other -> !other.getKey().equals(trade.id) && other.getValue() > last.get(trade.id));
+      boolean held = trade.held > FLAT && !trade.entryMissing && !replaced;
+      result.computeIfAbsent(trade.book, b -> new ArrayList<>()).add(new Position(trade.book, trade.longSide,
+          trade.first, trade.provider, trade.first.time(), trade.to, held));
+    }
     return result;
   }
 
   /** The stop link rule, for a stop on the same mode, account and contract (and replay run) as these positions
    * and on their closing side (a sell stop for a long, a buy stop for a short): a working stop goes to the open
-   * position, otherwise to the position held at the order's last-modified time. Null when there is none. The
-   * order's parent and position ids play no part: prop accounts fill with no position id and no entry flag. */
+   * position, otherwise to the position held at the order's last-modified time, from its first fill to its last
+   * (to now while open). At the instant one position ends and the next begins, a stop that ended then (filled,
+   * cancelled or rejected) ended with the first, and a working one was placed for the next. Null when there is
+   * none. The order's parent and position ids play no part: prop accounts fill with no position id and no
+   * entry flag. */
   static Position link(List<Position> closingSide, JournalNativeAccess.ProtectiveOrder order) {
     if (order.working()) for (var position : closingSide) if (position.open()) return position;
     Position held = null;
     for (var position : closingSide)
-      if (position.from() <= order.time() && (position.open() || order.time() <= position.to())) held = position;
+      if (position.from() <= order.time() && (position.open() || order.time() <= position.to())) {
+        held = position;
+        if (!order.working()) break; // positions are in time order: the first one held then is the one it ended with
+      }
     return held;
   }
 
@@ -552,12 +606,12 @@ final class JournalAccountCapture {
             order.replay() ? replayProvider : ""), List.of());
         var closing = book.stream().filter(p -> p.longSide() != order.buy()).toList();
         if (book.isEmpty()) reason = NO_POSITION;
-        else if (closing.isEmpty()) { withPosition++; reason = OWN_SIDE; }
         else {
-          withPosition++; closingSide++;
-          position = link(closing, order);
-          if (position == null) reason = NOT_DURING;
-          else links.put(id, position);
+          withPosition++;
+          if (!closing.isEmpty()) { closingSide++; position = link(closing, order); }
+          if (position != null) links.put(id, position);
+          // The account's history has positions on both sides, so what says why is the position open now.
+          else reason = book.stream().anyMatch(p -> p.open() && p.longSide() == order.buy()) ? OWN_SIDE : NOT_DURING;
         }
       }
       if (position == null) {

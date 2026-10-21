@@ -56,7 +56,7 @@ final class JournalProbes {
   }
 
   private final Consumer<String> log;
-  private final long started;
+  private final long started, startedWall;
   private final Map<Object, Chart> charts = new ConcurrentHashMap<>();
   // Poll thread only.
   private final Set<Chart> told = new HashSet<>();
@@ -70,6 +70,7 @@ final class JournalProbes {
   JournalProbes(Consumer<String> log, long startedNanos) {
     this.log = log;
     this.started = startedNanos;
+    this.startedWall = System.currentTimeMillis();
   }
 
   // ---------------------------------------------------------------- chart callbacks (MotiveWave's threads)
@@ -121,12 +122,14 @@ final class JournalProbes {
   }
 
   /** The largest time between a fill and the poll that first saw it, per mode. The first snapshot is
-   * MotiveWave's history, not something that just happened, so only fills after it count. Replay fills
-   * are measured on the replay clock, the time they belong to. */
+   * MotiveWave's history, not something that just happened, so only fills after it count, and of live fills
+   * only those dated after the study started: an account that connects later brings its earlier fills with
+   * it. Replay fills are measured on the replay clock, the time they belong to. */
   private void delays(List<JournalNativeAccess.Fill> fills, long replayClock) {
     long wall = System.currentTimeMillis();
     for (var fill : fills) {
-      if (!known.add((fill.replay() ? "replay\0" : "live\0") + fill.account() + "\0" + fill.id()) || !baseline) continue;
+      if (!known.add((fill.replay() ? "replay\0" : "live\0") + fill.account() + "\0" + fill.id()) || !baseline
+          || !fill.replay() && fill.time() < startedWall) continue;
       long seen = fill.replay() ? replayClock : wall;
       if (seen <= 0) continue;
       int mode = fill.replay() ? 1 : 0;

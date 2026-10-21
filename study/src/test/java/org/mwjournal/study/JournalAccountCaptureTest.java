@@ -122,6 +122,12 @@ public final class JournalAccountCaptureTest {
     propStops(folder);
     stopsThatMoveAndFill(folder);
     restartedStops(folder);
+    simStops(folder);
+    backToBack(folder);
+    ownSideBesideHistory(folder);
+    leftWorkingAfterFlat(folder);
+    cancelledAndReplaced(folder);
+    replayStops(folder);
     if (Boolean.getBoolean("mwj.checkNativeContract")) {
       // Resolve only public method contracts; NEVER invoke the reader outside MotiveWave.
       assert JournalNativeAccess.connect(JournalAccountCaptureTest.class.getClassLoader()) != null;
@@ -132,7 +138,9 @@ public final class JournalAccountCaptureTest {
       for (var path : left.sorted(java.util.Comparator.reverseOrder()).toList()) Files.delete(path);
     }
     System.out.println("Journal account capture passed: separate environments, manual fills, linked stops (prop "
-        + "fills with no position id, the stop's own side, a moved and a filled stop, a restart), no event built for "
+        + "fills with no position id, SIM position ids with a fill MotiveWave does not hold, the stop's own side, a moved, "
+        + "a replaced and a filled stop, back-to-back positions, a stop left working after a flat, a restart, a replay "
+        + "rewind), no event built for "
         + "an unchanged fill, the replay clock saved on a rewind or every 10 s, rewinds, restart identities, "
         + "conflicts and visible failures.");
   }
@@ -239,14 +247,14 @@ public final class JournalAccountCaptureTest {
     assert capture.warnings.equals("1 fill with an assumed currency") : "Within the grace nothing is said: " + capture.warnings;
     capture.poll(now + JournalAccountCapture.UNLINKED_GRACE_NANOS);
     assert capture.warnings.equals("1 fill with an assumed currency; 2 working stop orders not linked to a position: "
-        + "1 no position on that account and contract, 1 only positions on the stop's own side (orders: 5 read, 4 stop, "
+        + "1 no position on that account and contract, 1 the open position is on the stop's own side (orders: 5 read, 4 stop, "
         + "1 new, 0 without instrument, 0 without state, 2 with a position, 1 on the closing side, 1 linked)")
         : capture.warnings;
     var logged = new ArrayList<String>();
     capture.drainLog(logged::add);
     var said = logged.stream().filter(line -> line.contains("is not linked")).toList();
     assert said.size() == 2 && said.stream().anyMatch(line -> line.contains("\"8813\"")
-        && line.contains("only positions on the stop's own side") && line.contains("account \"LFE0001\"")
+        && line.contains("the open position is on the stop's own side") && line.contains("account \"LFE0001\"")
         && line.contains("symbol \"MNQZ6\"") && line.contains("sell, working")
         && line.contains("live positions open: \"LFE0001\" \"MNQZ6\" short")) : said;
     capture.poll(now + 2 * JournalAccountCapture.UNLINKED_GRACE_NANOS);
@@ -307,6 +315,151 @@ public final class JournalAccountCaptureTest {
     assert lines.stream().noneMatch(line -> line.contains("\"old-oco\"")) : "Never linked to the later position";
     assert lines.stream().anyMatch(line -> line.contains("\"old-moved\"") && line.contains("\"entry_execution_id\":\"r1\""));
     assert lines.stream().anyMatch(line -> line.contains("\"new\"") && line.contains("\"entry_execution_id\":\"r3\""));
+  }
+
+  /** His SIM account's fills carry MotiveWave's position id, and on its main contract one position's exit was
+   * never kept (a SIM reset, say): netted flat to flat, every later position of that account and contract is off
+   * by one contract, a long looking flat and the time after its exit looking short. Grouped by position id as
+   * the app groups them, each position keeps its own stop. */
+  private static void simStops(Path folder) throws Exception {
+    var file = folder.resolve("sim.ndjson");
+    var fills = new ArrayList<Fill>(List.of(
+        sim("stale", false, 1, 21000, TIME - 86_400_000L, "P0", true),    // a short whose exit MotiveWave never kept
+        sim("l1", true, 1, 21010, TIME, "P1", true)));                     // a long now
+    var orders = new ArrayList<ProtectiveOrder>(List.of(simStop("below", false, "working", 21000, TIME + 20)));
+    var capture = JournalAccountCapture.fixture(file, () -> new Snapshot("workspace", List.copyOf(fills), List.copyOf(orders)));
+    capture.poll();
+    fills.add(sim("l2", false, 1, 21020, TIME + 60_000, "P1", false));
+    orders.set(0, simStop("below", false, "cancelled", 21000, TIME + 60_010));
+    fills.add(sim("s1", false, 1, 21015, TIME + 120_000, "P2", true));     // then a short
+    orders.add(simStop("above", true, "working", 21025, TIME + 120_020));
+    capture.poll();
+    capture.close();
+    var lines = protection(file);
+    assert lines.size() == 3 : lines;
+    assert lines.stream().filter(line -> line.contains("\"below\"")).allMatch(line -> line.contains("\"entry_execution_id\":\"l1\""))
+        && lines.stream().anyMatch(line -> line.contains("\"above\"") && line.contains("\"entry_execution_id\":\"s1\""))
+        : "Each stop with its own position: " + lines;
+    var book = JournalAccountCapture.positions(fills, fill -> "provider")
+        .get(new JournalAccountCapture.Book(false, "sim", "NQZ6", ""));
+    assert book.size() == 3 && !book.get(0).longSide() && !book.get(0).open() : "The stale short was replaced: " + book;
+    assert book.get(1).longSide() && book.get(1).first().id().equals("l1") && book.get(1).to() == TIME + 60_000;
+    assert !book.get(2).longSide() && book.get(2).first().id().equals("s1") && book.get(2).open();
+    // A position whose first kept fill is an exit: its entry is not kept, so it is never open.
+    var missing = JournalAccountCapture.positions(List.of(sim("x", false, 1, 21000, TIME, "P5", false)), fill -> "provider")
+        .get(new JournalAccountCapture.Book(false, "sim", "NQZ6", "")).getFirst();
+    assert missing.longSide() && !missing.open() : missing;
+  }
+
+  /** A long stopped out and a new long at the same instant, both closed when the study first sees their stops
+   * (after a restart). The filled stop stamped at that instant goes to the long it closed; a stop still working
+   * that was stamped then, as a bracket's stop is when its entry fills, to the long that began; a stop
+   * cancelled at the second long's exit to that long. */
+  private static void backToBack(Path folder) throws Exception {
+    var file = folder.resolve("back-to-back.ndjson");
+    var fills = List.of(prop("b1", true, 1, 5000, TIME), prop("b2", false, 1, 4990, TIME + 60_000),
+        prop("b3", true, 1, 4990, TIME + 60_000), prop("b4", false, 1, 5005, TIME + 120_000));
+    var orders = List.of(stop("first", "", "", false, "filled", 4990, TIME + 60_000),
+        stop("left", "", "", false, "working", 4980, TIME + 60_000),
+        stop("second", "", "", false, "cancelled", 4985, TIME + 120_000));
+    var capture = JournalAccountCapture.fixture(file, () -> new Snapshot("workspace", fills, orders));
+    capture.poll();
+    capture.close();
+    var lines = protection(file);
+    assert lines.size() == 3 && lines.stream().anyMatch(line -> line.contains("\"first\"") && line.contains("\"entry_execution_id\":\"b1\""))
+        && lines.stream().anyMatch(line -> line.contains("\"left\"") && line.contains("\"entry_execution_id\":\"b3\""))
+        && lines.stream().anyMatch(line -> line.contains("\"second\"") && line.contains("\"entry_execution_id\":\"b3\"")) : lines;
+  }
+
+  /** A buy stop above a long, on an account that was short earlier: the reason given is the long open now. */
+  private static void ownSideBesideHistory(Path folder) throws Exception {
+    var file = folder.resolve("own-side.ndjson");
+    var fills = List.of(prop("o1", false, 1, 5000, TIME), prop("o2", true, 1, 4995, TIME + 60_000),
+        prop("o3", true, 1, 4990, TIME + 120_000));
+    var orders = List.of(stop("add", "", "", true, "working", 5010, TIME + 130_000));
+    var capture = JournalAccountCapture.fixture(file, () -> new Snapshot("workspace", fills, orders));
+    long now = System.nanoTime();
+    capture.poll(now);
+    capture.poll(now + JournalAccountCapture.UNLINKED_GRACE_NANOS);
+    assert capture.warnings.contains("1 working stop order not linked to a position: the open position is on the "
+        + "stop's own side (orders: 1 read, 1 stop, 0 new, 0 without instrument, 0 without state, 1 with a position, "
+        + "1 on the closing side, 0 linked)") : capture.warnings;
+    capture.close();
+    assert protection(file).isEmpty();
+  }
+
+  /** A long closed by hand with its stop left working, then another long with a stop of its own: the stop left
+   * working stays with the long it was placed for, says nothing while flat, and the new stop goes to the new long. */
+  private static void leftWorkingAfterFlat(Path folder) throws Exception {
+    var file = folder.resolve("left-working.ndjson");
+    var fills = new ArrayList<Fill>(List.of(prop("w1", true, 1, 5000, TIME)));
+    var orders = new ArrayList<ProtectiveOrder>(List.of(stop("left", "", "", false, "working", 4990, TIME + 10)));
+    var capture = JournalAccountCapture.fixture(file, () -> new Snapshot("workspace", List.copyOf(fills), List.copyOf(orders)));
+    long now = System.nanoTime();
+    capture.poll(now);
+    fills.add(prop("w2", false, 1, 5004, TIME + 60_000));
+    capture.poll(now + JournalAccountCapture.UNLINKED_GRACE_NANOS);
+    capture.poll(now + 2 * JournalAccountCapture.UNLINKED_GRACE_NANOS);
+    assert capture.warnings.equals("2 fills with an assumed currency") : "Linked, so nothing to say: " + capture.warnings;
+    fills.add(prop("w3", true, 1, 5002, TIME + 180_000));
+    orders.add(stop("new", "", "", false, "working", 4995, TIME + 180_010));
+    orders.set(0, stop("left", "", "", false, "working", 4991, TIME + 180_020));   // moved during the new long
+    capture.poll(now + 3 * JournalAccountCapture.UNLINKED_GRACE_NANOS);
+    capture.close();
+    var lines = protection(file);
+    assert lines.stream().filter(line -> line.contains("\"left\"")).count() == 2
+        && lines.stream().filter(line -> line.contains("\"left\"")).allMatch(line -> line.contains("\"entry_execution_id\":\"w1\""))
+        && lines.stream().anyMatch(line -> line.contains("\"new\"") && line.contains("\"entry_execution_id\":\"w3\"")) : lines;
+  }
+
+  /** A stop moved by cancelling it and placing another: both go to the position, and the new one takes it out. */
+  private static void cancelledAndReplaced(Path folder) throws Exception {
+    var file = folder.resolve("replaced.ndjson");
+    var fills = new ArrayList<Fill>(List.of(prop("c1", false, 1, 5000, TIME)));
+    var orders = new ArrayList<ProtectiveOrder>(List.of(stop("first", "", "", true, "working", 5010, TIME + 10)));
+    var capture = JournalAccountCapture.fixture(file, () -> new Snapshot("workspace", List.copyOf(fills), List.copyOf(orders)));
+    capture.poll();
+    orders.set(0, stop("first", "", "", true, "cancelled", 5010, TIME + 30_000));
+    orders.add(stop("second", "", "", true, "working", 5004, TIME + 30_001));
+    capture.poll();
+    fills.add(prop("c2", true, 1, 5004, TIME + 50_000));
+    orders.set(1, stop("second", "", "", true, "filled", 5004, TIME + 50_002));
+    capture.poll();
+    capture.close();
+    var lines = protection(file);
+    assert lines.size() == 4 && lines.stream().allMatch(line -> line.contains("\"entry_execution_id\":\"c1\"")) : lines;
+  }
+
+  /** Replay stops go to the positions of the replay run they are seen in: after a rewind a new stop goes to the new
+   * run's position, filed under that run, and the stop of the run before stays with its own position. */
+  private static void replayStops(Path folder) throws Exception {
+    var file = folder.resolve("replay-stops.ndjson");
+    var fills = new ArrayList<Fill>(List.of(fill("first", true, true, 1, 4800, TIME, "e1", "")));
+    var orders = new ArrayList<ProtectiveOrder>(List.of(order("before", "", "", "working", 4790, TIME + 10, true)));
+    var capture = JournalAccountCapture.fixture(file, () -> new Snapshot("workspace", List.copyOf(fills), List.copyOf(orders)));
+    String run = capture.replayRun("ESZ6", TIME + 20);
+    capture.poll();
+    String rewound = capture.replayRun("ESZ6", TIME - 60_000);
+    orders.set(0, order("before", "", "", "cancelled", 4790, TIME + 30, true));
+    fills.add(fill("again", true, true, 1, 4805, TIME - 50_000, "e2", ""));
+    orders.add(order("after", "", "", "working", 4795, TIME - 49_990, true));
+    capture.poll();
+    capture.close();
+    var lines = protection(JournalAccountCapture.replayFile(file));
+    assert lines.size() == 3 : lines;
+    assert lines.stream().filter(line -> line.contains("\"before\"")).allMatch(line -> line.contains(":replay:" + run + "\"")
+        && line.contains("\"entry_execution_id\":\"first\""));
+    assert lines.stream().anyMatch(line -> line.contains("\"after\"") && line.contains(":replay:" + rewound + "\"")
+        && line.contains("\"entry_execution_id\":\"again\"")) : lines;
+  }
+
+  /** A SIM fill as MotiveWave gives it: its position id, and whether it opened or added to that position. */
+  private static Fill sim(String id, boolean buy, double qty, double price, long time, String position, boolean entry) {
+    return new Fill(id, "sim", "NQZ6", buy, qty, price, time, 2.5, 20, "USD", "o-" + id, position, entry, false);
+  }
+
+  private static ProtectiveOrder simStop(String id, boolean buy, String state, double price, long time) {
+    return new ProtectiveOrder(id, "sim", "NQZ6", buy, "", "", state, price, time, false);
   }
 
   private static List<String> protection(Path file) throws Exception {
