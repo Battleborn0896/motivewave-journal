@@ -44,6 +44,14 @@ def study_installed() -> bool:
         return False
 
 
+def bundled_study_installed() -> bool:
+    """Whether the Extensions folder holds the very study this app comes with, not an older copy. Only looked at."""
+    try:
+        return JAR.is_file() and (study_extension_folder() / JAR.name).read_bytes() == JAR.read_bytes()
+    except OSError:
+        return False
+
+
 def install_study(jar: Path = JAR, destination: Path | None = None) -> tuple[Path, Path | None]:
     """Atomically install only this app's JAR; preserve the prior copy for easy recovery."""
     jar = Path(jar)
@@ -79,9 +87,9 @@ LIMITS = ('The study is read-only: it never places, changes or cancels an order.
           'Real Tick Data box is switched off, for a replay generated from bars. Once a replay trade is flat, the study '
           'also loads the real ticks of its holding time from MotiveWave\'s history, up to the replay\'s current '
           'time and no further; those count as real ticks of that run either way. Studies before 0.3.3 recorded no '
-          'live or replay ticks, before 0.3.4 labelled replay prints simulated, and before 0.3.5 linked no stop '
-          'order of an account whose fills carry no position id (most prop accounts): install the study again from '
-          'this page and restart MotiveWave.')
+          'live or replay ticks, before 0.3.4 labelled replay prints simulated, and before 0.3.6 recorded no stop '
+          'order at all: install the study again from this page. From 0.3.6 on, a new study takes over from the old '
+          'one in a few seconds; an older one keeps running until MotiveWave is quit and opened again.')
 
 
 def render(journal, rows) -> None:
@@ -126,10 +134,11 @@ def study_section() -> None:
         return
     if st.button('Install MotiveWave Study', key='connection-study-install',
                  help='Copies the study that came with this app into your MotiveWave Extensions folder. The copy '
-                      'already there is kept beside it as a backup. Restart MotiveWave afterwards.'):
+                      'already there is kept beside it as a backup.'):
         try:
             _, backup = install_study()
-            st.success('Installed. Restart MotiveWave to use it.'
+            st.success('Installed. MotiveWave starts it in a few seconds; if Setup still names an older study, quit '
+                       'MotiveWave completely and open it again.'
                        + (' The previous copy was kept as a backup.' if backup else ''))
         except (OSError, ValueError) as exc:
             st.error('The study could not be installed: ' + str(exc))

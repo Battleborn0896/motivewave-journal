@@ -59,7 +59,7 @@ public final class JournalAccountCaptureTest {
       var beats = lines.stream().filter(s -> s.contains("\"type\":\"heartbeat\"")).toList();
       assert !beats.isEmpty() : "Each environment gets its own heartbeat";
       assert beats.stream().allMatch(s -> s.contains("\"connector\":\"motivewave-journal-study\"")
-          && s.contains("\"connector_version\":\"0.3.5\"") && s.contains("\"provider\":\"motivewave-native\"")
+          && s.contains("\"connector_version\":\"0.3.6\"") && s.contains("\"provider\":\"motivewave-native\"")
           && s.endsWith("}")) : "Heartbeats name the writer and its version";
     }
 
@@ -128,6 +128,7 @@ public final class JournalAccountCaptureTest {
     leftWorkingAfterFlat(folder);
     leftWorkingAcrossRestart(folder);
     quietWhileFlat(folder);
+    stopWithoutInstrument(folder);
     cancelledAndReplaced(folder);
     replayStops(folder);
     if (Boolean.getBoolean("mwj.checkNativeContract")) {
@@ -453,6 +454,21 @@ public final class JournalAccountCaptureTest {
     var lines = protection(file);
     assert lines.size() == 1 && lines.getFirst().contains("\"bracket\"") && lines.getFirst().contains("\"entry_execution_id\":\"f3\"")
         : lines;
+  }
+
+  /** A working stop MotiveWave gives no instrument cannot be linked, so it is left out, but never in silence: the
+   * heartbeat says so (studies before 0.3.6 read every order's instrument the wrong way and dropped every stop). */
+  private static void stopWithoutInstrument(Path folder) throws Exception {
+    var file = folder.resolve("no-instrument.ndjson");
+    var fills = List.of(prop("n1", true, 1, 5000, TIME));
+    var capture = JournalAccountCapture.fixture(file, () -> new Snapshot("workspace", fills, List.of(), Map.of(),
+        new JournalNativeAccess.OrderCounts(3, 2, 0, 1, 0), Map.of()));
+    capture.poll(System.nanoTime());
+    assert capture.warnings.equals("1 fill with an assumed currency; 1 working stop order without an instrument, left "
+        + "out (orders: 3 read, 2 stop, 0 new, 1 without instrument, 0 without state, 0 with a position, "
+        + "0 on the closing side, 0 linked)") : capture.warnings;
+    capture.close();
+    assert protection(file).isEmpty();
   }
 
   /** A stop moved by cancelling it and placing another: both go to the position, and the new one takes it out. */

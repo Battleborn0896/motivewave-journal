@@ -727,8 +727,8 @@ def version_parts(text) -> tuple[int, ...] | None:
 
 def study_outdated(link) -> bool:
     """The study that reported in is ours and older than the one this app bundles. Studies before 0.3.3
-    never receive ticks, before 0.3.4 label replay prints simulated, and before 0.3.5 link no prop account's
-    stops, so Setup asks for the update. Another writer's version numbers are its own."""
+    never receive ticks, before 0.3.4 label replay prints simulated, and before 0.3.6 record no stop order,
+    so Setup asks for the update. Another writer's version numbers are its own."""
     if getattr(link, 'connector', '') != paths.STUDY_CONNECTOR:
         return False
     version = version_parts(getattr(link, 'version', ''))

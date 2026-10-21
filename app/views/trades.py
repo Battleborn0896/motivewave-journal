@@ -335,7 +335,7 @@ def options_menu(journal, rows, trade) -> None:
     st.markdown('**Chart**')
     sources = journal.price_sources(trade.symbol, trade) if trade else []
     if sources:
-        preferred = next((s for s in sources if s == 'motivewave-bars:1m'), sources[0])
+        preferred = default_source(sources)
         names = [PROVENANCE[provenance(s)] for s in sources]
         st.selectbox('Chart price source', sources, index=sources.index(preferred), key='chart-source-' + trade.id,
                      format_func=lambda s: PROVENANCE[provenance(s)] + (
@@ -687,15 +687,20 @@ def window_prices(journal, trade, source, start, end) -> list:
     return samples
 
 
+def default_source(sources) -> str:
+    """What a trade's chart is drawn from unless another source is chosen under Options: MotiveWave's 1-minute
+    bars (a replay trade's are its own run's), else the first source."""
+    return next((s for s in sources if provenance(s) == 'platform-bars'), sources[0])
+
+
 def chart_panel(journal, trade, annotation: dict, zone) -> None:
     sources = journal.price_sources(trade.symbol, trade)
     if not sources:
         st.info('No candles yet for this contract. Add the study to its chart in MotiveWave, or import '
                 '1-minute bars or ticks in Import.')
         return
-    preferred = next((s for s in sources if s == 'motivewave-bars:1m'), sources[0])
-    source = st.session_state.get('chart-source-' + trade.id, preferred)
-    source = source if source in sources else preferred
+    source = st.session_state.get('chart-source-' + trade.id)
+    source = source if source in sources else default_source(sources)
     context = st.session_state.get(common.key(journal, 'chart-context'), CONTEXT[0])
     levels = st.session_state.get(common.key(journal, 'chart-levels'), True)
     clock = journal.trade_clock(trade)

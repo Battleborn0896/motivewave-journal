@@ -10,7 +10,9 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardOpenOption;
 import java.time.Instant;
+import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ArrayBlockingQueue;
 import java.util.concurrent.TimeUnit;
@@ -22,6 +24,8 @@ final class JournalEventWriter {
    * still running in the same Java process. */
   static final String ANOTHER_COPY = "Another copy of the MotiveWave Journal study is still running: "
       + "quit MotiveWave completely and open it again.";
+  /** Why a copy that a newer copy took over from opens nothing more (JournalHandoff). */
+  static final String RETIRED = "A newer copy of the MotiveWave Journal study took over.";
   static final long FLUSH_MILLIS = 250;
   private static final Map<Path, JournalEventWriter> WRITERS = new HashMap<>();
   private final Path path;
@@ -41,6 +45,8 @@ final class JournalEventWriter {
   static JournalEventWriter acquire(Path requested) throws IOException {
     if (!requested.isAbsolute()) throw new IOException("Choose an absolute journal export path.");
     Path path = requested.normalize();
+    JournalHandoff.takeOver();
+    if (JournalHandoff.retired()) throw new IOException(RETIRED);
     synchronized (WRITERS) {
       JournalEventWriter writer = WRITERS.get(path);
       if (writer == null) {
@@ -181,6 +187,21 @@ final class JournalEventWriter {
         if (references == 0) WRITERS.remove(path, this);
       }
     }
+  }
+
+  /** Every writer of this copy, closed whatever its references, for a newer copy (JournalHandoff.retire): each
+   * writes what it holds, then lets go of its file and its lock. */
+  static void closeAll() {
+    List<JournalEventWriter> all;
+    synchronized (WRITERS) {
+      all = new ArrayList<>(WRITERS.values());
+      for (var writer : all) { writer.references = 0; writer.running = false; }
+    }
+    for (var writer : all) {
+      try { writer.thread.join(2000); }
+      catch (InterruptedException exc) { Thread.currentThread().interrupt(); return; }
+    }
+    synchronized (WRITERS) { WRITERS.values().removeIf(writer -> !writer.thread.isAlive()); }
   }
 
   void release() {

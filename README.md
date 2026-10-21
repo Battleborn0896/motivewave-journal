@@ -7,6 +7,30 @@ Live/paper and replay have separate databases. No routine CSV export/import is r
 MotiveWave Journal is an independent open-source project. It is not affiliated with, endorsed by or
 supported by MotiveWave Software.
 
+## What's new in 0.4.9: your stop orders are recorded, replay trades get charts, and no more restarts to update
+
+This release comes with study **0.3.6**.
+
+- **Stop orders are recorded, on every account.** No study before 0.3.6 ever recorded one: it asked
+  MotiveWave for each order's instrument in a way that never matched, and left out every stop without a
+  word. A working stop now goes to its trade within a second, so the chart draws it and R comes from it.
+  Should MotiveWave ever give a stop no instrument again, Data → Connection says so instead of staying silent.
+- **Replay trades get 1-minute candles.** The study writes MotiveWave's 1-minute bars of a replay up to the
+  replay's own time (never later), and tops them up as the replay plays, so a replay trade's chart is drawn
+  like a live one. MAE / MFE still come from ticks only.
+- **Updating the study no longer needs a restart.** When MotiveWave loads a new copy of the study, the new
+  copy takes over from the old one in a few seconds. This works from 0.3.6 on: going from 0.3.5 to 0.3.6
+  still needs MotiveWave quit and opened again, once.
+- **Setup knows the new study is installed.** It no longer asks you to click Install again while MotiveWave
+  still runs the old one: it says to quit MotiveWave and open it again.
+
+**What to do:**
+
+1. Quit MotiveWave completely.
+2. Open MotiveWave Journal, go to **Setup** and click **Install MotiveWave Study**.
+3. Open MotiveWave. Setup should read *Connected · study 0.3.6*.
+4. Place a bracket order. Its stop should show on the chart within a second, and the trade gets an R.
+
 ## What's new in 0.4.8: stops on prop accounts, and MAE that banked profit no longer hides
 
 This release comes with study **0.3.5**.

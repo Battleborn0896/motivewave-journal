@@ -2,10 +2,13 @@
 
 LIVE_TICKS = 'motivewave-ticks'                 # prints the study wrote down as they traded
 HISTORY_TICKS = 'motivewave-ticks:history'      # the same real prints, loaded from the platform's history afterwards
-REPLAY = 'motivewave-replay:'                   # + '<run>:ticks', '<run>:simulated' or '<run>:history'
+REPLAY = 'motivewave-replay:'                   # + '<run>:ticks', '<run>:simulated', '<run>:history' or '<run>:bars'
 # Real prints of a replay trade's holding window, loaded from MotiveWave's tick history once the trade was
 # flat (study 0.3.3). Observed ticks of that one run, never simulated, whatever the replay itself played.
 REPLAY_HISTORY = ':history'
+# MotiveWave's 1-minute bars of a replay run, up to the replay's own time and never later (study 0.3.6): what a
+# replay trade's chart is drawn from. Bars never measure MAE / MFE.
+REPLAY_BARS = ':bars'
 # Where a price stream came from. A label beside a measurement, never a ranking: two streams of
 # real prints stay two measurements of one trade, and are not added together.
 PROVENANCE = {'recorded-live': 'Recorded live', 'history-backfill': 'History backfill',
@@ -58,6 +61,8 @@ def provenance(source: str) -> str:
     if source.startswith(REPLAY):
         if source.endswith(REPLAY_HISTORY):
             return 'replay-history'
+        if source.endswith(REPLAY_BARS):
+            return 'platform-bars'
         return 'replay-simulated' if is_simulated(source) else 'replay-ticks'
     if source.startswith('motivewave-bars:'):
         return 'platform-bars'

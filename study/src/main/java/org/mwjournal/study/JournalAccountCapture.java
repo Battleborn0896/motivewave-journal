@@ -100,6 +100,7 @@ final class JournalAccountCapture {
   /** Lines for MotiveWave's log: the stop diagnostic and the probes. A chart's study writes them (drainLog). */
   private final ConcurrentLinkedQueue<String> log = new ConcurrentLinkedQueue<>();
   final JournalProbes probes;
+  private boolean closed;
   /** Set while fills cannot be read at all. Null means capture is working, whatever warnings says. */
   volatile String failure;
   /** One sentence about what was skipped or assumed while capture is working; null when nothing was. */
@@ -137,6 +138,9 @@ final class JournalAccountCapture {
 
   static JournalAccountCapture acquire(Path file) throws IOException, ReflectiveOperationException {
     Path key = file.toAbsolutePath().normalize();
+    // Before the saved state is read: an older copy of the study saves its own as it retires.
+    JournalHandoff.takeOver();
+    if (JournalHandoff.retired()) throw new IOException(JournalEventWriter.RETIRED);
     synchronized (SHARED) {
       var capture = SHARED.get(key);
       if (capture == null) {
@@ -565,17 +569,22 @@ final class JournalAccountCapture {
    * counts by reason the working stops no position has taken for UNLINKED_GRACE_NANOS. */
   record Stops(JournalNativeAccess.OrderCounts read, int withPosition, int closingSide, int linked,
                Map<String,Integer> unlinked) {
-    /** The heartbeat's part about stops: only while a working stop stays unlinked. */
+    /** The heartbeat's part about stops: only while a working stop stays unlinked, or MotiveWave gives a
+     * working stop no instrument (it is then left out, so it must not be left out in silence). */
     String warning() {
-      if (unlinked.isEmpty()) return null;
-      int total = 0;
-      var reasons = new ArrayList<String>();
-      for (var reason : new TreeMap<>(unlinked).entrySet()) {
-        total += reason.getValue();
-        reasons.add(unlinked.size() == 1 ? reason.getKey() : reason.getValue() + " " + reason.getKey());
+      var parts = new ArrayList<String>();
+      if (!unlinked.isEmpty()) {
+        int total = 0;
+        var reasons = new ArrayList<String>();
+        for (var reason : new TreeMap<>(unlinked).entrySet()) {
+          total += reason.getValue();
+          reasons.add(unlinked.size() == 1 ? reason.getKey() : reason.getValue() + " " + reason.getKey());
+        }
+        parts.add(count(total, "working stop order") + " not linked to a position: " + String.join(", ", reasons));
       }
-      return count(total, "working stop order") + " not linked to a position: " + String.join(", ", reasons)
-          + " (orders: " + counts() + ")";
+      if (read.noInstrument() > 0)
+        parts.add(count(read.noInstrument(), "working stop order") + " without an instrument, left out");
+      return parts.isEmpty() ? null : String.join("; ", parts) + " (orders: " + counts() + ")";
     }
     String counts() {
       return read.read() + " read, " + read.stops() + " stop, " + read.fresh() + " new, " + read.noInstrument()
@@ -738,7 +747,23 @@ final class JournalAccountCapture {
     }
     close();
   }
+  /** Every capture of this copy, closed for a newer copy (JournalHandoff.retire), whichever charts still hold it. */
+  static void closeAll() {
+    List<JournalAccountCapture> all;
+    synchronized (SHARED) {
+      all = new ArrayList<>(SHARED.values());
+      SHARED.clear();
+    }
+    for (var capture : all) capture.close();
+  }
+
+  /** Once: a chart that lets go of a capture retired before it (closeAll) finds it closed already, and must not
+   * save its replay clock over the newer copy's. */
   void close() {
+    synchronized (this) {
+      if (closed) return;
+      closed = true;
+    }
     timer.shutdownNow();
     liveGates.clear();
     replayGates.clear();

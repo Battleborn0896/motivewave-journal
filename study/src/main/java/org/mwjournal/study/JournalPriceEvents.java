@@ -10,7 +10,18 @@ import java.util.function.Supplier;
 final class JournalPriceEvents {
   private JournalPriceEvents() {}
 
-  static String bar(String symbol, Bar bar, boolean proxy) {
+  /** The provider of the 1-minute bars a live chart writes. */
+  static final String LIVE_BARS = "motivewave-bars:1m";
+
+  /** The provider of a replay run's 1-minute bars: MotiveWave's history up to the replay's own time, never later.
+   * The app draws a replay trade's chart from them; bars never measure MAE / MFE. */
+  static String replayBars(String run) {
+    return "motivewave-replay:" + run + ":bars";
+  }
+
+  static String bar(String symbol, Bar bar, boolean proxy) { return bar(symbol, bar, proxy, LIVE_BARS); }
+
+  static String bar(String symbol, Bar bar, boolean proxy, String provider) {
     if (bar == null || !bar.isComplete() || bar.getStartTime() <= 0 || bar.getSizeMillis() != 60000
         || bar.getStartTime() % 60000 != 0) return null;
     float open = bar.getOpen(), high = bar.getHigh(), low = bar.getLow(), close = bar.getClose();
@@ -18,7 +29,7 @@ final class JournalPriceEvents {
         || low > high || open < low || open > high || close < low || close > high) return null;
     float volume = bar.getVolumeAsFloat();
     String vol = Float.isFinite(volume) && volume >= 0 ? ",\"volume\":" + volume : "";
-    return "{\"version\":1,\"type\":\"bar\",\"provider\":\"motivewave-bars:1m\",\"symbol\":"
+    return "{\"version\":1,\"type\":\"bar\",\"provider\":" + quote(provider) + ",\"symbol\":"
         + quote(symbol) + ",\"ts\":" + quote(Instant.ofEpochMilli(bar.getStartTime()).toString())
         + ",\"resolution_seconds\":60,\"open\":" + open + ",\"high\":" + high + ",\"low\":" + low
         + ",\"close\":" + close + vol + ",\"proxy\":" + proxy + "}";

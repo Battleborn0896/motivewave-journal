@@ -94,12 +94,17 @@ final class JournalNativeAccess {
     Method mwInstrument = readMethod(execution, "getMWInstrument", false);
     Method instrumentCurrency = readMethod(nativeInstrument, "getCurrency", false);
     Method stock = readMethod(nativeInstrument, "isStock", false);
-    String[] getters = {"getOrderId", "getAccountId", "getInstrument", "isBuy", "getParentId",
+    // An order's instrument as the SDK knows it is its ticker, the object a fill's getInstrument() returns.
+    // getInstrument() gives MotiveWave's own instrument instead, which is not an SDK Instrument: read through
+    // it, every stop order looked as if it had no instrument and was left out (studies before 0.3.6).
+    String[] getters = {"getOrderId", "getAccountId", "getTicker", "isBuy", "getParentId",
         "getPosition", "isStopOrTrail", "isFilled", "isCancelled", "isRejected",
         "isActive", "isNew", "isTrail", "getStopPrice", "getTrailStopPrice",
         "getLastModified", "isReplay"};
     var methods = new java.util.HashMap<String, Method>();
     for (String name : getters) methods.put(name, readMethod(order, name, false));
+    if (!Instrument.class.isAssignableFrom(methods.get("getTicker").getReturnType()))
+      throw new NoSuchMethodException("Native order ticker is not an SDK Instrument.");
     return () -> {
       Object folder = directory.invoke(null);
       if (!(folder instanceof File file)) throw new IllegalStateException("Native workspace directory unavailable.");
@@ -139,13 +144,16 @@ final class JournalNativeAccess {
         if (!bool(invoke(methods, "isStopOrTrail", item))) continue; // take profit and entries play no part
         stops++;
         if (bool(invoke(methods, "isNew", item))) { fresh++; continue; }
-        Object i = invoke(methods, "getInstrument", item);
-        if (!(i instanceof Instrument instrument)) { noInstrument++; continue; }
         String state = bool(invoke(methods, "isFilled", item)) ? "filled"
             : bool(invoke(methods, "isCancelled", item)) ? "cancelled"
             : bool(invoke(methods, "isRejected", item)) ? "rejected"
             : bool(invoke(methods, "isActive", item)) ? "working" : "";
         if (state.isEmpty()) { noState++; continue; }
+        // A working stop without an instrument is said in the heartbeat; an old one is of no use either way.
+        if (!(invoke(methods, "getTicker", item) instanceof Instrument instrument)) {
+          if (state.equals("working")) noInstrument++;
+          continue;
+        }
         // The order's own parent and position ids are kept for the diagnostic only: the link rule does not
         // use them (JournalAccountCapture.link), because prop accounts fill with neither.
         Object linkedPosition = invoke(methods, "getPosition", item);

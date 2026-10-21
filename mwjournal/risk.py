@@ -15,8 +15,8 @@ from .humanize import price
 from .model import instant
 
 # What R says for a MotiveWave trade with no stop order recorded at all: a trade without one, one captured before
-# study 0.3.5 on an account whose fills carry no position id, or a stop the study could not link (Data →
-# Connection says why).
+# study 0.3.6 (no study before it recorded a stop), or a stop the study could not link (Data → Connection says
+# why).
 NOT_REPORTED = 'No stop order was recorded for this trade. Type your stop to get R.'
 
 # Seconds after a trade's first fill at which its stop counts. With an OCO bracket the stop goes in

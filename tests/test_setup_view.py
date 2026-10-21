@@ -160,7 +160,7 @@ def test_a_study_that_has_gone_quiet_gets_only_the_quiet_step():
     assert not any(b.label == setup.INSTALL for b in app.button)
 
 
-@pytest.mark.parametrize('version', ['0.3.4', '0.3.2', '0.1.0'])
+@pytest.mark.parametrize('version', ['0.3.5', '0.3.4', '0.3.2', '0.1.0'])
 def test_a_study_older_than_the_bundled_one_gets_only_the_update_step(version):
     study_writes([heartbeat(version=version)])
     app = open_app('Setup')
@@ -168,20 +168,24 @@ def test_a_study_older_than_the_bundled_one_gets_only_the_update_step(version):
     app.run()
     assert states(app.main) == ['Connected'] and steps_shown(app) == ['Update the Study']
     line = f'Study {version} is out of date; this app comes with {paths.STUDY_VERSION}'
-    assert said(app.main.markdown, line) and said(app.main.markdown, 'then restart MotiveWave')
+    assert said(app.main.markdown, line)
     assert 'mwj-status-note' not in status_line(app)
     assert not said(app.sidebar.markdown, line)
     if connection.JAR.is_file():
         assert said(app.main.markdown, 'click Install MotiveWave Study')
-        press(app, setup.INSTALL)                  # MotiveWave reports the old study until it restarts
-        # Straight after the click, without another run: the line says to restart, never 'click Install'.
+        press(app, setup.INSTALL)                  # MotiveWave reports the old study until it starts the new one
+        # Straight after the click, without another run: the line says what is left, never 'click Install'.
+        installed = (f'Study {paths.STUDY_VERSION} is installed and MotiveWave is still running {version}. '
+                     'Quit MotiveWave completely and open it again.')
         assert steps_shown(app) == ['Update the Study'] and not said(app.main.markdown, 'click Install')
-        assert said(app.main.markdown, 'The new study is installed. Restart MotiveWave to use it.')
+        assert said(app.main.markdown, installed)
         assert not any(b.label == setup.INSTALL for b in app.main.button)
         app.run()
-        assert steps_shown(app) == ['Update the Study']
-        assert said(app.main.markdown, 'The new study is installed. Restart MotiveWave to use it.')
-        assert not any(b.label == setup.INSTALL for b in app.main.button)
+        assert steps_shown(app) == ['Update the Study'] and said(app.main.markdown, installed)
+        # Another window, or the app opened again: the study in the Extensions folder says the same.
+        again = open_app('Setup')
+        assert steps_shown(again) == ['Update the Study'] and said(again.main.markdown, installed)
+        assert not any(b.label == setup.INSTALL for b in again.main.button)
 
 
 def test_the_bundled_study_or_another_writer_gets_no_update_step():
@@ -608,7 +612,7 @@ def test_the_study_can_be_installed_again_from_connection_after_it_has_reported_
     install = app.button(key='connection-study-install')
     assert install.label == setup.INSTALL and 'kept beside it as a backup' in install.help
     install.click().run()
-    assert not app.exception and said(app.success, 'Installed. Restart MotiveWave')
+    assert not app.exception and said(app.success, 'Installed. MotiveWave starts it in a few seconds')
     assert (extensions / 'motivewave-journal.jar').read_bytes() == connection.JAR.read_bytes()
     app.button(key='connection-study-install').click().run()                     # again: the copy there is kept
     assert said(app.success, 'The previous copy was kept as a backup.')

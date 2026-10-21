@@ -85,6 +85,34 @@ def test_generated_replay_ticks_are_labelled_simulated_in_metrics_and_chart(tmp_
     assert chart['series']['data'] and any('Generated/unknown' in n for n in chart['notes'])
 
 
+def test_a_replay_runs_own_minute_bars_draw_its_trades_chart_and_never_measure_them(tmp_path):
+    """Study 0.3.6 writes MotiveWave's 1-minute bars of a replay up to the replay's own time, filed under its run:
+    the chart of a replay trade is drawn from them, as platform candles, and MAE / MFE still wait for ticks."""
+    from mwjournal.scope import PROVENANCE, provenance
+    from views.trades import default_source
+
+    def bar(minute, low, high, run='run-a'):
+        return {'version': 1, 'type': 'bar', 'mode': 'replay', 'provider': f'motivewave-replay:{run}:bars',
+                'symbol': 'ESZ6', 'ts': f'2022-01-03T14:{minute:02d}:00Z', 'resolution_seconds': 60,
+                'open': low, 'high': high, 'low': low, 'close': high, 'proxy': False}
+
+    journal = Journal(tmp_path / 'replay.db', dataset='replay')
+    apply_preview(journal, preview_bridge(lines([bar(28, 4995, 4998), bar(29, 4997, 5001), bar(30, 4996, 5004),
+                                                 bar(31, 4999, 5006), bar(30, 4000, 4001, run='run-b'),
+                                                 fill('a'), tick(5003), fill('b', 'sell', 5002, ts='2022-01-03T14:32:00Z')]),
+                                          dataset='replay'))
+    trade = journal.trades()[0]
+    sources = journal.price_sources('ESZ6', trade)
+    assert sources == ['motivewave-replay:run-a:bars', 'motivewave-replay:run-a:ticks']     # never another run's
+    assert default_source(sources) == 'motivewave-replay:run-a:bars'
+    assert PROVENANCE[provenance('motivewave-replay:run-a:bars')] == 'Platform candles'
+    chart = trade_chart(trade, journal.prices('ESZ6', 'motivewave-replay:run-a:bars'), 'motivewave-replay:run-a:bars')
+    assert [c['high'] for c in chart['series']['data']] == [4998, 5001, 5004, 5006]
+    assert excursions(trade, journal.prices('ESZ6', 'motivewave-replay:run-a:bars'),
+                      'motivewave-replay:run-a:bars')['precision'] != 'observed-ticks'          # bars never measure
+    assert journal.best_metric(trade) is None or journal.best_metric(trade)['source'].endswith(':ticks')
+
+
 def test_an_unknown_event_type_is_skipped_and_counted_never_fatal(tmp_path):
     """A newer study can write events this app does not read yet (study 0.4's 'position' lines, say): they are
     skipped and counted, and the fills, stops and heartbeat around them still arrive."""

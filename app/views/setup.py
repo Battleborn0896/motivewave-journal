@@ -77,25 +77,29 @@ STEPS = {
     'update': ('Update the Study', '',
                'Studies before 0.3.3 never received MotiveWave\'s live or replay prints, so MAE and MFE had only '
                'the trade tick backfill. Studies before 0.3.4 labelled replay prints simulated, which hides '
-               'replay MAE and MFE. Studies before 0.3.5 never linked a prop account\'s stop orders to its trades, '
-               'so those trades had no R. The previous copy is kept beside the new one.'),
+               'replay MAE and MFE. Studies before 0.3.6 never recorded a stop order, so trades had no R unless '
+               'you typed the stop. From 0.3.6 on, a new study takes over from the old one without a restart. The '
+               'previous copy is kept beside the new one.'),
     'quiet': ('The Study Has Gone Quiet',
               'Check that MotiveWave is open and the study is still on your chart.',
               'Nothing has been heard from the study for over a minute. It reports every ten seconds while it is '
               'on a chart, also when the market is closed. Data → Connection shows when it last reported.'),
 }
 DRAWN = 'setup-step-drawn'          # the step the page was drawn with, per environment: see status_fragment
-INSTALLED_HERE = 'setup-study-installed'   # this visit installed the study: the step then says to restart
 
 
 def update_line(link) -> str | None:
     """One line for a study older than the one this app bundles, else None. What each older version misses is in
-    the step's help (STEPS['update'])."""
+    the step's help (STEPS['update']). Once the new study is in the Extensions folder, the line says what is
+    left: MotiveWave runs the old one until it starts the new (from 0.3.6 on, by itself in a few seconds)."""
     if not common.study_outdated(link):
         return None
+    if connection.bundled_study_installed():
+        return (f'Study {paths.STUDY_VERSION} is installed and MotiveWave is still running {link.version}. '
+                'Quit MotiveWave completely and open it again.')
     how = ('click Install MotiveWave Study' if connection.JAR.is_file()
            else 'import the new motivewave-journal.jar under Study → All Studies → Import')
-    return f'Study {link.version} is out of date; this app comes with {paths.STUDY_VERSION}: {how}, then restart MotiveWave.'
+    return f'Study {link.version} is out of date; this app comes with {paths.STUDY_VERSION}: {how}.'
 
 
 def needed_step(link, installed: bool) -> str | None:
@@ -230,28 +234,27 @@ def step(link, dataset: str = '') -> None:
     if which is None:
         return
     title, line, explained = STEPS[which]
-    installed_here = st.session_state.get(INSTALLED_HERE)      # by the button below, earlier in this visit
+    installed = connection.bundled_study_installed()
     if which == 'update':
-        line = 'The new study is installed. Restart MotiveWave to use it.' if installed_here else update_line(link)
+        line = update_line(link)
     elif which == 'chart' and dataset == 'replay':
         line = 'Add **Journal → MotiveWave Journal** to the chart you replay. There is nothing to set.'
     elif which == 'install' and not connection.JAR.is_file():
         line = ('In MotiveWave choose **Study → All Studies → Import** and pick motivewave-journal.jar, then add '
                 'the study to your chart.')
-    if which == 'chart' and installed_here:
+    if which == 'chart' and installed:
         line = 'Restart MotiveWave, then a' + line[1:]
     with st.container(border=True, key='setup-step-' + which):
         st.markdown(f'**{title}**  \n{line}', help=explained)
-        if which in ('install', 'update') and connection.JAR.is_file() and not installed_here:
+        if which in ('install', 'update') and connection.JAR.is_file() and not installed:
             if st.button(INSTALL, type='primary', key='simple-study-install'):
                 try:
                     connection.install_study()
                 except (OSError, ValueError) as exc:
                     st.error('The study could not be installed: ' + str(exc))
                 else:
-                    # Drawn again at once, so the step's own line says to restart MotiveWave and the button goes:
-                    # never 'click Install' beside a note that it is installed.
-                    st.session_state[INSTALLED_HERE] = True
+                    # Drawn again at once, so the step says what is left and the button goes: never 'click
+                    # Install' beside a study that is installed.
                     st.rerun()
 
 
