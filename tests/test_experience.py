@@ -172,13 +172,13 @@ def test_include_any_exclude_filters_and_renamed_aliases_keep_their_identity(hom
     app = open_app('Edge')
     widget(app.multiselect, 'Tags').set_value(['Breakout', 'Patient']).run()
     assert said(app.info, 'Statistics need')
-    widget(app.radio, 'Tag match').set_value('Any selected').run()
+    widget(app.radio, 'Tag Match').set_value('Any selected').run()
     assert widget(app.metric, 'Win Rate').value == '100.0%'
     id = next(iter(tagging.ids(journal.tag_library(), ['Breakout'])))
     journal.edit_tag(id, name='Renamed')
     app.run()
     assert widget(app.metric, 'Win Rate').value == '100.0%'
-    widget(app.multiselect, 'Exclude tags').set_value(['Renamed']).run()
+    widget(app.multiselect, 'Exclude Tags').set_value(['Renamed']).run()
     assert said(app.info, 'Statistics need')
 
 

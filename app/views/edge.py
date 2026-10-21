@@ -36,15 +36,14 @@ COMPARE_HELP = ('Start with Trades, the sample size, then Average Trade, the net
                 'samples mislead.')
 
 
-def render(journal, rows, *, every=None) -> None:
-    """`rows` have passed the saved filter; `every` has not, so a new saved filter can name any trade's details."""
-    every = rows if every is None else every
+def render(journal, rows) -> None:
+    """`rows` have passed the saved filter."""
     all_closed = [r for r in rows if r['status'] == 'closed' and r['net'] is not None]
     heading, filter_col, custom_col = st.columns([5, 1, 1], vertical_alignment='center')
     with filter_col.popover('Filters', width='stretch',
                             help='Narrow the stats by market, date, account, tag, playbook or rating. The saved '
                                  'filter here applies to every page.'):
-        rows = preferences.filter_menu(journal, rows, every)
+        rows = preferences.filter_menu(journal, rows)
     with custom_col.popover('Customize', width='stretch', help='Choose which tabs Stats shows, and their order.'):
         customize(journal)
     closed = [r for r in rows if r['status'] == 'closed' and r['net'] is not None]

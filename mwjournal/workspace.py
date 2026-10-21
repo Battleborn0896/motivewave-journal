@@ -43,8 +43,17 @@ def write(db, state):
                (json.dumps(state, sort_keys=True, allow_nan=False),))
 
 
+# Saved-filter fields a trade passes by having any one of the values listed: its account, exact contract,
+# market, direction, status (closed, open or incomplete) and process rating (1 to 5).
+CHOICES = ('accounts', 'symbols', 'markets', 'directions', 'status', 'ratings')
+# Number limits, each as name_min and name_max: signed tag score, net P&L, R, MAE and MFE in account currency,
+# peak quantity and minutes held.
+NUMBERS = ('score', 'net', 'r', 'mae', 'mfe', 'quantity', 'duration')
+
+
 def validate_filter(value, library):
-    """Explicit allowlist. Never evaluate a user's filter or script as code."""
+    """Explicit allowlist. Never evaluate a user's filter or script as code. Every field is optional, so a
+    filter saved before a field existed stays valid."""
     result = {}
     for field in ('accounts', 'symbols', 'markets', 'directions', 'status', 'tags_all', 'tags_any', 'tags_none'):
         values = value.get(field, [])
@@ -56,16 +65,23 @@ def validate_filter(value, library):
                 raise ValueError('A filter references an unknown tag.')
             values = sorted(resolved)
         result[field] = sorted(set(values))
+    ratings = value.get('ratings', [])
+    if not isinstance(ratings, list) or any(type(v) is not int or not 1 <= v <= 5 for v in ratings):
+        raise ValueError('Process ratings must be whole numbers from 1 to 5.')
+    result['ratings'] = sorted(set(ratings))
+    if value.get('playbook') is not None:
+        if not isinstance(value['playbook'], str) or value['playbook'] not in library['playbooks']:
+            raise ValueError('A filter references an unknown playbook.')
+        result['playbook'] = value['playbook']
     for field in ('start', 'end'):
         if value.get(field):
             result[field] = dt.date.fromisoformat(value[field]).isoformat()
     if result.get('start') and result.get('end') and result['start'] > result['end']:
         raise ValueError('Start must not follow end.')
-    numeric = ('score', 'net', 'r', 'mae', 'mfe', 'quantity', 'duration')
-    for field in (name + suffix for name in numeric for suffix in ('_min', '_max')):
+    for field in (name + suffix for name in NUMBERS for suffix in ('_min', '_max')):
         if value.get(field) is not None:
             result[field] = finite(value[field], field)
-    for name in numeric:
+    for name in NUMBERS:
         if result.get(name + '_min') is not None and result.get(name + '_max') is not None and result[name + '_min'] > result[name + '_max']:
             raise ValueError('A minimum must not exceed its maximum.')
     return result
@@ -84,14 +100,56 @@ def filter_sample(rows, rule):
                             for name, val in numbers.items())
         return (all(not rule.get(k) or row.get(f) in rule[k] for k, f in
                     [('accounts', 'account'), ('symbols', 'symbol'), ('markets', 'market'),
-                     ('directions', 'direction'), ('status', 'status')])
+                     ('directions', 'direction'), ('status', 'status'), ('ratings', 'rating')])
                 and set(rule.get('tags_all', [])) <= tags
                 and (not rule.get('tags_any') or bool(set(rule['tags_any']) & tags))
                 and not bool(set(rule.get('tags_none', [])) & tags)
+                # Rows from the app list the playbooks their tags complete; a row without the list completes none.
+                and (not rule.get('playbook') or rule['playbook'] in row.get('playbook_ids', []))
                 and (not rule.get('start') or day >= rule['start'])
                 and (not rule.get('end') or day <= rule['end'])
                 and numeric_match)
     return [r for r in rows if matches(r)]
+
+
+def combine_filters(first, second):
+    """One rule that keeps exactly the trades both rules keep. Choices intersect, required and excluded tags
+    add up, dates take the later start and the earlier end, number limits the tighter bound. Raises
+    ValueError, in one line, where no single rule says exactly that: two different 'any of these tags'
+    choices (each of two or more tags, neither met by a required tag), two different playbooks, or limits no
+    trade can meet together (an empty choice means any)."""
+    nothing = ValueError('No trade can pass all of these filters, so there is nothing to save.')
+    result = {}
+    for field in CHOICES:
+        a, b = set(first.get(field) or ()), set(second.get(field) or ())
+        if a and b and not a & b:
+            raise nothing                      # an empty choice would mean any value, not none
+        result[field] = sorted(a & b if a and b else a | b)
+    required = {tag for rule in (first, second) for tag in rule.get('tags_all') or ()}
+    choices = [set(rule.get('tags_any') or ()) for rule in (first, second)]
+    # Any of one tag is that tag required, and a choice a required tag already meets asks nothing more.
+    required |= {tag for choice in choices if len(choice) == 1 for tag in choice}
+    choices = [choice for choice in choices if choice and not choice & required]
+    if len(choices) == 2 and not (choices[0] <= choices[1] or choices[1] <= choices[0]):
+        raise ValueError("Two different 'any of these tags' choices cannot be saved as one filter.")
+    result['tags_any'] = sorted(min(choices, key=len)) if choices else []     # the smaller choice implies the larger
+    result['tags_all'] = sorted(required)
+    result['tags_none'] = sorted({tag for rule in (first, second) for tag in rule.get('tags_none') or ()})
+    books = {rule['playbook'] for rule in (first, second) if rule.get('playbook')}
+    if len(books) > 1:
+        raise ValueError('Two different playbooks cannot be saved as one filter.')
+    if books:
+        result['playbook'] = books.pop()
+    for low, high in [('start', 'end'), *[(name + '_min', name + '_max') for name in NUMBERS]]:
+        lows = [rule[low] for rule in (first, second) if rule.get(low) is not None]
+        highs = [rule[high] for rule in (first, second) if rule.get(high) is not None]
+        if lows:
+            result[low] = max(lows)
+        if highs:
+            result[high] = min(highs)
+        if lows and highs and result[low] > result[high]:
+            raise nothing
+    return result
 
 
 def tag_score(library, chosen, included=None):
@@ -224,8 +282,10 @@ class Workspace:
         return self._workspace_edit(save)
 
     def save_filter(self, name, filters):
+        """Saves the rule under `name`, replacing a filter of that name, and returns the name as saved."""
         name = label(name)
-        return self._workspace_edit(lambda s, lib: s['filters'].update({name: validate_filter(filters, lib)}))
+        self._workspace_edit(lambda s, lib: s['filters'].update({name: validate_filter(filters, lib)}))
+        return name
 
     def save_rating(self, name, rules, *, id=None):
         name = label(name)

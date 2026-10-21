@@ -6,6 +6,7 @@ import streamlit as st
 
 import common
 import theme
+from mwjournal.workspace import combine_filters, filter_sample
 
 GLOBAL_FILTER = 'global-saved-filter'
 
@@ -51,12 +52,10 @@ def render(journal, rows):
                          help='Leaves Saturday and Sunday out of the calendar widget on Stats → Dashboards.')
 
 
-def filter_menu(journal, rows, every) -> list[dict]:
+def filter_menu(journal, rows) -> list[dict]:
     """What a Filters menu holds, on Trades and on Stats: the saved filter every page uses, this page's own
-    filters, and saving a new filter. Returns the trades this page's filters keep.
-
-    `rows` have already passed the saved filter; `every` has not, so a new filter can name any account,
-    contract or tag while a saved filter is on."""
+    filters, and a name and Save Filter right under them. Returns the trades this page's filters keep.
+    `rows` have already passed the saved filter."""
     saved = journal.workspace()['filters']
     choice_key = saved_filter_key(journal)
     box_key = choice_key + '-box'
@@ -70,21 +69,30 @@ def filter_menu(journal, rows, every) -> list[dict]:
                  key=box_key, on_change=choose,
                  help='Shows only the trades this filter keeps, on Trades, Stats and every other page. It '
                       'combines with the filters below and with dashboard filters, and never changes your fills.')
-    shown = common.filter_rows(journal, rows)
-    with st.expander('Save a Filter'):
-        save_filter_form(journal, every, saved.get(st.session_state.get(choice_key)) or {})
-    return shown
+    rule = common.filter_rule(journal, rows)
+    if rows:
+        save_row(journal, rule, saved.get(st.session_state.get(choice_key)) or {})
+    return filter_sample(rows, rule)
 
 
-def save_filter_form(journal, rows, old: dict) -> None:
-    from views import dashboard
-    with st.form(common.key(journal, 'global-filter-form'), border=False):
-        name = st.text_input('Filter name', max_chars=80,
-                             help='Saving under an existing name replaces that filter.')
-        rule = dashboard.filter_editor(journal, rows, 'saved-global', old, fold=False)
-        if st.form_submit_button('Save Filter', type='primary'):
+def save_row(journal, rule, old: dict) -> None:
+    """Saves the trades shown as one filter: the saved filter in use (`old`) and this page's filters (`rule`).
+    That filter is then the one in use and this page's filters are cleared, so the list stays the same.
+    Enter in the name box saves too."""
+    name_key = common.key(journal, 'save-filter-name')
+    with st.form(common.key(journal, 'save-filter'), border=False):
+        name_col, button_col = st.columns([3, 2], vertical_alignment='bottom')
+        name = name_col.text_input('Filter Name', max_chars=80, key=name_key, placeholder='Filter Name',
+                                   label_visibility='collapsed')
+        if button_col.form_submit_button('Save Filter', type='primary', width='stretch',
+                                         help='Saves the trades shown now as a filter for every page: the saved '
+                                              'filter in use together with the filters above. Saving under an '
+                                              'existing name replaces that filter.'):
             try:
-                journal.save_filter(name, rule)
-                st.rerun()
+                st.session_state[saved_filter_key(journal)] = journal.save_filter(name, combine_filters(old, rule))
             except ValueError as exc:
                 st.error(str(exc))
+            else:
+                for widget in [*common.filter_keys(journal), name_key]:
+                    st.session_state.pop(widget, None)
+                st.rerun()

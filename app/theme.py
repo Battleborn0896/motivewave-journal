@@ -137,7 +137,7 @@ h3 {{ font-size:15px !important; font-weight:600 !important; color:{INK} !import
 .mwj-subsection {{ margin:10px 0 2px; color:{MUTED}; font-family:{FONT}; font-size:11px; font-weight:600;
                   letter-spacing:.1em; text-transform:uppercase; }}
 div[data-testid="stExpander"] details {{ background:{SURFACE}; border:1px solid {BORDER}; border-radius:6px; }}
-/* Inside a menu (Filters: More Filters, Save a Filter) a folding section keeps the menu's own background: on the
+/* Inside a menu (Filters → More Filters) a folding section keeps the menu's own background: on the
    panel colour its text boxes and pickers, which are that colour too, would have no visible edge. */
 [data-testid="stPopoverBody"] div[data-testid="stExpander"] details {{ background:{PAGE}; }}
 div[role="radiogroup"] label p {{ font-size:13px; }}

@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 import calendar
-import contextlib
 import datetime as dt
 
 import pandas as pd
@@ -30,9 +29,8 @@ WIDGET_HELP = {'Radar': 'The share of this sample tagged in each category. Not a
 AXES = {'trade': 'Trade number', 'time': 'Date and time'}
 
 
-def filter_editor(journal, rows, prefix, old=None, *, fold=True):
-    """A saved-filter rule. `fold=False` shows dates and number ranges under a heading instead of in an
-    expander, for a form that already sits inside one (Streamlit cannot nest expanders)."""
+def filter_editor(journal, rows, prefix, old=None):
+    """A dashboard page's or widget's filter rule, the kind of rule a saved filter is."""
     old = old or {}
     library = journal.tag_library()
     key = lambda name: common.key(journal, prefix + '-' + name)
@@ -47,9 +45,7 @@ def filter_editor(journal, rows, prefix, old=None, *, fold=True):
         result[field] = st.multiselect(title, options, default=old.get(field, []),
                                        format_func=lambda id: library['tags'][id]['name'], key=key(field))
     result['status'] = st.multiselect('Trade status', ['closed', 'open', 'incomplete'], default=old.get('status', []), key=key('status'))
-    if not fold:
-        theme.subsection('Dates and Number Ranges')
-    with st.expander('Dates and Number Ranges') if fold else contextlib.nullcontext():
+    with st.expander('Dates and Number Ranges'):
         date_filter = st.checkbox('Limit entry dates', value=bool(old.get('start') or old.get('end')), key=key('dates-on'),
                                   help='Calendar days in your display time zone.')
         if date_filter:

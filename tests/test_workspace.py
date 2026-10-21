@@ -1,6 +1,7 @@
 """Local parity workflows on isolated paper fixtures; no broker, recording or network."""
 import copy
 import datetime as dt
+import itertools
 import json
 from concurrent.futures import ThreadPoolExecutor
 
@@ -10,7 +11,9 @@ import common
 import runtime
 from mwjournal import Execution, Journal
 from mwjournal import tagging
-from mwjournal.workspace import validate_graph, replay_run, tag_score, rating, filter_sample
+from mwjournal import workspace
+from mwjournal.workspace import (validate_graph, replay_run, tag_score, rating, filter_sample, combine_filters,
+                                 validate_filter)
 from test_app import open_app, show, press, widget, said
 from test_chart import seed_preview
 from views.checklists import starter
@@ -79,6 +82,125 @@ def test_numeric_filters_exclude_missing_values_and_reject_reversed_bounds(home)
     assert not filter_sample(common.rows_for(journal), {'r_min': 0})
     with pytest.raises(ValueError):
         journal.save_filter('Invalid', {'net_min': 100, 'net_max': 0})
+
+
+def test_saved_filters_keep_trades_by_playbook_process_rating_and_status(home):
+    journal = seed_preview(home)
+    trade = journal.trades()[0]
+    book = journal.save_playbook('Calm breakout', {'Setup': ['Breakout'], 'Mindset': ['Patient']})
+    assert not filter_sample(common.rows_for(journal), {'playbook': book})
+    journal.set_trade_tag_group(trade, 'Setup', ['Breakout'])
+    journal.set_trade_tag_group(trade, 'Mindset', ['Patient'])
+    journal.update_annotation(trade.id, {'rating': 4})
+    journal.save_filter('Calm fours', {'playbook': book, 'ratings': [5, 4], 'status': ['closed']})
+    rule = journal.workspace()['filters']['Calm fours']
+    assert rule['playbook'] == book and rule['ratings'] == [4, 5]
+    rows = common.rows_for(journal)
+    assert filter_sample(rows, rule) == rows
+    assert not filter_sample(rows, {**rule, 'ratings': [5]})
+    assert not filter_sample(rows, {**rule, 'status': ['open', 'incomplete']})
+    assert not filter_sample([{k: v for k, v in rows[0].items() if k != 'playbook_ids'}], rule)
+    journal.save_playbook('Calm breakout', {'Setup': ['Breakout'], 'Mindset': ['Patient']}, id=book, retired=True)
+    assert filter_sample(common.rows_for(journal), rule)            # a retired playbook still names its trades
+    with pytest.raises(ValueError, match='unknown playbook'):
+        journal.save_filter('Bad', {'playbook': 'not a playbook'})
+    for ratings in ([0], [6], ['4'], [True], [4.5], 4):
+        with pytest.raises(ValueError, match='Process ratings'):
+            journal.save_filter('Bad', {'ratings': ratings})
+    assert 'Bad' not in journal.workspace()['filters']
+
+
+def sample_rows():
+    """Synthetic rows varied in every field a filter reads."""
+    rows = []
+    fields = itertools.product(['a', 'b', 'c'], ['ESZ6', 'NQZ6'], ['long', 'short'], [None, 4, 5],
+                               [[], ['x'], ['x', 'y', 'p'], ['q', 'n'], ['y', 'm', 'p']],
+                               ['2026-10-03', '2026-10-07', '2026-11-02'], [-20.0, 60.0, 700.0])
+    for i, (account, symbol, direction, process, tags, day, net) in enumerate(fields):
+        rows.append({'id': str(i), 'account': account, 'symbol': symbol, 'market': symbol[:2], 'direction': direction,
+                     'status': 'open' if i % 7 == 0 else 'closed', 'rating': process, 'tag_ids': tags,
+                     'playbook_ids': ['book'] if 'x' in tags else [], 'entry_day': day, 'net': net, 'r': net / 20,
+                     'mae': None, 'mfe': None, 'max_qty': 1 + i % 3, 'tag_score': 0,
+                     'opened': day + 'T14:00:00Z', 'closed': day + f'T14:{i % 9:02d}:30Z'})
+    return rows
+
+
+FIRST = {'accounts': ['a', 'b'], 'symbols': ['ESZ6', 'NQZ6'], 'markets': [], 'directions': ['long'],
+         'status': ['closed', 'open'], 'ratings': [4, 5], 'tags_all': ['x'], 'tags_any': ['p', 'q'],
+         'tags_none': ['n'], 'playbook': 'book', 'start': '2026-10-01', 'end': '2026-10-31',
+         'net_min': 0.0, 'r_max': 30.0, 'quantity_min': 2.0}
+SECOND = {'accounts': ['b', 'c'], 'symbols': [], 'markets': ['NQ'], 'directions': ['long', 'short'],
+          'status': ['closed'], 'ratings': [5], 'tags_all': ['y'], 'tags_any': ['p', 'q', 'r'], 'tags_none': ['m'],
+          'playbook': 'book', 'start': '2026-10-05', 'end': '2026-11-30', 'net_min': 50.0, 'net_max': 500.0,
+          'r_max': 20.0}
+
+
+def test_two_filters_combine_into_one_rule_field_by_field():
+    assert combine_filters(FIRST, SECOND) == {
+        'accounts': ['b'], 'symbols': ['ESZ6', 'NQZ6'], 'markets': ['NQ'], 'directions': ['long'],
+        'status': ['closed'], 'ratings': [5], 'tags_all': ['x', 'y'], 'tags_any': ['p', 'q'], 'tags_none': ['m', 'n'],
+        'playbook': 'book', 'start': '2026-10-05', 'end': '2026-10-31', 'net_min': 50.0, 'net_max': 500.0,
+        'r_max': 20.0, 'quantity_min': 2.0}
+    assert combine_filters(SECOND, FIRST) == combine_filters(FIRST, SECOND)
+    assert combine_filters({}, FIRST) == combine_filters(FIRST, {}) == FIRST       # nothing in use: the rule itself
+
+
+def test_any_of_one_tag_is_that_tag_required_and_a_choice_a_required_tag_meets_asks_nothing_more():
+    # Neither is two different 'any of these tags' choices, so both save as one filter instead of being refused.
+    empty = combine_filters({}, {})
+    assert (combine_filters({'tags_any': ['p', 'q']}, {'tags_any': ['y']})
+            == combine_filters({'tags_any': ['y']}, {'tags_any': ['p', 'q']})
+            == {**empty, 'tags_all': ['y'], 'tags_any': ['p', 'q']})
+    assert (combine_filters({'tags_any': ['p', 'q']}, {'tags_all': ['p'], 'tags_any': ['m', 'n']})
+            == {**empty, 'tags_all': ['p'], 'tags_any': ['m', 'n']})
+    assert combine_filters({}, {'tags_any': ['p']})['tags_all'] == ['p']
+
+
+@pytest.mark.parametrize('first, second', [
+    (FIRST, SECOND), ({'accounts': ['a']}, {'directions': ['short'], 'tags_any': ['x', 'p']}),
+    ({'tags_all': ['y'], 'end': '2026-10-07'}, {'tags_none': ['m'], 'net_max': 60.0}),
+    ({'markets': ['ES', 'NQ'], 'ratings': [4]}, {'markets': ['ES'], 'quantity_max': 2, 'tags_any': ['p']}),
+    ({'tags_any': ['x', 'y', 'p']}, {'tags_any': ['x', 'y']}),     # one choice inside the other joins
+    ({'tags_any': ['x', 'y', 'p']}, {'tags_any': ['x']}),          # any of one tag is that tag required
+    ({'tags_any': ['p', 'q']}, {'tags_all': ['p'], 'tags_any': ['m', 'n']}),     # met by a required tag
+])
+def test_the_combined_rule_keeps_exactly_the_trades_both_rules_keep(first, second):
+    rows = sample_rows()
+    kept = filter_sample(filter_sample(rows, first), second)
+    assert kept and filter_sample(rows, combine_filters(first, second)) == kept
+
+
+@pytest.mark.parametrize('first, second, message', [
+    ({'tags_any': ['p', 'q']}, {'tags_any': ['q', 'x']}, "Two different 'any of these tags' choices cannot be saved"),
+    ({'playbook': 'one'}, {'playbook': 'two'}, 'Two different playbooks cannot be saved as one filter.'),
+    ({'directions': ['long']}, {'directions': ['short']}, 'No trade can pass all of these filters'),
+    ({'ratings': [1]}, {'ratings': [5]}, 'No trade can pass all of these filters'),
+    ({'start': '2026-10-10'}, {'end': '2026-10-09'}, 'No trade can pass all of these filters'),
+    ({'net_min': 10}, {'net_max': 5}, 'No trade can pass all of these filters'),
+])
+def test_two_filters_no_single_rule_can_say_are_refused_in_one_line(first, second, message):
+    with pytest.raises(ValueError) as refused:
+        combine_filters(first, second)
+    assert message in str(refused.value) and '\n' not in str(refused.value)
+
+
+def test_filters_saved_before_playbooks_and_process_ratings_still_load_combine_and_save(home):
+    journal = seed_preview(home)
+    rows = common.rows_for(journal)
+    old = {'accounts': ['paper'], 'symbols': [], 'markets': [], 'directions': [], 'status': [],
+           'tags_all': rows[0]['tag_ids'][:1], 'tags_any': [], 'tags_none': [], 'net_min': 0.0}   # as 0.4.5 saved it
+    with journal.connect() as db:
+        state = workspace.read(db)
+        state['filters']['Old'] = old
+        workspace.write(db, state)
+    saved = journal.workspace()['filters']['Old']
+    assert filter_sample(rows, saved) == rows
+    assert validate_filter(saved, journal.tag_library()) == {**old, 'ratings': []}
+    journal.save_filter('Old longs', combine_filters(saved, {'directions': ['long'], 'ratings': []}))
+    assert filter_sample(rows, journal.workspace()['filters']['Old longs']) == rows
+    app = open_app(review=False)
+    widget(app.selectbox, 'Saved Filter on Every Page').set_value('Old').run()
+    assert not app.exception and said(app.main.caption, 'Saved filter: Old')
 
 
 def test_dashboard_pages_widgets_clone_and_partial_writes_are_dataset_local(home):
