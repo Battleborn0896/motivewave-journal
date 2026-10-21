@@ -652,7 +652,8 @@ class Journal(Workspace):
         gaps = self.capture_gaps(metric['source'], start=trade.opened, end=trade.closed, symbol=trade.symbol)
         if gaps:
             note = 'Capture bridge reported dropped ticks/bars; missing prices can understate MAE/MFE.'
-            metric = {**metric, 'notes': list(dict.fromkeys([*metric.get('notes', []), note]))}
+            # Last, whatever the measurement's own notes: a measurement carried on adds notes after this one.
+            metric = {**metric, 'notes': [n for n in metric.get('notes', []) if n != note] + [note]}
         with self.connect() as db:
             basis = metric.get('basis', 'last')
             # Last-traded marks and executable bid/ask marks are kept side by side.

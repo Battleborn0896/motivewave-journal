@@ -40,13 +40,9 @@ def fills(rng, direction, scale_in_at):
 
 
 def same(carried, full):
+    """Identical, path and notes included."""
     assert {k: carried.get(k) for k in COMPARED} == {k: full.get(k) for k in COMPARED}
-    for low, high in (('point_low', 'point_high'), ('low', 'high')):
-        assert (min(p[low] for p in carried['path']) if carried['path'][0][low] is not None else None) == (
-            min(p[low] for p in full['path']) if full['path'][0][low] is not None else None)
-        assert (max(p[high] for p in carried['path']) if carried['path'][0][high] is not None else None) == (
-            max(p[high] for p in full['path']) if full['path'][0][high] is not None else None)
-    assert any('compacted' in n for n in carried['notes']) == any('compacted' in n for n in full['notes'])
+    assert carried['path'] == full['path'] and carried['notes'] == full['notes']
     assert len(carried['path']) <= PATH_POINTS
 
 
@@ -177,3 +173,33 @@ def test_prints_under_two_labels_at_one_time_keep_the_tapes_order(tmp_path):
     full, = measurements(trade, journal.prices('NQZ6', SOURCE), SOURCE, now=now)
     same(carried, full)
     assert carried['last_price'] == 20000 and min(p['point_low'] for p in carried['path']) == -10
+
+
+def test_the_contracts_first_print_at_the_last_measured_time_stops_the_carrying_on(tmp_path):
+    """A continuous chart's measurement, then the contract's own chart's first print, in the same millisecond:
+    from then on the trade is measured with the contract's prints alone, from entry."""
+    journal, trade = journal_with(tmp_path, [tick('NQ', 1, 20000.25), tick('NQ', 2.5, 20000)])
+    previous = measurements(trade, journal.prices('NQZ6', SOURCE), SOURCE, now=T0 + dt.timedelta(seconds=3))
+    journal.ingest_prices([tick('NQZ6', 2.5, 20003)])
+    now = T0 + dt.timedelta(seconds=4)
+    assert carry_on(trade, previous, journal.prices('NQZ6', SOURCE, start=at(2.5)), now=now) is None
+    full, = measurements(trade, journal.prices('NQZ6', SOURCE), SOURCE, now=now)
+    assert (full['contract'], full['observations'], full['last_price']) == (True, 1, 20003)
+
+
+@pytest.mark.parametrize('split', [400, 1000, 1001, 2047, 2048, 3000])
+def test_a_long_trades_path_carried_on_many_times_is_the_path_from_entry(tmp_path, split):
+    """Compacted paths compose: carried on in small steps past several bucket sizes, the stored path is the one
+    compacted from entry, point for point."""
+    prints = [tick('NQ', 1 + i * 0.01, 20000 + (i % 37) * 0.25 - (i % 11)) for i in range(5000)]
+    journal, trade = journal_with(tmp_path, prints[:split])
+    clock = T0 + dt.timedelta(seconds=1 + split * 0.01)
+    metric, = measurements(trade, journal.prices('NQZ6', SOURCE), SOURCE, now=clock)
+    for start in range(split, 5000, 377):
+        journal.ingest_prices(prints[start:start + 377])
+        clock = T0 + dt.timedelta(seconds=1 + min(start + 377, 5000) * 0.01)
+        metric, = carry_on(trade, [metric], journal.prices('NQZ6', SOURCE, start=metric['last_ts']), now=clock)
+    full, = measurements(trade, journal.prices('NQZ6', SOURCE), SOURCE, now=clock)
+    same(metric, full)
+    assert metric['observations'] == 5000 and len(full['path']) == 5000 // 8 and any('compacted' in n for n in full['notes'])
+

@@ -142,44 +142,49 @@ def follow(journal, trade):
     capture = getattr(journal, 'capture_journal', None)
     if capture is None or trade.status != 'open':
         return
-    since = {}
     with capture.connect() as db:
-        stored = {label: Journal._distinct(db, 'source', 'symbol=? AND ', (label,))
+        stored = {label: [s for s in Journal._distinct(db, 'source', 'symbol=? AND ', (label,)) if allows_source(trade, s)]
                   for label in capture._labels(db, trade.symbol)}
+    sources = sorted({source for found in stored.values() for source in found})
     with journal.connect() as db:
         db.execute('ATTACH DATABASE ? AS capture', (str(capture.path),))
-        db.execute('BEGIN')
-        for label, sources in stored.items():
-            for source in sources:
-                if not allows_source(trade, source):
-                    continue
-                held = db.execute('SELECT max(ts) FROM main.prices WHERE symbol=? AND source=?', (label, source)).fetchone()[0]
-                # From the newest price held, less the minutes whose candles the study writes again as each
-                # minute closes; nothing held yet, from the chart's widest context before entry.
-                start = timestamp(instant(held) - RECENT if held else instant(trade.opened) - CONTEXT)
-                changed = ('FROM capture.prices incoming WHERE incoming.symbol=? AND incoming.source=? AND incoming.ts>=? '
-                           'AND NOT EXISTS (SELECT 1 FROM main.prices held WHERE held.key=incoming.key '
-                           'AND held.payload=incoming.payload)')
-                first = db.execute('SELECT min(incoming.ts) ' + changed, (label, source, start)).fetchone()[0]
-                if first is None:
-                    continue
-                db.execute('INSERT INTO main.prices(key,symbol,source,ts,payload) SELECT incoming.key,incoming.symbol,'
-                           'incoming.source,incoming.ts,incoming.payload ' + changed +
-                           ' ON CONFLICT(key) DO UPDATE SET payload=excluded.payload', (label, source, start))
-                since[source] = min(since.get(source, instant(first)), instant(first))
-        db.execute('INSERT OR IGNORE INTO main.capture_events SELECT * FROM capture.capture_events '
-                   'WHERE source IN (SELECT DISTINCT source FROM main.prices) AND ts>=?', (timestamp(trade.opened),))
-        db.execute('INSERT OR REPLACE INTO main.protection SELECT * FROM capture.protection '
+        # IMMEDIATE: two windows on one named journal take turns at the busy timeout instead of one failing.
+        db.execute('BEGIN IMMEDIATE')
+        for label, found in stored.items():
+            for source in found:
+                held = db.execute('SELECT ts, payload FROM main.prices WHERE symbol=? AND source=? ORDER BY ts DESC LIMIT 1',
+                                  (label, source)).fetchone()
+                # From the newest price held: a print is never written again, but the study writes the last two
+                # minutes' candles again as each minute closes. Nothing held yet: from the chart's widest context.
+                if held is None:
+                    start = timestamp(instant(trade.opened) - CONTEXT)
+                elif json.loads(held['payload']).get('resolution_seconds'):
+                    start = timestamp(instant(held['ts']) - RECENT)
+                else:
+                    start = held['ts']
+                db.execute('INSERT INTO main.prices(key,symbol,source,ts,payload) SELECT key,symbol,source,ts,payload '
+                           'FROM capture.prices WHERE symbol=? AND source=? AND ts>=? AND true '
+                           'ON CONFLICT(key) DO UPDATE SET payload=excluded.payload WHERE main.prices.payload != excluded.payload',
+                           (label, source, start))
+        if sources:
+            db.execute('INSERT OR IGNORE INTO main.capture_events SELECT * FROM capture.capture_events WHERE source IN ('
+                       + ','.join('?' * len(sources)) + ') AND ts>=?', (*sources, timestamp(trade.opened)))
+        db.execute('INSERT OR IGNORE INTO main.protection SELECT * FROM capture.protection '
                    'WHERE provider=? AND account=? AND symbol=? AND ts>=?',
                    (trade.provider, trade.account, trade.symbol, timestamp(trade.opened)))
         measured = db.execute('SELECT count(*) FROM capture.metrics WHERE trade_id=? AND basis=?',
                               (trade.id, trade.basis)).fetchone()[0]
         if measured:
-            db.execute('INSERT OR REPLACE INTO main.metrics SELECT * FROM capture.metrics WHERE trade_id=? AND basis=?',
-                       (trade.id, trade.basis))
+            db.execute('INSERT INTO main.metrics SELECT * FROM capture.metrics WHERE trade_id=? AND basis=? AND true '
+                       'ON CONFLICT(trade_id, basis, source) DO UPDATE SET payload=excluded.payload '
+                       'WHERE main.metrics.payload != excluded.payload', (trade.id, trade.basis))
     if not measured:
-        for source, first in since.items():
-            journal.measure(trade, source, since=first)
+        # Measured here, each source carried on from where its measurement stopped (from entry the first time),
+        # whoever copied the prices in: this call or the whole page's mirror.
+        held = journal.metric_options(trade)
+        for source in journal.price_sources(trade.symbol, trade):
+            stops = [m.get('last_ts') for m in held if m['source'] == source]
+            journal.measure(trade, source, since=instant(max(stops)) if stops and all(stops) else None)
 
 
 def alias(capture, scope):
@@ -202,7 +207,7 @@ def mirror(capture, target, scopes):
         stored = Journal._distinct(db, 'symbol')       # every symbol the capture holds prices under
     with target.connect() as db:
         db.execute('ATTACH DATABASE ? AS capture', (str(capture.path),))
-        db.execute('BEGIN')
+        db.execute('BEGIN IMMEDIATE')                  # as follow: two windows wait their turn
         db.execute('CREATE TEMP TABLE selected_fills AS SELECT key FROM capture.executions WHERE ' + where, params)
         conflicts = db.execute("SELECT held.key FROM main.executions held JOIN capture.executions incoming ON held.key=incoming.key "
                                "JOIN selected_fills chosen ON chosen.key=incoming.key WHERE "

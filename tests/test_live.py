@@ -287,3 +287,70 @@ def test_a_draft_waiting_for_its_trade_is_not_written_again_at_every_poll(tmp_pa
         worker.poll()
     assert journal.workspace()['drafts'][id]['state'] == 'armed' and written == []
 
+
+
+def named_with_open_trade(tmp_path):
+    capture, bridge = watched(tmp_path)
+    write(bridge, [fill('buy', 'in', 20000, '2026-10-07T14:00:00Z'), tick(19995, '2026-10-07T14:00:01Z')])
+    worker = SyncWorker(capture)
+    worker.poll()
+    id = journals.create(capture, 'Main', [('motivewave-native:ws:live', 'SIM')])
+    return capture, bridge, worker, id
+
+
+def test_a_second_window_on_the_named_journal_makes_follow_wait_not_fail(tmp_path):
+    import sqlite3
+    import threading
+    capture, bridge, worker, id = named_with_open_trade(tmp_path)
+    named = journals.open_named(capture, id)
+    trade, = named.trades()
+    write(bridge, [tick(20030, '2026-10-07T14:00:02Z')])
+    worker.poll()
+    other = sqlite3.connect(named.path, timeout=15)
+    other.execute('BEGIN IMMEDIATE')                      # the other window, mid-write
+    failed = []
+    thread = threading.Thread(target=lambda: _follow(named, trade, failed))
+    thread.start()
+    thread.join(0.3)
+    assert thread.is_alive()                             # waiting its turn
+    other.rollback()
+    other.close()
+    thread.join(10)
+    assert not failed and named.best_metric(trade)['observations'] == 2
+
+
+def _follow(named, trade, failed):
+    try:
+        journals.follow(named, trade)
+    except Exception as exc:                             # noqa: BLE001 - the test reports any failure
+        failed.append(exc)
+
+
+def test_follow_writes_nothing_when_nothing_is_new(tmp_path):
+    import sqlite3
+    capture, bridge, worker, id = named_with_open_trade(tmp_path)
+    named = journals.open_named(capture, id)
+    trade, = named.trades()
+    journals.follow(named, trade)
+    watcher = sqlite3.connect(named.path)
+    version = watcher.execute('PRAGMA data_version').fetchone()[0]
+    journals.follow(named, trade)
+    assert watcher.execute('PRAGMA data_version').fetchone()[0] == version
+    watcher.close()
+
+
+def test_prices_the_whole_page_copied_are_measured_by_the_next_follow(tmp_path):
+    capture, bridge, worker, id = named_with_open_trade(tmp_path)
+    named = journals.open_named(capture, id)
+    named.ingest([(Execution('motivewave-native:ws:live', 'SIM', 'NQZ6', 'buy', 1, 20010, '2026-10-07T14:00:01.5Z',
+                             execution_id='by-hand'), {})])
+    by_hand, = named.trades()
+    journals.follow(named, by_hand)                       # measured here: the capture does not hold this trade
+    assert named.best_metric(by_hand)['observations'] == 1
+    write(bridge, [tick(19970, '2026-10-07T14:00:03Z')])
+    worker.poll()
+    named = journals.open_named(capture, id)             # a whole page: its mirror copies the print, measures nothing
+    by_hand, = named.trades()
+    assert named.best_metric(by_hand)['observations'] == 1
+    journals.follow(named, by_hand)                       # copies nothing new, yet measures what is held since
+    assert named.best_metric(by_hand)['observations'] == 2 and named.best_metric(by_hand)['mae_points'] == 35

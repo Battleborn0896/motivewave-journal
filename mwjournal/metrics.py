@@ -94,14 +94,28 @@ def walk(trade, samples, states, start, end, basis, values, point_values, path, 
         used.append(sample)
 
 
+def bucket_size(count, max_path_points):
+    """How many path points one stored point stands for: 1 up to max_path_points, then the smallest power of
+    two that keeps the path within it. Buckets are counted from the first point, so a path carried on
+    (carry_on) groups exactly as one compacted from entry."""
+    size = 1
+    while (count + size - 1) // size > max_path_points:
+        size *= 2
+    return size
+
+
+def merge(trade, points):
+    """One stored point for a bucket of path points, keeping its extremes."""
+    return {'ts': points[0]['ts'], 'low': min(p['low'] for p in points) if trade.point_value is not None else None,
+            'high': max(p['high'] for p in points) if trade.point_value is not None else None,
+            'point_low': min(p['point_low'] for p in points), 'point_high': max(p['point_high'] for p in points)}
+
+
 def compact(trade, path, max_path_points):
     """At most max_path_points entries, each bucket keeping its extremes: the chart only. Metric values use
     every observation."""
-    size = (len(path) + max_path_points - 1) // max_path_points
-    return [{'ts': path[i]['ts'], 'low': min(p['low'] for p in path[i:i + size]) if trade.point_value is not None else None,
-             'high': max(p['high'] for p in path[i:i + size]) if trade.point_value is not None else None,
-             'point_low': min(p['point_low'] for p in path[i:i + size]),
-             'point_high': max(p['point_high'] for p in path[i:i + size])} for i in range(0, len(path), size)]
+    size = bucket_size(len(path), max_path_points)
+    return [merge(trade, path[i:i + size]) for i in range(0, len(path), size)]
 
 
 PATH_POINTS = 1000            # a stored measurement's path, for the chart; the values use every price
@@ -227,7 +241,9 @@ def carry_on(trade: Trade, previous: list[dict], samples: list[PriceSample], *, 
         for sample in samples:
             if sample.ts < metric['last_ts']:
                 continue
-            if sample.ts == metric['last_ts'] and skip and (
+            # Only prints of the kind measured (the contract's own, or not) were counted: the contract's first
+            # print at that time is new, and below it stops the carrying on.
+            if sample.ts == metric['last_ts'] and skip and (sample.symbol == exact) == metric.get('contract') and (
                     basis != 'liquidation' or (sample.bid if sign > 0 else sample.ask) is not None):
                 skip -= 1
                 continue
@@ -245,11 +261,23 @@ def carry_on(trade: Trade, previous: list[dict], samples: list[PriceSample], *, 
                 carried['mfe'] = max(metric['mfe'], max(values))
             carried['mae_points'] = max(metric['mae_points'], -min(point_values))
             carried['mfe_points'] = max(metric['mfe_points'], max(point_values))
-            carried['observations'] = metric['observations'] + len(used)
-            path = metric['path'] + path
-            if len(path) > PATH_POINTS:
-                path = compact(trade, path, PATH_POINTS)
+            # One path point per print measured: the stored path stands for `observations` of them, in buckets
+            # of bucket_size from the first, and the new prints follow. Grouping both by the new bucket size
+            # gives the path compacted from entry.
+            count = metric['observations'] + len(used)
+            before, size = bucket_size(metric['observations'], PATH_POINTS), bucket_size(count, PATH_POINTS)
+            if len(metric['path']) != -(-metric['observations'] // before):
+                return None                            # stored by an earlier version, compacted another way
+            if size == 1:
+                path = metric['path'] + path
+            else:
+                buckets = {}
+                for start, point in [*((i * before, p) for i, p in enumerate(metric['path'])),
+                                     *((metric['observations'] + j, p) for j, p in enumerate(path))]:
+                    buckets.setdefault(start // size, []).append(point)
+                path = [merge(trade, points) for _, points in sorted(buckets.items())]
                 carried['notes'] = list(dict.fromkeys([*metric['notes'], COMPACTED]))
+            carried['observations'] = count
             carried['path'] = path
             mark = newest(trade, used)
             if mark['last_ts'] == metric['last_ts']:
