@@ -287,6 +287,9 @@ function drawOverlay() {
   const width = document.getElementById('chart').clientWidth, height = spec.height;
   const plotWidth = width - chart.priceScale('right').width();
   const plotHeight = height - chart.timeScale().height();
+  // A chart in a tab that is not showing has no width: nothing to draw until it is shown (the resize
+  // observer draws it then), and an SVG rect may not be given a negative width.
+  if (plotWidth <= 0 || plotHeight <= 0) return;
   svg.setAttribute('width', width); svg.setAttribute('height', height);
   const ns = 'http://www.w3.org/2000/svg';
   function element(tag, attrs, parent = svg, text) {
