@@ -116,7 +116,8 @@ def combine_filters(first, second):
     """One rule that keeps exactly the trades both rules keep. Choices intersect, required and excluded tags
     add up, dates take the later start and the earlier end, number limits the tighter bound. Raises
     ValueError, in one line, where no single rule says exactly that: two different 'any of these tags'
-    choices, two different playbooks, or limits no trade can meet together (an empty choice means any)."""
+    choices (each of two or more tags, neither met by a required tag), two different playbooks, or limits no
+    trade can meet together (an empty choice means any)."""
     nothing = ValueError('No trade can pass all of these filters, so there is nothing to save.')
     result = {}
     for field in CHOICES:
@@ -124,12 +125,16 @@ def combine_filters(first, second):
         if a and b and not a & b:
             raise nothing                      # an empty choice would mean any value, not none
         result[field] = sorted(a & b if a and b else a | b)
-    a, b = set(first.get('tags_any') or ()), set(second.get('tags_any') or ())
-    if a and b and not (a <= b or b <= a):
+    required = {tag for rule in (first, second) for tag in rule.get('tags_all') or ()}
+    choices = [set(rule.get('tags_any') or ()) for rule in (first, second)]
+    # Any of one tag is that tag required, and a choice a required tag already meets asks nothing more.
+    required |= {tag for choice in choices if len(choice) == 1 for tag in choice}
+    choices = [choice for choice in choices if choice and not choice & required]
+    if len(choices) == 2 and not (choices[0] <= choices[1] or choices[1] <= choices[0]):
         raise ValueError("Two different 'any of these tags' choices cannot be saved as one filter.")
-    result['tags_any'] = sorted(a & b if a and b else a | b)      # the smaller choice implies the larger
-    for field in ('tags_all', 'tags_none'):
-        result[field] = sorted(set(first.get(field) or ()) | set(second.get(field) or ()))
+    result['tags_any'] = sorted(min(choices, key=len)) if choices else []     # the smaller choice implies the larger
+    result['tags_all'] = sorted(required)
+    result['tags_none'] = sorted({tag for rule in (first, second) for tag in rule.get('tags_none') or ()})
     books = {rule['playbook'] for rule in (first, second) if rule.get('playbook')}
     if len(books) > 1:
         raise ValueError('Two different playbooks cannot be saved as one filter.')

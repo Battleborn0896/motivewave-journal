@@ -445,6 +445,19 @@ def test_saving_a_filter_is_a_name_and_one_click_and_shows_the_same_trades():
     assert len(listed(app)) == 2
 
 
+def test_saving_on_stats_is_the_same_two_steps_and_keeps_the_same_numbers():
+    round_trips(Journal(), ('paper', 'ESZ6', '2026-10-07', 14), ('paper', 'NQZ6', '2026-10-07', 15),
+                ('paper', 'NQZ6', '2026-10-08', 15))
+    app = open_app('Edge')
+    assert not any(e.label == 'Save a Filter' for e in app.expander)
+    widget(app.multiselect, 'Markets').set_value(['NQ']).run()
+    numbers = [(m.label, m.value) for m in app.metric]
+    assert widget(app.metric, 'Net P&L').value == '+$40.00'
+    save(app, 'NQ only')
+    assert said(app.main.caption, 'Saved filter: NQ only') and widget(app.multiselect, 'Markets').value == []
+    assert [(m.label, m.value) for m in app.metric] == numbers
+
+
 def test_saving_while_a_saved_filter_is_on_saves_the_two_together_as_one_filter():
     journal = round_trips(Journal(), ('paper', 'ESZ6', '2026-10-07', 14), ('paper', 'NQZ6', '2026-10-07', 15),
                           ('second', 'NQZ6', '2026-10-07', 16))
@@ -472,14 +485,19 @@ def test_a_filter_no_single_rule_can_say_is_refused_in_one_line_and_nothing_chan
     journal.save_filter('Breakout or pullback', {'tags_any': ['Breakout', 'Pullback']})
     app = open_app(review=False)
     widget(app.selectbox, 'Saved Filter on Every Page').set_value('Breakout or pullback').run()
-    widget(app.multiselect, 'Tags').set_value(['Patient']).run()
+    widget(app.multiselect, 'Tags').set_value(['Patient', 'PAPER FIXTURE']).run()
     widget(app.radio, 'Tag Match').set_value('Any selected').run()
     shown = listed(app)
     assert len(shown) == 1
     save(app, 'Mixed')
     assert [e.value for e in app.error] == ["Two different 'any of these tags' choices cannot be saved as one filter."]
     assert 'Mixed' not in journal.workspace()['filters'] and widget(app.text_input, 'Filter Name').value == 'Mixed'
-    assert widget(app.multiselect, 'Tags').value == ['Patient'] and listed(app) == shown
+    assert widget(app.multiselect, 'Tags').value == ['Patient', 'PAPER FIXTURE'] and listed(app) == shown
+    # Any of one tag is that tag required: one rule says that exactly, so it saves.
+    widget(app.multiselect, 'Tags').set_value(['Patient']).run()
+    save(app, 'Mixed')
+    rule = journal.workspace()['filters']['Mixed']
+    assert not app.error and len(rule['tags_all']) == 1 and len(rule['tags_any']) == 2 and listed(app) == shown
 
 
 def test_only_a_narrowed_side_of_the_entry_dates_is_saved_so_a_new_days_trades_still_show():

@@ -130,7 +130,7 @@ FIRST = {'accounts': ['a', 'b'], 'symbols': ['ESZ6', 'NQZ6'], 'markets': [], 'di
          'tags_none': ['n'], 'playbook': 'book', 'start': '2026-10-01', 'end': '2026-10-31',
          'net_min': 0.0, 'r_max': 30.0, 'quantity_min': 2.0}
 SECOND = {'accounts': ['b', 'c'], 'symbols': [], 'markets': ['NQ'], 'directions': ['long', 'short'],
-          'status': ['closed'], 'ratings': [5], 'tags_all': ['y'], 'tags_any': ['p'], 'tags_none': ['m'],
+          'status': ['closed'], 'ratings': [5], 'tags_all': ['y'], 'tags_any': ['p', 'q', 'r'], 'tags_none': ['m'],
           'playbook': 'book', 'start': '2026-10-05', 'end': '2026-11-30', 'net_min': 50.0, 'net_max': 500.0,
           'r_max': 20.0}
 
@@ -138,18 +138,31 @@ SECOND = {'accounts': ['b', 'c'], 'symbols': [], 'markets': ['NQ'], 'directions'
 def test_two_filters_combine_into_one_rule_field_by_field():
     assert combine_filters(FIRST, SECOND) == {
         'accounts': ['b'], 'symbols': ['ESZ6', 'NQZ6'], 'markets': ['NQ'], 'directions': ['long'],
-        'status': ['closed'], 'ratings': [5], 'tags_all': ['x', 'y'], 'tags_any': ['p'], 'tags_none': ['m', 'n'],
+        'status': ['closed'], 'ratings': [5], 'tags_all': ['x', 'y'], 'tags_any': ['p', 'q'], 'tags_none': ['m', 'n'],
         'playbook': 'book', 'start': '2026-10-05', 'end': '2026-10-31', 'net_min': 50.0, 'net_max': 500.0,
         'r_max': 20.0, 'quantity_min': 2.0}
     assert combine_filters(SECOND, FIRST) == combine_filters(FIRST, SECOND)
     assert combine_filters({}, FIRST) == combine_filters(FIRST, {}) == FIRST       # nothing in use: the rule itself
 
 
+def test_any_of_one_tag_is_that_tag_required_and_a_choice_a_required_tag_meets_asks_nothing_more():
+    # Neither is two different 'any of these tags' choices, so both save as one filter instead of being refused.
+    empty = combine_filters({}, {})
+    assert (combine_filters({'tags_any': ['p', 'q']}, {'tags_any': ['y']})
+            == combine_filters({'tags_any': ['y']}, {'tags_any': ['p', 'q']})
+            == {**empty, 'tags_all': ['y'], 'tags_any': ['p', 'q']})
+    assert (combine_filters({'tags_any': ['p', 'q']}, {'tags_all': ['p'], 'tags_any': ['m', 'n']})
+            == {**empty, 'tags_all': ['p'], 'tags_any': ['m', 'n']})
+    assert combine_filters({}, {'tags_any': ['p']})['tags_all'] == ['p']
+
+
 @pytest.mark.parametrize('first, second', [
     (FIRST, SECOND), ({'accounts': ['a']}, {'directions': ['short'], 'tags_any': ['x', 'p']}),
     ({'tags_all': ['y'], 'end': '2026-10-07'}, {'tags_none': ['m'], 'net_max': 60.0}),
     ({'markets': ['ES', 'NQ'], 'ratings': [4]}, {'markets': ['ES'], 'quantity_max': 2, 'tags_any': ['p']}),
-    ({'tags_any': ['x', 'y', 'p']}, {'tags_any': ['x']}),          # one choice inside the other joins
+    ({'tags_any': ['x', 'y', 'p']}, {'tags_any': ['x', 'y']}),     # one choice inside the other joins
+    ({'tags_any': ['x', 'y', 'p']}, {'tags_any': ['x']}),          # any of one tag is that tag required
+    ({'tags_any': ['p', 'q']}, {'tags_all': ['p'], 'tags_any': ['m', 'n']}),     # met by a required tag
 ])
 def test_the_combined_rule_keeps_exactly_the_trades_both_rules_keep(first, second):
     rows = sample_rows()
