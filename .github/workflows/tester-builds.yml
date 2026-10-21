@@ -13,8 +13,8 @@ jobs:
   windows:
     runs-on: windows-2025
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
         with:
           python-version: '3.13'
           cache: pip
@@ -38,7 +38,7 @@ jobs:
           foreach ($font in 'Regular', 'Italic', 'Medium', 'SemiBold', 'Bold') {
             if (!($listing -match ('app/static/fonts/IBMPlexSans-{0}\.woff2$' -f $font))) { throw "ZIP is missing IBM Plex Sans $font" }
           }
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: MotiveWave-Journal-Windows-x64
           path: build/windows/MotiveWave-Journal-Windows-x64.zip
@@ -47,8 +47,8 @@ jobs:
   macos:
     runs-on: macos-14
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
         with:
           python-version: '3.13'
           cache: pip
@@ -58,7 +58,7 @@ jobs:
         run: python -m pytest -q -p no:cacheprovider
       - name: Build self-contained macOS DMG
         run: python scripts/build_macos_release.py --target-arch arm64
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: MotiveWave-Journal-macOS
           path: build/release/*.dmg
@@ -69,14 +69,14 @@ jobs:
     needs: [windows, macos]
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           pattern: MotiveWave-Journal-*
           merge-multiple: true
       - name: Create checksums
         shell: bash
         run: sha256sum MotiveWave-Journal-*.dmg MotiveWave-Journal-Windows-x64.zip > SHA256SUMS.txt
-      - uses: softprops/action-gh-release@v2
+      - uses: softprops/action-gh-release@v3
         with:
           name: MotiveWave Journal ${{ github.ref_name }}
           prerelease: true
@@ -90,7 +90,7 @@ jobs:
 
             Windows: extract the entire ZIP, then run `MotiveWave Journal.exe`. Do not separate the EXE from its `_internal` folder. Windows may show a SmartScreen warning because this tester build is not Authenticode-signed.
 
-            After opening the app, use Setup → Install MotiveWave study, restart MotiveWave, and add Journal → MotiveWave Journal to each exact-contract chart being tested.
+            After opening the app, click Install MotiveWave Study in Setup, quit MotiveWave completely and open it again, then add Journal → MotiveWave Journal to the chart you trade (the contract's own or a continuous one). There is nothing to set.
           files: |
             MotiveWave-Journal-*.dmg
             MotiveWave-Journal-Windows-x64.zip
