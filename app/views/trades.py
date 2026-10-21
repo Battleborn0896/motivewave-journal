@@ -536,11 +536,16 @@ def review_form(journal, trade, a: dict) -> None:
                  args=(journal, trade.id, 'adherence', adherence_key))
 
 
+def typed_stop(typed):
+    """A stop as typed, read the way prices are shown: '4,996.25' and '4996.25' are the same price."""
+    return finite(typed.replace(',', '').strip(), 'Stop')
+
+
 def stop_error(typed, shown) -> str:
     """Why a typed stop cannot be saved, or '' when it can."""
     try:
         if typed.strip() and typed.strip() != shown:
-            finite(typed, 'Stop')
+            typed_stop(typed)
     except ValueError as exc:
         return str(exc)
     return ''
@@ -552,7 +557,7 @@ def save_stop(journal, trade_id, widget_key, shown) -> None:
     typed = str(st.session_state.get(widget_key) or '').strip()
     if typed == shown or stop_error(typed, shown):
         return
-    journal.update_annotation(trade_id, {'planned_stop': finite(typed, 'Stop') if typed else None})
+    journal.update_annotation(trade_id, {'planned_stop': typed_stop(typed) if typed else None})
 
 
 def stop_text(price) -> str:

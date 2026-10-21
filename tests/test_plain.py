@@ -310,3 +310,13 @@ def test_check_ins_and_checklist_runs_name_their_trade_instead_of_its_id(home):
     runs = next(d.value for d in app.dataframe if 'Answers' in d.value.columns)
     assert list(runs['Trade']) == ['Oct 7, 10:00 AM · ESZ6 Short 2']
     assert not any(trade.id in text for text in cells(app))
+
+
+def test_a_stop_typed_with_a_thousands_comma_is_the_same_price(home):
+    journal = Journal()
+    journal.ingest([fill('a-in', 'buy', 19990, '2026-10-07T14:00:00Z', symbol='NQZ6'),
+                    fill('a-out', 'sell', 20010, '2026-10-07T14:01:00Z', symbol='NQZ6')])
+    trade, = journal.trades()
+    app = open_app()
+    widget(app.text_input, 'Stop').set_value('19,980.25').run()
+    assert not app.exception and journal.annotations()[trade.id]['planned_stop'] == 19980.25
