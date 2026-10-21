@@ -62,8 +62,8 @@ def filter_editor(journal, rows, prefix, old=None):
         ranges = st.multiselect('Numbers to limit', list(choices),
                                 default=[name for name in choices if old.get(name + '_min') is not None or old.get(name + '_max') is not None],
                                 format_func=choices.get, key=key('numeric-fields'),
-                                help='MAE / MFE limits use account currency under your accuracy setting, not the '
-                                     'display unit. A trade without a value never passes a limit. R needs a stop; '
+                                help='MAE / MFE limits use account currency, not the display unit. A trade without '
+                                     'a value never passes a limit. R needs a stop; '
                                      'duration is in minutes.')
         for name in ranges:
             cols = st.columns(2)
@@ -220,7 +220,7 @@ def draw(journal, rows, widget, page_id):
     if kind == 'MAE / MFE':
         measured = [r for r in common.display_excursion_rows(journal, closed) if r['display_mae'] is not None and r['display_mfe'] is not None]
         if not measured:
-            st.info('No trade is measured under your MAE / MFE accuracy and unit settings.')
+            st.info('No trade has MAE / MFE in your MAE / MFE Units yet.')
             return
         frame = pd.DataFrame(measured)
         frame['Net P&L'] = [common.money(v, currency) for v in frame.net]

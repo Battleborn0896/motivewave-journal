@@ -74,7 +74,6 @@ def test_missing_horizon_and_reported_gaps_do_not_appear_as_comparable_zero(tmp_
 
 def test_replay_run_isolation_simulation_label_and_no_future_peeking(tmp_path):
     journal, t = trade(tmp_path, replay=True)
-    journal.set_excursion_policy('best-available')  # explicit opt-in for this simulated-source test
     correct = 'motivewave-replay:run-a:simulated'
     samples = ticks(correct)
     journal.ingest_prices(samples)
@@ -84,7 +83,8 @@ def test_replay_run_isolation_simulation_label_and_no_future_peeking(tmp_path):
     assert result['coverage'] == 'partial-window' and result['horizon_extra'] is None
     wrong = post_exit(t, ticks('motivewave-replay:run-b:ticks'), 'motivewave-replay:run-b:ticks', now=LATER)
     assert wrong['extra_mfe'] is None
-    assert best_post_exit(journal, t, minutes=5)['precision'] == 'replay-simulated'
+    # Only recorded ticks measure a runner: simulated replay prints are labelled, never used.
+    assert best_post_exit(journal, t, minutes=5)['precision'] == 'pending'
 
 
 def test_groups_separate_quality_deduplicate_tags_and_require_same_currency(tmp_path):

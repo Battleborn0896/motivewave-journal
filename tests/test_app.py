@@ -23,7 +23,7 @@ from mwjournal.importers import apply_preview, preview_bridge
 from mwjournal.metrics import measurements
 from mwjournal.sync import DEFAULT_CONNECTION
 from test_capture import fill, lines, tick
-from test_chart import bar, round_trip, seed_preview
+from test_chart import bar, round_trip, seed_preview, seed_ticks
 
 APP = Path(__file__).resolve().parent.parent / 'app' / 'app.py'
 VIEWS = ['Trades', 'Edge', 'Import', 'Connection', 'Daily review', 'Export']
@@ -37,10 +37,6 @@ FILLS_CSV = ('Account,Instrument,Side,Quantity,Avg Price,Date,Time,Trade ID,Comm
 def home(tmp_path, monkeypatch):
     """Every test gets its own data home, and the readers the app started are stopped afterwards."""
     monkeypatch.setenv('MWJ_HOME', str(tmp_path))
-    # Legacy fixtures below deliberately exercise labelled OHLC estimates. New experience tests
-    # verify the production tick-only default separately; selecting units never opts into estimates.
-    for dataset in ('live', 'replay'):
-        Journal(dataset=dataset).set_excursion_policy('best-available')
     yield tmp_path
     runtime.stop_all()
 
@@ -268,7 +264,6 @@ def test_a_replay_trade_without_ticks_says_the_study_fills_them_in_after_it_clos
     replay = Journal(dataset='replay')
     apply_preview(replay, preview_bridge(lines([fill('a'), fill('b', 'sell', 5002, ts='2022-01-03T14:32:00Z')]),
                                          dataset='replay'))
-    replay.set_excursion_policy('ticks-only')
     app = open_app('Trades', 'Replay')
     assert chosen(app, 'replay') == replay.trades()[0].id
     assert [c.value for c in app.main.caption].count(common.REPLAY_TICKS_LATER) == 1
@@ -350,7 +345,7 @@ def test_empty_journal_then_a_review_is_saved():
 
 
 def test_full_recorded_path_and_runner_controls_render_without_claiming_missing_data(home):
-    seed_preview(home)
+    seed_ticks(seed_preview(home))
     app = open_app()
     widget(app.checkbox, 'Show/export full recorded trade path').set_value(True).run()
     assert not app.exception
@@ -358,7 +353,7 @@ def test_full_recorded_path_and_runner_controls_render_without_claiming_missing_
     widget(app.selectbox, 'Look after exit').set_value(120).run()
     assert not app.exception and said(app.caption, 'Partial or gapped horizon')
     # What it was measured from, in words: no program codes.
-    assert said(app.caption, 'From candles, an estimate · price after exit not complete yet · 1 contract')
+    assert said(app.caption, 'From ticks · price after exit not complete yet · 1 contract')
     assert said(app.caption, 'Stop 4,998 · Your saved stop · the one R uses · waiting for prices')
     assert not any(code in c.value for c in app.caption for code in ('estimated-bars', 'partial-window', 'awaiting-prices'))
     show(app, 'Edge')
@@ -374,7 +369,7 @@ def test_full_recorded_path_and_runner_controls_render_without_claiming_missing_
                    for b in app.checkbox)
 
 
-def test_measured_trade_risk_and_bidask_variants_render():
+def test_measured_trade_risk_renders_from_the_traded_price_alone():
     journal = Journal()
     journal.ingest([(Execution('test', 'paper', 'ESZ6', 'buy', 1, 5000, '2026-10-07T14:00:00Z', execution_id='a'), {}),
                     (Execution('test', 'paper', 'ESZ6', 'sell', 1, 5002, '2026-10-07T14:03:00Z', execution_id='b'), {})])
@@ -383,12 +378,11 @@ def test_measured_trade_risk_and_bidask_variants_render():
     journal.annotate(trade.id, {'setup': 'Failed breakout', 'planned_stop': 4999, 'adherence': 'Yes'})
     for metric in measurements(trade, samples, 'test-prices'):
         journal.record_metric(trade, metric)
+    # One measurement, from the traded price: the bid of 4998.75 plays no part, and there is nothing to choose.
+    assert [m['basis'] for m in journal.metric_options(trade)] == ['last']
     app = open_app()
     assert widget(app.metric, 'MAE / risk').value == '1.00R'
-    liquidation = next(i for i, metric in enumerate(journal.metric_options(trade)) if metric['basis'] == 'liquidation')
-    widget(app.selectbox, 'Measurement').set_value(liquidation).run()
-    assert not app.exception
-    assert widget(app.metric, 'MAE / risk').value == '1.25R'
+    assert not any(s.label == 'Measurement' for s in app.selectbox)
     open_tab(show(app, 'Edge'), 'Compare')
     widget(app.selectbox, 'Compare by').set_value('Followed my plan').run()
     assert not app.exception
@@ -466,7 +460,7 @@ def test_rollover_filters_group_markets_but_keep_micro_contracts_separate(home):
 
 
 def test_trade_rows_are_built_again_only_when_something_they_show_changed(home, monkeypatch):
-    journal = seed_preview(home)
+    journal = seed_ticks(seed_preview(home))
     built = []
     original = common.rows_for
     monkeypatch.setattr(common, 'rows_for', lambda journal: built.append(1) or original(journal))
@@ -505,8 +499,8 @@ def test_trade_rows_are_built_again_only_when_something_they_show_changed(home, 
     journal.record_metric(later, {'source': 'motivewave-bars:1m', 'precision': 'pending', 'path': [], 'notes': ['again']})
     assert clicks(app.run) == 0
     from mwjournal.metrics import excursions
-    deeper = [dataclasses.replace(s, low=s.low - 3) for s in journal.prices(trade.symbol, 'motivewave-bars:1m')]
-    journal.record_metric(trade, excursions(trade, deeper, 'motivewave-bars:1m'))
+    deeper = [dataclasses.replace(s, high=s.high - 3, low=s.low - 3) for s in journal.prices(trade.symbol, 'motivewave-ticks')]
+    journal.record_metric(trade, excursions(trade, deeper, 'motivewave-ticks'))
     assert shown(trade.id)['mae'] != journal.best_metric(trade)['mae']
     assert clicks(app.run) == 1 and shown(trade.id)['mae'] == journal.best_metric(trade)['mae']
     # A multiplier set again to another value: the trade's result in the list follows it.
@@ -538,7 +532,7 @@ def test_stats_choices_are_still_chosen_after_another_tab_was_open(home):
 
 
 def test_simple_navigation_and_optional_controls_do_not_remove_reviews(home):
-    seed_preview(home)
+    seed_ticks(seed_preview(home))
     app = open_app(review=False)
     assert app.segmented_control(key=common.VIEW_KEY).options == [common.NAV_LABELS.get(v, v) for v in common.PRIMARY_VIEWS]
     assert not any(s.label == 'Settings page' for s in app.selectbox)
@@ -624,11 +618,8 @@ def test_edge_separates_gross_results_fees_and_planned_risk(home):
 def test_edge_draws_excursions_for_captured_trades_nobody_has_reviewed(home):
     """Automatic capture produces measured trades with no setup, tags or risk; the statistics must not need them."""
     journal = Journal()
-    trade = round_trip(journal)
-    samples = [bar(0), bar(1), bar(2), bar(3)]
-    journal.ingest_prices(samples)
-    for metric in measurements(trade, samples, samples[0].source):
-        journal.record_metric(trade, metric)
+    round_trip(journal)
+    seed_ticks(journal)
     # A second closed trade that has no prices at all: measured and unmeasured rows are mixed.
     journal.ingest([(Execution('motivewave', 'paper', 'NQZ6', 'buy', 1, 20000, '2026-10-08T14:10:00Z',
                               execution_id='n1'), {}),
@@ -795,6 +786,18 @@ def test_connection_turns_connected_once_the_study_writes_a_fresh_heartbeat():
     assert not any(f'**{title}**' in m.value for m in app.main.markdown for title, _, _ in setup.STEPS.values())
     show(app, 'Connection')
     assert shape(app) == connected
+    # What the study could not link or read is said there too, beside Connected, and so are the events of a
+    # kind this app does not read, which are skipped and counted.
+    warned = {**heartbeat(), 'warnings': '1 working stop order not linked to a position: no position on that '
+                                         'account and contract (orders: 3 read, 1 stop, 0 new, 0 without instrument, '
+                                         '0 without state, 0 with a position, 0 on the closing side, 0 linked)'}
+    study_writes([{'version': 1, 'type': 'position', 'mode': 'live', 'provider': 'motivewave-native:paper:live'}, warned])
+    wait_until(lambda: status_of().get('heartbeat', {}).get('warnings'))
+    app.run()
+    assert states(app.main) == ['Connected'] and shape(app) == connected
+    assert said(app.main.markdown, 'The study also says: 1 working stop order not linked to a position: no position '
+                                   'on that account and contract (orders: 3 read')
+    assert said(app.main.markdown, 'Events of a kind this version does not read, skipped: 1.')
     # The status redraws itself in the browser every few seconds. Seen in a real browser: when such a
     # redraw has fewer elements than the one before, the old ones can stay on screen. So every state
     # draws the same elements and only their text changes.
@@ -818,6 +821,8 @@ def test_trades_the_study_writes_show_up_without_any_setup():
                   {'version': 1, 'type': 'bar', 'provider': 'motivewave-bars:1m', 'symbol': 'ESZ6',
                    'ts': '2026-10-07T14:00:00Z', 'resolution_seconds': 60,
                    'open': 5000, 'high': 5004, 'low': 4999, 'close': 5002, 'volume': 123},
+                  {'version': 1, 'type': 'tick', 'mode': 'live', 'provider': 'motivewave-ticks', 'symbol': 'ESZ6',
+                   'ts': '2026-10-07T14:00:30Z', 'price': 4999},
                   fill('b', 'sell', 5002, mode='live', ts='2026-10-07T14:00:50Z')])
     study_writes([heartbeat(mode='replay'), fill('r1'), tick(5001)], 'replay')
     wait_until(lambda: Journal().trades() and Journal().best_metric(Journal().trades()[0]))
@@ -1011,7 +1016,7 @@ def test_connection_view_sets_an_instrument_multiplier():
 
 
 def test_excursion_unit_picker_updates_detail_list_plot_and_persists_without_rewriting_data(home):
-    journal = seed_preview(home)
+    journal = seed_ticks(seed_preview(home))
     trade = journal.trades()[0]
     before = journal.best_metric(trade)
     reviews = journal.annotations()
@@ -1019,19 +1024,20 @@ def test_excursion_unit_picker_updates_detail_list_plot_and_persists_without_rew
     assert widget(app.selectbox, 'MAE / MFE Units').options == [
         'Dollars / account currency', 'Points', 'Ticks', 'R · risk to your stop']
     display_setting(app, 'MAE / MFE Units', 'points')
-    assert widget(app.metric, 'MFE').value == '3.00 pts'
+    assert widget(app.metric, 'MFE').value == '3.50 pts'
     path = next(json.loads(x.proto.spec) for x in app.get('plotly_chart') if 'Price move' in x.proto.spec)
     assert path['layout']['yaxis']['title']['text'].endswith('(pts)')
-    assert common.display_excursion_rows(journal, common.rows_for(journal))[0]['display_mfe'] == pytest.approx(3)
+    assert common.display_excursion_rows(journal, common.rows_for(journal))[0]['display_mfe'] == pytest.approx(3.5)
     assert 'held average entry' in widget(app.metric, 'MAE').help     # the unit is explained on hover
     open_review(app)
     display_setting(app, 'MAE / MFE Units', 'ticks')
-    assert widget(app.metric, 'MFE').value == '12.00 ticks'
+    assert widget(app.metric, 'MFE').value == '14.00 ticks'
+    # In dollars and R the most was with both contracts held, 2.5 points up: $250, over $200 at risk to 4998.
     display_setting(app, 'MAE / MFE Units', 'r')
     assert widget(app.metric, 'MFE').value == '1.25R'
     display_setting(app, 'MAE / MFE Units', 'currency')
     assert widget(app.metric, 'MFE').value == '$250.00'
-    path = next(json.loads(x.proto.spec) for x in app.get('plotly_chart') if 'Gross position P&L' in x.proto.spec)
+    path = next(json.loads(x.proto.spec) for x in app.get('plotly_chart') if 'Move of the position held' in x.proto.spec)
     assert path['layout']['yaxis']['tickformat'].startswith('$')        # its axis reads like every other amount
     assert journal.best_metric(trade) == before
     assert journal.annotations() == reviews
@@ -1049,13 +1055,14 @@ def test_missing_risk_and_unknown_tick_size_show_unavailable_with_one_time_setup
     journal.ingest([(Execution('test', 'paper', 'CUSTOM', 'buy', 2, 100, '2026-10-07T14:00:00Z', execution_id='a', point_value=1), {}),
                     (Execution('test', 'paper', 'CUSTOM', 'sell', 2, 102, '2026-10-07T14:03:00Z', execution_id='b', point_value=1), {})])
     trade = journal.trades()[0]
-    sample = PriceSample('CUSTOM', '2026-10-07T14:01:00Z', 'custom', 103, 99, 60)
-    journal.ingest_prices([sample])
-    for metric in measurements(trade, [sample], 'custom'):
+    samples = [PriceSample('CUSTOM', '2026-10-07T14:01:00Z', 'custom', 103, 103),
+               PriceSample('CUSTOM', '2026-10-07T14:01:30Z', 'custom', 99, 99)]
+    journal.ingest_prices(samples)
+    for metric in measurements(trade, samples, 'custom'):
         journal.record_metric(trade, metric)
     app = open_app()
     display_setting(app, 'MAE / MFE Units', 'r')
-    assert widget(app.metric, 'MFE').value == '—' and said(app.info, 'R needs a stop')
+    assert widget(app.metric, 'MFE').value == '—' and said(app.info, 'No stop order 10 seconds after entry')
     assert any(b.label == 'Recalculate From Stored Prices' for b in app.button)
     display_setting(app, 'MAE / MFE Units', 'ticks')
     assert widget(app.metric, 'MFE').value == '—'
@@ -1070,10 +1077,10 @@ def test_missing_risk_and_unknown_tick_size_show_unavailable_with_one_time_setup
     assert payload['trades'][0]['mfe'] == 6  # original total currency, not relabelled price units
 
 
-def test_old_price_metrics_backfill_for_display_but_platform_only_dollars_are_not_blindly_converted(home):
-    journal = seed_preview(home)
+def test_old_tick_metrics_get_points_for_display_and_platform_reports_are_never_shown(home):
+    journal = seed_ticks(seed_preview(home))
     trade = journal.trades()[0]
-    legacy = journal.best_metric(trade)
+    legacy = next(m for m in journal.metric_options(trade) if m['source'] == 'motivewave-ticks')
     for name in ('mae_points', 'mfe_points', 'point_definition', 'point_precision'):
         legacy.pop(name, None)
     journal.record_metric(trade, legacy)
@@ -1082,23 +1089,18 @@ def test_old_price_metrics_backfill_for_display_but_platform_only_dollars_are_no
     journal.record_metric(trade, report)
     assert journal.best_metric(trade)['mfe'] == 9999
     app = open_app()
-    assert widget(app.metric, 'MFE').value == '$9,999.00'
+    # Only recorded ticks measure a trade: the report's dollars are never shown, whatever their rank.
+    assert widget(app.metric, 'MFE').value == '$250.00'
     display_setting(app, 'MAE / MFE Units', 'points')
-    assert widget(app.metric, 'MFE').value == '3.00 pts'
-    assert said(app.caption, 'OHLC estimate')
-    assert journal.best_metric(trade)['mfe'] == 9999
+    assert widget(app.metric, 'MFE').value == '3.50 pts'          # worked out again from the stored prints
+    assert not said(app.caption, 'OHLC estimate') and not any('9,999' in m.value for m in app.metric)
     stored_legacy = next(m for m in journal.metric_options(trade) if m['source'] == legacy['source'])
     assert 'mfe_points' not in stored_legacy
-    # Selecting the report alone must not create imaginary price points.
-    choices = widget(app.selectbox, 'Measurement')
-    report_index = next(i for i, label in enumerate(choices.options) if 'platform-report-only' in label)
-    choices.set_value(report_index).run()
-    assert widget(app.metric, 'Maximum favorable excursion').value == '—'
-    assert said(app.info, 'cannot be converted safely')
+    assert not any(s.label == 'Measurement' for s in app.selectbox)
 
 
 def test_analytics_is_question_based_and_selected_units_change_only_excursion_axes(home):
-    seed_preview(home)
+    seed_ticks(seed_preview(home))
     app = open_app('Edge')
     assert [t.label for t in app.tabs] == ['Overview', 'Compare', 'MAE / MFE', 'Runners', 'Dashboards']
     assert widget(app.metric, 'Average Trade').value == '+$242.00'

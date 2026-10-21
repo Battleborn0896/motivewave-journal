@@ -1,5 +1,5 @@
-"""Setup's settings: Time Zone and MAE / MFE Units side by side, then MAE / MFE accuracy and hiding weekends
-under a small Advanced heading. Also the saved filter every page uses, which is chosen and saved in the
+"""Setup's settings: Time Zone and MAE / MFE Units side by side, then hiding weekends under a small Advanced
+heading. MAE / MFE are measured from recorded ticks only: there is no accuracy to choose. Also the saved filter every page uses, which is chosen and saved in the
 Filters menus of Trades and Stats, where filtering lives. Each choice saves the moment it is made. Nothing
 here changes a fill or a review."""
 import streamlit as st
@@ -43,8 +43,7 @@ def render(journal, rows):
                             'under Tags, Playbooks & Checklists is separate, so existing day tags stay on their days.')
     common.unit_selector(journal, unit_col)
     theme.subsection('Advanced')
-    policy_col, weekend_col = st.columns(2, vertical_alignment='bottom')
-    common.policy_selector(journal, policy_col)
+    weekend_col, _ = st.columns(2, vertical_alignment='bottom')
     weekend_key = common.key(journal, 'hide-weekends')
     st.session_state.setdefault(weekend_key, bool(journal.workspace()['preferences'].get('hide_weekends', False)))
     weekend_col.checkbox('Hide Weekends in Calendar', key=weekend_key,

@@ -64,10 +64,12 @@ def runner_value(value, unit, *, risk=None, tick=None, multiplier=None, quantity
 
 def description(unit):
     return {
-        'currency': 'Gross realised + open-position P&L, across the whole trade; excludes fees.',
+        'currency': 'How far the contracts you held moved against you (MAE) or for you (MFE) from their average '
+                    'entry, times the size held and the point value. Profit banked by a partial exit does not count; '
+                    'excludes fees.',
         'points': 'Price move from the held average entry at each moment; independent of quantity. '
                   'Scale-ins update that entry; realised profits from partial exits are not added.',
         'ticks': 'Price excursion in points ÷ this contract’s minimum tick size. Fractional ticks are possible '
                  'with average entries or estimated bars.',
-        'r': 'Gross whole-trade excursion ÷ the risk to your stop. No stop means unavailable, not zero.',
+        'r': 'That dollar move ÷ the risk to your stop. No stop means unavailable, not zero.',
     }[unit]

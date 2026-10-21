@@ -13,7 +13,7 @@ import runtime
 from mwjournal import Execution, Journal, PriceSample, paths
 from test_app import (CREDIT, heartbeat, helped, listed, open_app, press, said, show, states, status_of,
                       study_writes, wait_until, widget)
-from test_chart import seed_preview
+from test_chart import seed_preview, seed_ticks
 from views import connection, setup
 
 
@@ -69,8 +69,9 @@ def test_the_first_page_reads_status_then_the_missing_step_then_two_settings_the
     status, step, settings, advanced, pages = order(
         app, "data-state='Waiting For Study'", '**Install the Study**', '>Settings<', '>Advanced<', '>More Setup<')
     assert status < step < settings < advanced < pages
-    # Time Zone and MAE / MFE Units, then accuracy and hide weekends under Advanced: nothing else to set here.
-    assert [s.label for s in app.main.selectbox] == ['Time Zone', 'MAE / MFE Units', 'MAE / MFE Accuracy']
+    # Time Zone and MAE / MFE Units, then hide weekends under Advanced: nothing else to set here. There is no
+    # MAE / MFE Accuracy: only recorded ticks measure a trade.
+    assert [s.label for s in app.main.selectbox] == ['Time Zone', 'MAE / MFE Units']
     assert [c.label for c in app.main.checkbox] == ['Hide Weekends in Calendar']
     assert "<div class='mwj-subsection'>Advanced</div>" in [m.value for m in app.main.markdown][advanced]
     assert not app.main.expander and not app.main.get('popover')         # a plain heading, nothing that folds
@@ -367,8 +368,7 @@ def test_the_parent_draws_every_page_but_the_first(monkeypatch):
 # ---------------------------------------------------------------- the two settings, and the saved filter
 
 def test_units_and_the_time_zone_are_set_on_setup_and_saved_for_the_journal(home):
-    journal = seed_preview(home)
-    journal.set_excursion_policy('best-available')        # the fixture's prices are candles
+    journal = seed_ticks(seed_preview(home))              # recorded ticks: what MAE / MFE are measured from
     app = open_app('Setup')
     widget(app.selectbox, 'MAE / MFE Units').set_value('points').run()
     widget(app.selectbox, 'Time Zone').set_value('Europe/London').run()

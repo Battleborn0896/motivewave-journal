@@ -453,13 +453,16 @@ def numbers(journal, trade, annotation: dict, zone) -> None:
     outcome = 'positive' if result is not None and result > 0 else 'negative' if result is not None and result < 0 else 'neutral'
     with cols[0].container(key='trade-result-' + outcome):
         st.metric(label, money(result, trade.currency) if result is not None else shown, help=why)
-    mae, mfe = common.excursion_values(journal, trade, metric, risk.plan_for(journal, trade).risk)
+    plan = risk.plan_for(journal, trade)
+    mae, mfe = common.excursion_values(journal, trade, metric, plan.risk)
     explain = units.description(unit) + (f' Measured from: {measured}.' if measured else '')
     cols[1].metric('MAE', common.excursion_amount(mae, unit, trade.currency), help=explain)
     cols[2].metric('MFE', common.excursion_amount(mfe, unit, trade.currency), help=explain)
     cols[3].metric('Peak size', f'{trade.max_qty:g}', help='The most contracts held at once.')
     if not common.measured(metric) or common.replay_ticks_pending(journal, trade):
         st.caption(common.no_excursions(journal, trade))
+    elif unit == 'r' and plan.risk is None and plan.why:
+        st.caption(plan.why)                       # in R, why there is none: no stop reported, typed or found
 
 
 def executions_panel(journal, trade, zone) -> None:
@@ -581,19 +584,12 @@ def excursions_panel(journal, trade, a: dict, zone) -> None:
     unit = common.excursion_unit(journal)
     at_risk = risk.plan_for(journal, trade).risk
     tick = units.tick_size(trade.symbol, journal.display_settings()['tick_sizes'])
-    options = [common.display_metric(journal, trade, m) for m in common.metric_options(journal, trade)]
-    if not any(common.measured(m) for m in options):
+    # The one measurement the trade is shown with everywhere (common.best_display_metric): nothing to choose.
+    m = common.best_display_metric(journal, trade)
+    if not common.measured(m):
         st.info(common.no_excursions(journal, trade))
     else:
-        best = common.best_display_metric(journal, trade)
-        index = next((i for i, m in enumerate(options) if m['source'] == best.get('source')
-                      and m.get('basis', 'last') == best.get('basis', 'last')), 0)
-        # The key carries the option list's shape, so a better measurement that arrives later is shown.
-        m = options[st.selectbox('Measurement', range(len(options)), index=index,
-                                 key=common.key(journal, f'measurement-{trade.id}-{len(options)}-{index}-{unit}'),
-                                 format_func=lambda i: f"{PRECISION.get(options[i].get('point_precision') if unit in ('points', 'ticks') else options[i]['precision'], 'Unavailable')} · {options[i]['source']} · "
-                                                      f"{options[i].get('basis', 'last')}")]
-        m = common.display_metric(journal, trade, m)
+        m = shown = common.display_metric(journal, trade, m)
         common.excursion_help(journal, trade, m, at_risk)
         mae, mfe = common.excursion_values(journal, trade, m, at_risk)
         c1, c2 = st.columns(2)
@@ -616,8 +612,7 @@ def excursions_panel(journal, trade, a: dict, zone) -> None:
             if full:
                 samples = journal.prices(trade.symbol, m['source'], start=trade.opened, end=trade.closed)
                 clock = journal.trade_clock(trade)
-                m = excursions(trade, samples, m['source'], basis=m.get('basis', 'last'), now=clock,
-                               max_path_points=None)
+                m = excursions(trade, samples, m['source'], now=clock, max_path_points=None)
                 m = merging.mask_overlap_points(trade, m)
                 st.caption(f"{len(m['path']):,} recorded prices",
                            help='Every observation that was recorded, not proof that the feed delivered every tick. '
@@ -631,10 +626,7 @@ def excursions_panel(journal, trade, a: dict, zone) -> None:
                 return
             if full and len(path) > 20000:
                 st.caption('The CSV has every price; the plot uses fewer so it stays responsive.')
-                compact = next(
-                    (v for v in options if v['source'] == m['source'] and v.get('basis', 'last') == m.get('basis', 'last')), None)
-                if compact:
-                    path = pd.DataFrame(compact['path'])
+                path = pd.DataFrame(shown['path'])
             fig = go.Figure()
             high = [units.path_value(p, 'high', unit, risk=at_risk, tick=tick) for p in path.to_dict('records')]
             low = [units.path_value(p, 'low', unit, risk=at_risk, tick=tick) for p in path.to_dict('records')]
@@ -648,7 +640,7 @@ def excursions_panel(journal, trade, a: dict, zone) -> None:
                 for fill in trade.fills:
                     fig.add_vline(x=common.wall_clock([fill['ts']], zone)[0], line_width=1,
                                   line_dash='dot', line_color=theme.UP if fill['role'] == 'entry' else theme.DOWN)
-                definition = 'Price move from held average entry' if unit in ('points', 'ticks') else 'Gross position P&L'
+                definition = 'Price move from held average entry' if unit in ('points', 'ticks') else 'Move of the position held'
                 # uirevision: a zoom survives the redraws of an open trade's path.
                 fig.update_layout(height=290, yaxis_title=f'{definition} ({units.suffix(unit, trade.currency)})',
                                   xaxis_title=f'Time ({humanize.zone_name(zone, trade.opened)})', uirevision=trade.id)

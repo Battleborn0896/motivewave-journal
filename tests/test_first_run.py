@@ -8,7 +8,7 @@ import common
 import runtime
 from mwjournal import Execution, Journal, merging
 from test_app import chosen, listed, open_app, pick, press, said, show, widget
-from test_chart import round_trip, seed_preview
+from test_chart import round_trip, seed_preview, seed_ticks
 
 NY = 'America/New_York'
 
@@ -222,7 +222,7 @@ def test_money_and_time_are_human_on_the_trades_page_and_in_exports(home):
     journal = seed_preview(home)
     app = open_app()
     assert widget(app.metric, 'Net P&L').value == '+$242.00'
-    journal.set_excursion_policy('best-available')
+    seed_ticks(journal)
     app.run()
     assert widget(app.metric, 'MAE').value.startswith('$') and widget(app.metric, 'MFE').value.startswith('$')
     show(app, 'Edge')

@@ -421,9 +421,11 @@ def test_measuring_from_entry_leaves_no_measurement_it_did_not_make(tmp_path):
     journal.ingest_prices([PriceSample('NQ', '2026-10-07T14:00:01Z', 'motivewave-ticks', 19995, 19995,
                                        bid=19994.75, ask=19995.25)])
     trade, = journal.trades()
+    # A bid/ask measurement stored by 0.4.7 and earlier: measuring again from entry leaves only what it made.
+    journal.record_metric(trade, {'source': 'motivewave-ticks', 'basis': 'liquidation', 'precision': 'observed-ticks',
+                                  'mae': 5, 'mfe': 0, 'path': [], 'notes': []})
     journal.measure(trade, 'motivewave-ticks')
-    assert {m['basis'] for m in journal.metric_options(trade)} == {'last', 'liquidation'}
-    # The contract's own prints, without quotes, take over: the bid/ask measurement goes.
+    assert [m['basis'] for m in journal.metric_options(trade)] == ['last']
     journal.ingest_prices([PriceSample('NQZ6', '2026-10-07T14:00:02Z', 'motivewave-ticks', 19990, 19990)])
     journal.measure(trade, 'motivewave-ticks')
     assert [m['basis'] for m in journal.metric_options(trade)] == ['last']

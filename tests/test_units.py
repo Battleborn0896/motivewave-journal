@@ -35,8 +35,8 @@ def test_short_scale_in_and_partial_exits_use_the_held_average_not_final_size():
     m = excursions(trade, [tick(0, 102), tick(1, 94), tick(2, 99), tick(3, 107)], 'test')
     assert m['mae_points'] == 5  # after scale-in: average 102, adverse price 107
     assert m['mfe_points'] == 6  # at 94 while holding the original average 100
-    assert m['mfe'] == 500      # 4 realised + 6 remaining points, $50/point
-    assert m['mae'] == 300      # 4 realised - 5*2 open points
+    assert m['mfe'] == 400      # 4 points on 2 at the partial exit beats 6 on the 1 left; $50/point, nothing banked added
+    assert m['mae'] == 500      # 5 points on the 2 held after the scale-in; 0.4.7 netted the banked 4 and said 300
     assert m['path'][2]['point_high'] == 3
     assert m['path'][2]['average_cost'] == 102
 
@@ -50,11 +50,11 @@ def test_exit_fills_mark_points_but_missing_history_stays_unavailable():
     assert absent['mfe_points'] is None and absent['mfe'] is None
 
 
-def test_point_quote_basis_and_compaction_preserve_extrema():
+def test_point_compaction_preserves_extrema_and_quotes_play_no_part():
     trade = match([fill('a', 'buy', 2, 100), fill('b', 'sell', 2, 102, 3)])[0]
-    samples = [tick(0, 100, bid=99.75, ask=100.25), tick(1, 103, bid=102.75, ask=103.25)]
-    full = excursions(trade, samples, 'test', basis='liquidation', max_path_points=None)
-    compact = excursions(trade, samples, 'test', basis='liquidation', max_path_points=1)
+    samples = [tick(0, 99.75, bid=99.5, ask=100), tick(1, 102.75, bid=102.5, ask=103)]
+    full = excursions(trade, samples, 'test', max_path_points=None)
+    compact = excursions(trade, samples, 'test', max_path_points=1)
     assert full['mae_points'] == compact['mae_points'] == .25
     assert full['mfe_points'] == compact['mfe_points'] == 2.75
     assert compact['path'][0]['point_low'] == -.25
@@ -109,9 +109,9 @@ def test_preferences_persist_independently_and_concurrent_changes_merge(tmp_path
         for f in futures:
             f.result()
     assert Journal(live.path).display_settings() == {'excursion_unit': 'ticks', 'tick_sizes': {'CUSTOM': .01},
-        'excursion_policy': 'ticks-only', 'dashboard_sections': ['Overview', 'Compare', 'MAE / MFE', 'Runners']}
+        'dashboard_sections': ['Overview', 'Compare', 'MAE / MFE', 'Runners']}
     assert replay.display_settings() == {'excursion_unit': 'currency', 'tick_sizes': {},
-        'excursion_policy': 'ticks-only', 'dashboard_sections': ['Overview', 'Compare', 'MAE / MFE', 'Runners']}
+        'dashboard_sections': ['Overview', 'Compare', 'MAE / MFE', 'Runners']}
     with pytest.raises(ValueError):
         live.set_excursion_unit('made-up')
     with pytest.raises(ValueError):

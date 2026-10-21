@@ -1,7 +1,10 @@
-"""Excursions from the observed marked P&L path, including realised P&L and changing inventory.
+"""MAE and MFE of a trade from the prices observed while it was held.
 
-MAE/MFE are non-negative currency magnitudes. They refer to gross position equity since the
-round trip began (realised + unrealised). Bar extremes are estimates, especially boundary bars.
+One definition in every unit: how far price went against (MAE) or for (MFE) the position held at that
+moment, measured from its average entry. Points are that move; dollars are the move times the contracts
+held and the point value, at each moment; ticks and R are converted from these. Profit already banked by a
+partial exit never enters: long 2 at 100, sell 1 at 104, then a low of 99 is an MAE of 1 point on the one
+contract still held, $20 on NQ, not $0. Bar extremes are estimates, especially boundary bars.
 """
 
 from __future__ import annotations
@@ -14,51 +17,48 @@ from .units import POINT_DEFINITION
 
 
 def measurements(trade: Trade, samples: list[PriceSample], source: str, *, now=None) -> list[dict]:
-    result = [excursions(trade, samples, source, now=now)]
-    if any(s.resolution_seconds == 0 and (s.bid is not None if trade.direction == 'long' else s.ask is not None)
-           for s in samples):
-        result.append(excursions(trade, samples, source, basis='liquidation', now=now))
-    return result
+    """A trade's measurement from one source: from the traded price only (bid and ask play no part)."""
+    return [excursions(trade, samples, source, now=now)]
 
 
 def holding_states(trade: Trade, now: dt.datetime):
-    qty, cost, realised = 0., 0., 0.
-    sign = 1 if trade.direction == 'long' else -1
-    states, boundary = [], [0.]
+    """(from, to, contracts held, average cost) between consecutive fills, the last one until `now`."""
+    qty, cost = 0., 0.
+    states = []
     for i, fill in enumerate(trade.fills):
         amount, price = fill['qty'], fill['price']
         if fill['role'] == 'entry':
             cost = (cost * qty + price * amount) / (qty + amount)
             qty += amount
         else:
-            realised += (price - cost) * sign * amount
             qty = max(0., qty - amount)
-        boundary.append(realised + (price - cost) * sign * qty)
         end = instant(trade.fills[i + 1]['ts']) if i + 1 < len(trade.fills) else now
         if qty > 1e-9 and end >= instant(fill['ts']):
-            states.append((instant(fill['ts']), end, qty, cost, realised))
-    return states, boundary
+            states.append((instant(fill['ts']), end, qty, cost))
+    return states
 
 
 def price_boundaries(trade):
-    """Confirmed fills also mark price excursions before/after average entry changes."""
-    qty, cost, values = 0., 0., [0.]
+    """The fills are prices too: (move from the average entry, contracts held) at each fill while held before
+    it, and after an entry fill with the new average and size. The first, (0, 0), keeps both extremes >= 0."""
+    qty, cost, values = 0., 0., [(0., 0.)]
     sign = 1 if trade.direction == 'long' else -1
     for fill in trade.fills:
         if qty > 1e-9:
-            values.append((fill['price'] - cost) * sign)
+            values.append(((fill['price'] - cost) * sign, qty))
         if fill['role'] == 'entry':
             cost = (cost * qty + fill['price'] * fill['qty']) / (qty + fill['qty'])
             qty += fill['qty']
-            values.append((fill['price'] - cost) * sign)
+            values.append(((fill['price'] - cost) * sign, qty))
         else:
             qty = max(0., qty - fill['qty'])
     return values
 
 
-def walk(trade, samples, states, start, end, basis, values, point_values, path, used, covered):
-    """Each price's marks in the holding states it falls in, added to the lists given: the one loop
-    excursions and carry_on both measure with."""
+def walk(trade, samples, states, start, end, values, point_values, path, used, covered):
+    """Each price's moves in the holding states it falls in, added to the lists given: the one loop
+    excursions and carry_on both measure with. values gets the dollar move of the contracts held (move x held
+    x point value), point_values the move itself."""
     multiplier = trade.point_value if trade.point_value is not None else 1.
     sign = 1 if trade.direction == 'long' else -1
     for sample in samples:
@@ -72,22 +72,15 @@ def walk(trade, samples, states, start, end, basis, values, point_values, path, 
                       state for state in states if state[0] <= stamp < state[1]]
         if not active:
             continue
-        if basis == 'liquidation':
-            quote = sample.bid if sign > 0 else sample.ask
-            if sample.resolution_seconds or quote is None:
-                continue
-            prices = [quote]
-        else:
-            prices = [sample.low, sample.high]
-        for a, b, qty, cost, realised in active:
-            marks = [(realised + (p - cost) * sign * qty) * multiplier for p in prices]
+        prices = [sample.low, sample.high]
+        for a, b, qty, cost in active:
             moves = [(p - cost) * sign for p in prices]
+            marks = [move * qty * multiplier for move in moves]
             values.extend(marks)
             point_values.extend(moves)
             path.append({'ts': sample.ts, 'low': min(marks) if trade.point_value is not None else None,
                          'high': max(marks) if trade.point_value is not None else None, 'held_qty': qty,
-                         'point_low': min(moves), 'point_high': max(moves),
-                         'average_cost': cost, 'realised_pnl': realised * trade.point_value if trade.point_value is not None else None,
+                         'point_low': min(moves), 'point_high': max(moves), 'average_cost': cost,
                          'price_low': min(prices), 'price_high': max(prices),
                          'resolution_seconds': sample.resolution_seconds})
             covered.append((max(a, stamp), min(b, stop)))
@@ -134,13 +127,13 @@ def newest(trade, used) -> dict:
             'contract': all(s.symbol == exact for s in used)}
 
 
-def excursions(trade: Trade, samples: list[PriceSample], source: str, *, basis: str = 'last', now=None,
+def excursions(trade: Trade, samples: list[PriceSample], source: str, *, now=None,
                max_path_points: int | None = PATH_POINTS) -> dict:
     if max_path_points is not None and (type(max_path_points) is not int or max_path_points <= 0):
         raise ValueError('Path point limit must be positive, or None for the full recorded path.')
     end = instant(trade.closed) if trade.closed else (now or dt.datetime.now(dt.timezone.utc))
     start = instant(trade.opened)
-    common = {'source': source, 'basis': basis, 'precision': 'pending', 'mae': None, 'mfe': None,
+    common = {'source': source, 'basis': 'last', 'precision': 'pending', 'mae': None, 'mfe': None,
               'mae_points': None, 'mfe_points': None, 'point_definition': POINT_DEFINITION,
               'observations': 0, 'notes': [], 'path': [], 'through': end.isoformat(),
               'provenance': provenance(source)}
@@ -154,11 +147,12 @@ def excursions(trade: Trade, samples: list[PriceSample], source: str, *, basis: 
     # Price excursions remain calculable without a cash multiplier. Temporary scale 1 is internal
     # only: all currency fields stay None until that multiplier is known.
     multiplier = trade.point_value if trade.point_value is not None else 1.
-    states, boundaries = holding_states(trade, end)
-    values = [v * multiplier for v in boundaries]
-    point_values = price_boundaries(trade)
+    states = holding_states(trade, end)
+    boundaries = price_boundaries(trade)
+    values = [move * held * multiplier for move, held in boundaries]
+    point_values = [move for move, _ in boundaries]
     path, used, covered = [], [], []
-    walk(trade, trade_prices(samples, trade.symbol, source), states, start, end, basis,
+    walk(trade, trade_prices(samples, trade.symbol, source), states, start, end,
          values, point_values, path, used, covered)
     if not used:
         common['notes'] = ['No matching prices inside the holding interval. Capture or import ticks/bars for this period.']
@@ -211,7 +205,7 @@ TICKS = ('observed-ticks', 'replay-simulated')     # precisions measured from pr
 
 
 def carry_on(trade: Trade, previous: list[dict], samples: list[PriceSample], *, now=None) -> list[dict] | None:
-    """An open trade's measurements from one source (`previous`, every basis of it) carried on with the prices
+    """An open trade's measurements from one source (`previous`) carried on with the prices
     stored since: the same as measuring again from entry (measurements), without reading the tape again. MAE
     and MFE are extremes, so new prices only need comparing with them. `samples` are the source's prices from
     the earliest previous last_ts on, as Journal.prices chooses them for that window.
@@ -219,41 +213,34 @@ def carry_on(trade: Trade, previous: list[dict], samples: list[PriceSample], *, 
     None when that would not be exactly the same, and the caller measures from entry: a closed or incomplete
     trade, a measurement that is not from prints or has none yet, candles or proxy prices among the new ones,
     new prices before the last fill or under another kind of label than before (model.trade_prices prefers
-    the contract's own), or quotes arriving for a trade that had no quote-based measurement yet."""
+    the contract's own)."""
     if trade.closed or not trade.complete or not previous:
         return None
     end = now or dt.datetime.now(dt.timezone.utc)
-    states, _ = holding_states(trade, end)
+    states = holding_states(trade, end)
     if not states:
         return None
     last_fill = instant(trade.fills[-1]['ts'])
     exact = str(trade.symbol).strip().upper()
-    bases = {m.get('basis', 'last') for m in previous}
     result = []
-    sign = 1 if trade.direction == 'long' else -1
     for metric in previous:
         if metric.get('precision') not in TICKS or not metric.get('last_ts') or instant(metric['last_ts']) < last_fill:
             return None
-        basis = metric.get('basis', 'last')
-        # The prints already measured: everything before last_ts, and the first last_count at it of those this
-        # basis measures (a quote-based measurement skips prints without the quote).
+        # The prints already measured: everything before last_ts, and the first last_count at it.
         skip, fresh = metric.get('last_count', 1), []
         for sample in samples:
             if sample.ts < metric['last_ts']:
                 continue
             # Only prints of the kind measured (the contract's own, or not) were counted: the contract's first
             # print at that time is new, and below it stops the carrying on.
-            if sample.ts == metric['last_ts'] and skip and (sample.symbol == exact) == metric.get('contract') and (
-                    basis != 'liquidation' or (sample.bid if sign > 0 else sample.ask) is not None):
+            if sample.ts == metric['last_ts'] and skip and (sample.symbol == exact) == metric.get('contract'):
                 skip -= 1
                 continue
             fresh.append(sample)
         if any(s.resolution_seconds or s.proxy or (s.symbol == exact) != metric.get('contract') for s in fresh):
             return None
-        if 'liquidation' not in bases and any((s.bid if sign > 0 else s.ask) is not None for s in fresh):
-            return None
         values, point_values, path, used = [], [], [], []
-        walk(trade, fresh, states[-1:], last_fill, end, basis, values, point_values, path, used, [])
+        walk(trade, fresh, states[-1:], last_fill, end, values, point_values, path, used, [])
         carried = {**metric, 'through': end.isoformat()}
         if used:
             if trade.point_value is not None:

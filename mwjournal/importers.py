@@ -38,6 +38,7 @@ class Preview:
     errors: list[str] = field(default_factory=list)
     skipped: int = 0
     damaged: int = 0                      # bridge lines that were not JSON at all, when the caller skips them
+    unknown: int = 0                      # bridge events of a type this version does not read, skipped
 
     @property
     def count(self):
@@ -96,6 +97,10 @@ def preview_csv(text: str, *, timezone='America/New_York', mapping=None,
     return result
 
 
+# The event types this version reads (docs/protocol.md); any other is skipped and counted (Preview.unknown).
+KNOWN = ('execution', 'tick', 'quote', 'bar', 'protection', 'metric', 'gap', 'heartbeat')
+
+
 def preview_bridge(text: str, *, timezone='UTC', allow_partial_tail=False, dataset=None,
                    skip_damaged=False) -> Preview:
     if dataset is not None and dataset not in ('live', 'replay'):
@@ -123,10 +128,15 @@ def preview_bridge(text: str, *, timezone='UTC', allow_partial_tail=False, datas
                 raise ValueError('Each bridge line must be a JSON object.')
             if event.get('version', 1) != 1:
                 raise ValueError('Unsupported bridge protocol version.')
+            kind = event.get('type')
+            if kind not in KNOWN:
+                # A newer study may write events this version does not know: skipped and counted, so the
+                # fills, stops and heartbeats around them still arrive.
+                result.unknown += 1
+                continue
             mode = event_mode(event)
             if dataset is not None and mode != dataset:
                 raise ValueError('Bridge event belongs to the other trading environment; choose its matching file.')
-            kind = event.get('type')
             if kind == 'execution':
                 fields = {k: event[k] for k in Execution.__dataclass_fields__ if k in event}
                 fields['ts'] = timestamp(event['ts'], timezone)
@@ -181,14 +191,12 @@ def preview_bridge(text: str, *, timezone='UTC', allow_partial_tail=False, datas
                     if instant(gap['end_ts']) < instant(gap['start_ts']):
                         raise ValueError('Capture gap end precedes its start.')
                 result.gaps.append(gap)
-            elif kind == 'heartbeat':
+            else:
                 heartbeat = dict(event, ts=timestamp(event['ts'], timezone))
                 if heartbeat.get('status') not in (None, 'connected', 'error'):
                     raise ValueError('Unknown connector heartbeat status.')
                 result.heartbeats.append(heartbeat)
                 result.skipped += 1
-            else:
-                raise ValueError(f'Unknown event type {kind!r}.')
         except (ValueError, KeyError, TypeError) as exc:
             result.errors.append(f'Line {n}: {exc}')
     return result

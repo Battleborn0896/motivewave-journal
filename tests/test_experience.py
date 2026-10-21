@@ -35,13 +35,13 @@ def recorded(journal):
 
 
 @pytest.mark.parametrize('unit', ['currency', 'points', 'ticks', 'r'])
-def test_tick_only_is_default_for_every_unit_and_raw_estimates_remain_in_backup(home, unit):
+def test_only_recorded_ticks_measure_in_every_unit_and_raw_estimates_remain_in_backup(home, unit):
     journal = seed_preview(home)
     trade = journal.trades()[0]
     original = journal.best_metric(trade)
     assert original['precision'] == 'estimated-bars'
     journal.set_excursion_unit(unit)
-    assert journal.display_settings()['excursion_policy'] == 'ticks-only'
+    assert 'excursion_policy' not in journal.display_settings()           # there is no accuracy to choose
     rows = common.rows_for(journal)
     assert rows[0]['mfe'] is None and rows[0]['mae'] is None
     assert common.display_excursion_rows(journal, rows)[0]['display_mfe'] is None
@@ -58,7 +58,7 @@ def test_tick_only_is_default_for_every_unit_and_raw_estimates_remain_in_backup(
     assert journal.best_metric(trade) == original
 
 
-def test_tick_policy_uses_ticks_not_platform_reports_and_excludes_reported_capture_gaps(home):
+def test_ticks_measure_never_platform_reports_and_a_reported_capture_gap_leaves_none(home):
     journal = seed_preview(home)
     trade = recorded(journal)
     journal.record_metric(trade, {'source': 'platform', 'precision': 'platform-reported', 'mfe': 99999, 'mae': 999,
@@ -66,22 +66,18 @@ def test_tick_policy_uses_ticks_not_platform_reports_and_excludes_reported_captu
     assert common.best_display_metric(journal, trade)['source'] == 'fixture-ticks'
     journal.ingest_gaps([{'type': 'gap', 'provider': 'fixture-ticks', 'ts': trade.opened, 'dropped': 1}])
     assert common.best_display_metric(journal, trade) == {}
-    journal.set_excursion_policy('best-available')
-    assert common.best_display_metric(journal, trade)['source'] == 'platform'
 
 
-def test_accuracy_control_is_distinct_from_units_and_propagates_to_headers_and_analytics(home):
+def test_there_is_no_accuracy_to_choose_and_candles_never_measure_even_where_0_4_7_allowed_them(home):
     journal = seed_preview(home)
+    journal._update_display_settings({'excursion_policy': 'best-available'})   # 'Allow labelled estimates', saved by 0.4.7
     app = open_app('General')
-    assert widget(app.selectbox, 'MAE / MFE Accuracy').value == 'ticks-only'
+    assert not any(s.label == 'MAE / MFE Accuracy' for s in app.selectbox)
     show(app, 'Trades')
     assert widget(app.metric, 'MAE').value == widget(app.metric, 'MFE').value == '—'
     assert said(app.caption, 'Only 1-minute candles were recorded, so MAE / MFE are not measured.')
-    display_setting(app, 'MAE / MFE Units', 'ticks')
-    assert widget(app.metric, 'MFE').value == '—'
-    display_setting(app, 'MAE / MFE Accuracy', 'best-available')
-    assert not app.exception and widget(app.metric, 'MFE').value == '12.00 ticks'
-    display_setting(app, 'MAE / MFE Accuracy', 'ticks-only', back='Edge')
+    display_setting(app, 'MAE / MFE Units', 'ticks', back='Edge')
+    assert widget(app.metric, 'Net P&L').value == '+$242.00'
     open_tab(app, 'MAE / MFE')
     assert said(app.caption, '0 of 1 closed trades measured')
     assert widget(app.metric, 'Net P&L').value == '+$242.00'
@@ -99,7 +95,7 @@ def test_ticks_survive_unit_change_and_selected_trade_remains_visible_with_list(
     display_setting(app, 'MAE / MFE Units', 'ticks')
     assert widget(app.metric, 'MFE').value == '16.00 ticks'
     show(app, 'General')
-    assert widget(app.selectbox, 'MAE / MFE Accuracy').value == 'ticks-only'
+    assert not any(s.label == 'MAE / MFE Accuracy' for s in app.selectbox)
 
 
 def test_tag_manager_rename_color_retirement_and_exclusive_group_work_on_existing_trade(home):
@@ -183,13 +179,11 @@ def test_include_any_exclude_filters_and_renamed_aliases_keep_their_identity(hom
     assert said(app.info, 'Statistics need')
 
 
-def test_runner_policy_does_not_allow_bar_hindsight_when_ticks_are_required(home):
+def test_the_runner_never_uses_bar_hindsight(home):
     journal = seed_preview(home)
     trade = journal.trades()[0]
     result = best_post_exit(journal, trade, minutes=5)
     assert result['precision'] == 'pending' and result['extra_mfe'] is None
-    journal.set_excursion_policy('best-available')
-    assert best_post_exit(journal, trade, minutes=5)['precision'] == 'estimated-bars'
 
 
 def test_tag_color_text_has_contrast_and_untrusted_css_values_are_rejected():

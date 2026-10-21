@@ -12,7 +12,7 @@ from mwjournal.chart import trade_chart
 from mwjournal.metrics import measurements
 from mwjournal.model import ProtectionEvent, instant
 from mwjournal.post_exit import best_post_exit, resolve_stop
-from mwjournal.risk import STOP_SETTLES, initial_risk, plan, plan_for, settles_at, stop_for_risk
+from mwjournal.risk import NOT_REPORTED, STOP_SETTLES, initial_risk, plan, plan_for, settles_at, stop_for_risk
 from test_app import display_setting, open_app, press, said, widget
 from test_moved_tools import menu
 
@@ -54,6 +54,28 @@ def test_without_a_stop_order_the_risk_is_unknown_and_says_why():
     result = plan(t, {}, [])
     assert (result.stop, result.source, result.risk) == (None, '', None)
     assert result.why == f'No stop order {STOP_SETTLES} seconds after entry. Type your stop to get R.'
+
+
+def test_a_motivewave_trade_with_no_stop_reported_says_so_where_r_would_show(home):
+    journal = Journal()
+    native = 'motivewave-native:workspace:live'
+    t = trade(journal, ('in', 'buy', 1, 5000, 0), ('out', 'sell', 1, 5004, 60), provider=native)
+    assert plan(t, {}, []).why == NOT_REPORTED == ('MotiveWave did not report a stop for this position. '
+                                                   'Type your stop to get R.')
+    # A stop was reported but was not standing 10 seconds after entry: that is said instead.
+    assert plan(t, {}, [order(30, 4996, provider=native)]).why.startswith('No stop order 10 seconds after entry')
+    # Typed: R, and nothing to say.
+    assert plan(t, {'planned_stop': 4996}, []).why == ''
+    prints = [PriceSample('ESZ6', at(20), 'motivewave-ticks', 4998, 4998)]
+    journal.ingest_prices(prints)
+    for metric in measurements(t, prints, 'motivewave-ticks'):
+        journal.record_metric(t, metric)
+    app = open_app()
+    assert [c.value for c in app.caption].count(NOT_REPORTED) == 1             # under Notes, by the Stop box
+    display_setting(app, 'MAE / MFE Units', 'r')
+    assert widget(app.metric, 'MAE').value == '—'
+    assert [c.value for c in app.caption].count(NOT_REPORTED) == 2             # and under MAE / MFE, in R
+    assert said(app.info, NOT_REPORTED)                                        # and in More → MAE / MFE
 
 
 def test_a_stop_placed_with_the_entry_gives_the_risk_and_take_profit_plays_no_part():

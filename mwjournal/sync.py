@@ -178,6 +178,9 @@ class SyncWorker:
                     damaged = (previous.get('damaged_lines', 0) if offset else 0) + parsed.damaged
                     if damaged:
                         status['damaged_lines'] = damaged
+                    unknown = (previous.get('unknown_events', 0) if offset else 0) + parsed.unknown
+                    if unknown:
+                        status['unknown_events'] = unknown
                 if heartbeat:
                     status['heartbeat'] = heartbeat
                     error, warnings = heartbeat_report(heartbeat)

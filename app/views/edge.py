@@ -241,15 +241,15 @@ def excursion(journal, closed):
     currency = closed[0]['currency']
     st.markdown('### How Far Did Trades Move?', help=(
         units.description(unit) + ' Left is less movement against you; up is more movement in your favour. '
-        'Colour shows how the move was measured, not a win or loss. Giveback = peak gross position P&L minus '
-        'final gross P&L, always in account currency; it is not a guaranteed alternative exit.'
+        'Colour shows how the move was measured, not a win or loss. Giveback = MFE minus the final gross P&L, '
+        'always in account currency; it is not a guaranteed alternative exit.'
         + (' Points and ticks are not worth the same in every market: filter to one market at a time.'
            if unit in ('points', 'ticks') else '')))
     shown = pd.DataFrame(common.display_excursion_rows(journal, closed))
     measured = shown[shown.display_mfe.notna() & shown.display_mae.notna()].copy()
     st.caption(f'{len(measured)} of {len(closed)} closed trades measured',
-               help='Only trades with a price path that meets your MAE / MFE Units and Accuracy (Setup and Setup → '
-                    'Advanced). Unavailable values are left out, never counted as zero.')
+               help='Only trades measured from recorded ticks that have a value in your MAE / MFE Units (Setup). '
+                    'Unavailable values are left out, never counted as zero.')
     if measured.empty:
         st.info('No MAE / MFE values in these units yet. They need recorded prices; R also needs a stop, '
                 'and ticks need a known tick size.')

@@ -79,7 +79,8 @@ LIMITS = ('The study is read-only: it never places, changes or cancels an order.
           'Real Tick Data box is switched off, for a replay generated from bars. Once a replay trade is flat, the study '
           'also loads the real ticks of its holding time from MotiveWave\'s history, up to the replay\'s current '
           'time and no further; those count as real ticks of that run either way. Studies before 0.3.3 recorded no '
-          'live or replay ticks, and before 0.3.4 labelled replay prints simulated: install the study again from '
+          'live or replay ticks, before 0.3.4 labelled replay prints simulated, and before 0.3.5 linked no stop '
+          'order of an account whose fills carry no position id (most prop accounts): install the study again from '
           'this page and restart MotiveWave.')
 
 
@@ -145,12 +146,18 @@ def status_card(dataset: str) -> None:
     said = ' · '.join(str(v) for v in (heartbeat.get('detail'), heartbeat.get('workspace')
                                        and f"workspace {heartbeat['workspace']}") if v)
     damaged, others = status.get('damaged_lines'), common.other_problems(journal, name)
+    unknown, warned = status.get('unknown_events'), status.get('warnings')
     # One element, whatever there is to say: see theme.status for why a fragment must not vary its count.
     theme.status(link.label, link.tone, link.state, big=True, notes=(
         [(link.detail, False)]
         + [('The study says: ' + said, False)] * bool(said and not status.get('error'))
+        # What the study skipped or could not link while capture works: fills it could not read, or a working
+        # stop no position takes (MotiveWave's log says why, one line per stop).
+        + [(f'The study also says: {warned}.', True)] * bool(warned and not status.get('error'))
         + [(f'{damaged} damaged lines in the bridge file were skipped. MotiveWave closing in the middle of a '
             'write leaves one; the events around it are unaffected.', True)] * bool(damaged)
+        + [(f'Events of a kind this version does not read, skipped: {unknown}. A newer study wrote them; fills, '
+            'stops and prices are unaffected.', False)] * bool(unknown)
         + [(f'{others} other watched file{"s" if others > 1 else ""} could not be read. See Other Watched Files below.', True)]
         * bool(others)))
     now = dt.datetime.now(dt.timezone.utc)

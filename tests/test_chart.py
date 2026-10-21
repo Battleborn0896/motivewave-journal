@@ -48,6 +48,21 @@ def seed_preview(path):
     return journal
 
 
+def seed_ticks(journal):
+    """The prints the study recorded around seed_preview's trade, which MAE / MFE are measured from (its candles
+    only draw the chart, an estimate that never measures a trade). Long 2 from 5000, 1 out at 5002, the other at
+    5003: MAE 1 point (4999 with 2 held, $100); MFE 3.5 points (5003.5 with 1 held, $175), but $250 in dollars
+    (5002.5 with 2 held). The 2 points banked by the partial exit are not counted. Two prints after the exit
+    are for the runner."""
+    trade = journal.trades()[0]
+    prints = [PriceSample('ESZ6', f'2026-10-07T14:{at}Z', 'motivewave-ticks', price, price)
+              for at, price in (('00:40', 4999), ('01:10', 5002.5), ('02:00', 5001), ('02:30', 4999.5),
+                                ('03:00', 5003.5), ('03:30', 5004), ('05:00', 5002))]
+    journal.ingest_prices(prints)
+    journal.record_metric(trade, excursions(trade, prints, 'motivewave-ticks'))
+    return journal
+
+
 def test_ohlcv_survives_bridge_csv_and_sqlite(tmp_path):
     event = {'type': 'bar', 'provider': 'motivewave-bars:1m', 'symbol': 'ESZ6',
              'ts': '2026-10-07T14:00:00Z', 'resolution_seconds': 60,

@@ -24,7 +24,9 @@ SCHEMA_VERSION = 3
 # The rules trades are measured by. Raise it when they change: the watcher then measures every trade of a
 # journal measured under older rules once more, from its stored prices, and records this number in it.
 # 1: a trade's prices are those of its product (model.trade_prices).
-MEASUREMENT_RULES = 1
+# 2: dollar MAE / MFE are the moves of the contracts held (banked profit no longer counts, metrics.py), and
+#    the bid / ask ('liquidation') measurement is gone: its stored rows are removed when this pass ends.
+MEASUREMENT_RULES = 2
 # What a writer may say differently about a fill it already sent, without it being another fill.
 LABELS = ('quality', *NATIVE)
 SCHEMA = '''
@@ -254,8 +256,10 @@ class Journal(Workspace):
         return row is None or int(row[0]) < MEASUREMENT_RULES
 
     def recalculation_done(self):
-        """Every trade has been measured under this version's rules."""
+        """Every trade has been measured under this version's rules. Bid / ask measurements, which these rules no
+        longer make, go with it, including those of trades no longer in the journal."""
         with self.connect() as db:
+            db.execute("DELETE FROM metrics WHERE json_extract(source, '$[1]')='liquidation'")
             db.execute("INSERT OR REPLACE INTO journal_meta VALUES('measurement_rules',?)", (str(MEASUREMENT_RULES),))
             db.execute("DELETE FROM journal_meta WHERE key='recalculate'")    # what 0.4.4 and earlier set instead
 
@@ -641,14 +645,11 @@ class Journal(Workspace):
     def display_settings(self):
         with self.connect() as db:
             stored = db.execute("SELECT value FROM journal_meta WHERE key='display_settings'").fetchone()
-        return {'excursion_unit': 'currency', 'excursion_policy': 'ticks-only', 'tick_sizes': {},
-                'dashboard_sections': ['Overview', 'Compare', 'MAE / MFE', 'Runners'],
-                **(json.loads(stored[0]) if stored else {})}
-
-    def set_excursion_policy(self, policy):
-        if policy not in ('ticks-only', 'best-available'):
-            raise ValueError('Unknown accuracy policy.')
-        self._update_display_settings({'excursion_policy': policy})
+        settings = {'excursion_unit': 'currency', 'tick_sizes': {},
+                    'dashboard_sections': ['Overview', 'Compare', 'MAE / MFE', 'Runners'],
+                    **(json.loads(stored[0]) if stored else {})}
+        settings.pop('excursion_policy', None)     # MAE / MFE Accuracy, until 0.4.7: only recorded ticks measure now
+        return settings
 
     def set_dashboard_sections(self, sections):
         allowed = {'Overview', 'Compare', 'MAE / MFE', 'Runners'}
@@ -733,6 +734,8 @@ class Journal(Workspace):
                 'SELECT payload FROM metrics WHERE trade_id=? AND basis=? ORDER BY source', (trade.id, trade.basis))]
 
     def best_metric(self, trade):
+        """The best stored measurement of any kind; the app shows only those from recorded ticks
+        (app/common.py metric_options)."""
         options = self.metric_options(trade)
         rank = {'platform-reported': 4, 'observed-ticks': 3, 'estimated-bars': 2,
                 'replay-simulated': 1, 'proxy-estimate': 1, 'pending': 0}

@@ -62,10 +62,10 @@ def mask_overlap_points(trade, metric):
         return metric
     metric = {**metric, 'mae_points': None, 'mfe_points': None, 'point_precision': 'pending',
               'point_definition': 'Unavailable: overlapping original positions have different held-entry bases.',
-              'path': [{**point, 'point_low': None, 'point_high': None, 'average_cost': None, 'realised_pnl': None}
+              'path': [{**point, 'point_low': None, 'point_high': None, 'average_cost': None}
                        for point in metric.get('path', [])],
-              'notes': [*metric.get('notes', []), 'Currency equity remains combined realised + unrealised P&L. '
-                        'Points/ticks and intermediate cost/realised attribution are unavailable for overlapping merged positions; inspect original legs.']}
+              'notes': [*metric.get('notes', []), 'Points and ticks are unavailable for overlapping merged positions: '
+                        'their legs had different average entries. Inspect the original trades.']}
     return metric
 
 
@@ -151,8 +151,8 @@ class ReviewJournal:
                 samples = self.original.prices(trade.symbol, source, start=trade.opened, end=trade.closed)
                 result.extend(measurements(trade, samples, source))
             for metric in result:
-                metric['notes'].append('Merged review: cumulative realised + unrealised equity across all selected legs; '
-                                       'price points/ticks use the currently held combined average entry. Original legs are preserved.')
+                metric['notes'].append('Merged review: the combined position held at each moment, from its combined '
+                                       'average entry. Original legs are preserved.')
             self._metrics[trade.basis] = [mask_overlap_points(trade, metric) for metric in result]
         return self._metrics[trade.basis]
 

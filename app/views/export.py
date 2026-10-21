@@ -58,7 +58,7 @@ def files(journal, rows=None) -> list[tuple[str, str, object, str]]:
 HELP = {'json': 'Every fill, trade, review, tag, playbook and setting. Also keeps every original measurement, '
                 'including excluded estimates.',
         'csv': 'One row per trade. Times are UTC, with entry and exit also in your display time zone. Excursions '
-               'follow your accuracy setting, in account currency.',
+               'are from recorded ticks, in account currency.',
         'sqlite3': 'A complete copy of the journal database, safe to take while trades are being captured.'}
 
 

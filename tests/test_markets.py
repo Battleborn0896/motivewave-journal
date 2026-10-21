@@ -203,8 +203,7 @@ def test_the_watcher_measures_an_nqz6_trade_again_when_nq_prices_arrive(tmp_path
     metric, = journal.metric_options(trade)
     assert (metric['source'], metric['precision'], metric['observations']) == ('motivewave-ticks', 'observed-ticks', 2)
     assert (metric['mae_points'], metric['mfe_points'], metric['mae'], metric['mfe']) == (5, 30, 100, 600)
-    # Shown with the default accuracy policy, recorded ticks only.
-    assert journal.display_settings()['excursion_policy'] == 'ticks-only'
+    # Shown: recorded ticks are what measures a trade.
     assert metric_options(journal, trade) == [metric]
     # A gap in another product's prints does not hide it; a gap in its own does.
     def gap(symbol):
@@ -242,7 +241,6 @@ def test_a_replay_nqz6_trade_on_a_continuous_chart_is_measured_from_its_own_runs
     metric, = journal.metric_options(trade)
     assert (metric['source'], metric['observations'], metric['mae_points'], metric['mfe_points']) == (own, 2, 10, 25)
     assert (metric['precision'], metric['provenance']) == ('observed-ticks', 'replay-ticks')
-    assert journal.display_settings()['excursion_policy'] == 'ticks-only'
     assert metric_options(journal, trade) == [metric]
     with path.open('a', encoding='utf-8', newline='') as fh:
         fh.write(lines([bridge_fill('out', 'sell', 20010, '2026-10-07T14:01:00Z', mode='replay')]))
@@ -307,7 +305,6 @@ def test_journals_measured_before_the_product_rule_are_measured_again_once_when_
         metric, = journal.metric_options(trades[dataset])
         assert (metric['precision'], metric['observations'], metric['mae_points'], metric['mfe_points']) == (
             'observed-ticks', 2, 5, 30)
-        assert journal.display_settings()['excursion_policy'] == 'ticks-only'
         assert metric_options(journal, trades[dataset]) == [metric]
         assert not journal.recalculation_due()
     # Once only: with the measurements gone, the next start of either watcher measures nothing again.

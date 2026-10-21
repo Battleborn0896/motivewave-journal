@@ -163,11 +163,10 @@ def best_post_exit(journal, trade, minutes=15, initial_risk=None, *, stop_mode=N
                                  initial_risk=initial_risk,
                                  stop_price=stop, stop_source=stop_source, require_stop=stop_mode is not None,
                                  gaps=journal.capture_gaps(source, start=trade.closed, end=end, symbol=trade.symbol)))
-    ranks = {'observed-ticks': 4, 'estimated-bars': 3, 'proxy-estimate': 2, 'replay-simulated': 1, 'pending': 0}
-    if journal.display_settings()['excursion_policy'] == 'ticks-only':
-        options = [p for p in options if p['precision'] == 'observed-ticks'
-                   and not journal.capture_gaps(p['source'], start=trade.closed, end=end, symbol=trade.symbol)]
-    return max(options, key=lambda p: (p['coverage'] in ('window-observed', 'stop-observed'), ranks[p['precision']], p['observations'])) \
+    # Recorded ticks only, as for MAE / MFE: candles, proxies and simulated prints are not used.
+    options = [p for p in options if p['precision'] == 'observed-ticks'
+               and not journal.capture_gaps(p['source'], start=trade.closed, end=end, symbol=trade.symbol)]
+    return max(options, key=lambda p: (p['coverage'] in ('window-observed', 'stop-observed'), p['observations'])) \
         if options else post_exit(trade, [], '', minutes=minutes, stop_price=stop,
                                  stop_source=stop_source, require_stop=stop_mode is not None)
 

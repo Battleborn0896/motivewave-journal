@@ -107,12 +107,26 @@ def test_long_short_excursions_use_only_the_holding_window():
     assert metrics['mae'] == 250 and metrics['mfe'] == 100
 
 
-def test_position_equity_excursions_handle_scale_out_realised_pnl():
+def test_dollar_excursions_of_a_scale_out_are_the_moves_of_the_contracts_held():
     trade = match([fill('a', 'buy', 2, 100), fill('b', 'sell', 1, 104, 1),
                    fill('c', 'sell', 1, 99, 3)])[0]
     metrics = excursions(trade, [tick(0, 98), tick(1, 106), tick(2, 97)], 'test-prices')
-    # After first exit: 4 realised points + 6 on the remaining contract = 10 points, not 12.
-    assert metrics['mae'] == 200 and metrics['mfe'] == 500
+    # Points: 3 against (97, one held), 6 for (106, one held). Dollars weigh each move by what was held then:
+    # 2 against on 2 contracts ($200) beats 3 on 1 ($150), and 4 for on 2 at the partial exit ($400) beats 6
+    # on 1 ($300). The 4 points banked by the partial exit are not added: 0.4.7 said $500.
+    assert (metrics['mae_points'], metrics['mfe_points']) == (3, 6)
+    assert metrics['mae'] == 200 and metrics['mfe'] == 400
+
+
+def test_a_scale_out_gives_dollar_mae_of_points_times_held_times_point_value():
+    """The owner's example: long 2 at 100, sell 1 at 104, then a low of 99 with one still held."""
+    nq = 20
+    trade = match([fill('a', 'buy', 2, 100), fill('b', 'sell', 1, 104, 1), fill('c', 'sell', 1, 102, 3)],
+                  {'ESZ6': nq})[0]
+    metrics = excursions(trade, [tick(1, 99)], 'test-prices')
+    assert metrics['mae_points'] == 1
+    assert metrics['mae'] == metrics['mae_points'] * 1 * nq == 20       # 0.4.7 said $0: 4 banked points hid it
+    assert metrics['path'][0]['held_qty'] == 1 and metrics['path'][0]['low'] == -20
 
 
 def test_bar_boundary_is_estimated_and_missing_data_stays_null():
@@ -125,12 +139,13 @@ def test_bar_boundary_is_estimated_and_missing_data_stays_null():
     assert absent['mae'] is None and absent['mfe'] is None and absent['precision'] == 'pending'
 
 
-def test_liquidation_uses_bid_for_long_and_ask_for_short():
+def test_bid_and_ask_play_no_part_in_mae_mfe():
     a = match([fill('a', 'buy', 1, 100), fill('b', 'sell', 1, 100, 2)])[0]
     b = match([fill('a', 'sell', 1, 100), fill('b', 'buy', 1, 100, 2)])[0]
-    samples = [tick(0, 100, bid=99.75, ask=100.25)]
-    assert excursions(a, samples, 'test-prices', basis='liquidation')['mae'] == 12.5
-    assert excursions(b, samples, 'test-prices', basis='liquidation')['mae'] == 12.5
+    for trade in (a, b):
+        quoted, = measurements(trade, [tick(0, 100, bid=99.75, ask=100.25)], 'test-prices')
+        plain, = measurements(trade, [tick(0, 100)], 'test-prices')
+        assert quoted['basis'] == 'last' and (quoted['mae'], quoted['mfe']) == (plain['mae'], plain['mfe']) == (0, 0)
 
 
 def test_multiple_ticks_in_one_millisecond_retain_both_extremes(tmp_path):
@@ -151,16 +166,33 @@ def test_price_window_reads_only_held_ticks_and_overlapping_boundary_bars(tmp_pa
     assert samples == [overlap, tick(0, 102)]
 
 
-def test_last_and_liquidation_measurements_do_not_overwrite_each_other(tmp_path):
+def test_journals_from_0_4_7_are_measured_again_once_and_lose_their_bid_ask_rows(tmp_path):
+    """MEASUREMENT_RULES 2: every trade is measured again from its stored ticks under the new dollar definition,
+    and the bid/ask measurements 0.4.7 stored are removed, of trades still there and of trades long gone."""
     journal = Journal(tmp_path / 'trades.db')
-    journal.ingest([(fill('a', 'buy', 1, 100), {}), (fill('b', 'sell', 1, 101, 2), {})])
-    trade = journal.trades()[0]
-    for metric in measurements(trade, [tick(0, 100, bid=99.75, ask=100.25)], 'test-prices'):
-        journal.record_metric(trade, metric)
-    options = journal.metric_options(trade)
-    assert len(options) == 2
-    assert {m['basis']: m['mae'] for m in options} == {'last': 0, 'liquidation': 12.5}
-    assert journal.best_metric(trade)['basis'] == 'last'
+    journal.ingest([(fill('a', 'buy', 2, 100), {}), (fill('b', 'sell', 1, 104, 1), {}), (fill('c', 'sell', 1, 102, 3), {})])
+    trade, = journal.trades()
+    journal.ingest_prices([tick(1, 99, bid=98.75, ask=99.25)])
+    old = {'source': 'test-prices', 'precision': 'observed-ticks', 'mae': 0., 'mfe': 150., 'mae_points': 1,
+           'mfe_points': 2, 'point_definition': 'held-average-entry', 'path': [], 'notes': [], 'observations': 1}
+    journal.record_metric(trade, {**old, 'basis': 'last'})
+    journal.record_metric(trade, {**old, 'basis': 'liquidation', 'mae': 12.5})
+    with journal.connect() as db:                         # a bid/ask row of a trade whose fills have since changed
+        db.execute('INSERT INTO metrics VALUES(?,?,?,?)', ('gone', 'old-basis', json.dumps(['test-prices', 'liquidation']),
+                                                           json.dumps({**old, 'basis': 'liquidation'})))
+        db.execute("UPDATE journal_meta SET value='1' WHERE key='measurement_rules'")
+    assert journal.recalculation_due()
+    worker = SyncWorker(Journal(journal.path))
+    worker.recalculate()
+    assert not journal.recalculation_due()
+    metric, = journal.metric_options(trade)
+    assert metric['basis'] == 'last' and metric['mae'] == 50 and metric['mae_points'] == 1   # 1 point x 1 held x $50
+    with journal.connect() as db:
+        assert db.execute("SELECT count(*) FROM metrics WHERE json_extract(source, '$[1]')='liquidation'").fetchone()[0] == 0
+    # Once only.
+    journal.record_metric(trade, {**old, 'basis': 'liquidation'})
+    SyncWorker(Journal(journal.path)).recalculate()
+    assert {m['basis'] for m in journal.metric_options(trade)} == {'last', 'liquidation'}
 
 
 def test_capture_gaps_are_persistent_deduplicated_and_visible_on_metrics(tmp_path):

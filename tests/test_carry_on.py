@@ -103,13 +103,15 @@ def test_it_does_not_carry_on_what_would_differ_from_measuring_again(tmp_path):
     assert carry(tick('NQ', 4, 20020))[0]['mfe_points'] == 20
     # The contract's own prints appear: from then on the whole trade is measured with them alone.
     assert carry(tick('NQZ6', 5, 20030)) is None
-    # A candle, a proxy price, and the first quote for a trade measured without quotes.
+    # A candle and a proxy price. A print with a bid and ask is carried on like any other: quotes play no part.
     (tmp_path / 'b').mkdir()
     journal2, trade2 = journal_with(tmp_path / 'b', [tick('NQ', 1, 19990)])
     previous2 = measurements(trade2, journal2.prices('NQZ6', SOURCE), SOURCE, now=T0 + dt.timedelta(seconds=3))
     for new in (PriceSample('NQ', at(60), SOURCE, 20010, 19990, 60, open=20000, close=20005),
-                tick('NQ', 4, 20000, proxy=True), tick('NQ', 4, 20000, bid=19999.75, ask=20000.25)):
+                tick('NQ', 4, 20000, proxy=True)):
         assert carry_on(trade2, previous2, [new], now=later) is None
+    quoted, = carry_on(trade2, previous2, [tick('NQ', 4, 20000, bid=19999.75, ask=20000.25)], now=later)
+    assert quoted['observations'] == 2 and quoted['last_price'] == 20000
     # A closed trade, and a measurement that stopped before the last fill.
     assert carry_on(dataclasses.replace(trade, closed=at(8)), previous, [], now=later) is None
     assert carry_on(trade, [{**previous[0], 'last_ts': '2026-10-07T13:59:00+00:00'}], [], now=later) is None

@@ -85,6 +85,38 @@ def test_generated_replay_ticks_are_labelled_simulated_in_metrics_and_chart(tmp_
     assert chart['series']['data'] and any('Generated/unknown' in n for n in chart['notes'])
 
 
+def test_an_unknown_event_type_is_skipped_and_counted_never_fatal(tmp_path):
+    """A newer study can write events this app does not read yet (study 0.4's 'position' lines, say): they are
+    skipped and counted, and the fills, stops and heartbeat around them still arrive."""
+    events = [fill('a', mode='live', ts='2026-10-07T14:00:00Z'),
+              {'version': 1, 'type': 'position', 'mode': 'live', 'provider': 'motivewave-native:workspace:live',
+               'account': 'paper', 'symbol': 'ESZ6', 'fills': ['a'], 'mae_points': 1.25},
+              {'version': 1, 'type': 'something-newer', 'mode': 'replay'},           # even in the other file's mode
+              {'version': 1, 'type': 'protection', 'mode': 'live', 'provider': 'motivewave-native:workspace:live',
+               'account': 'paper', 'symbol': 'ESZ6', 'order_id': 's1', 'entry_execution_id': 'a',
+               'ts': '2026-10-07T14:00:01Z', 'role': 'stop', 'state': 'working', 'price': 4996},
+              fill('b', 'sell', 5002, mode='live', ts='2026-10-07T14:02:00Z'),
+              {'version': 1, 'type': 'heartbeat', 'mode': 'live', 'provider': 'motivewave-native',
+               'ts': '2026-10-07T14:02:01Z', 'status': 'connected', 'detail': 'ok'}]
+    parsed = preview_bridge(lines(events), dataset='live')
+    assert not parsed.errors and parsed.unknown == 2
+    assert len(parsed.fills) == 2 and len(parsed.protection) == 1 and len(parsed.heartbeats) == 1
+    journal = Journal(tmp_path / 'trades.sqlite3')
+    file = tmp_path / 'motivewave.ndjson'
+    file.write_text(lines(events[:3]), encoding='utf-8', newline='')
+    journal.put('profiles', 'study', {'path': str(file), 'mode': 'bridge', 'enabled': True})
+    worker = SyncWorker(journal)
+    worker.poll()
+    with file.open('a', encoding='utf-8', newline='') as fh:
+        fh.write(lines(events[3:]))
+    worker.poll()
+    status = journal.get('sync_status')['study']
+    assert status['status'] == 'synced' and 'error' not in status
+    assert status['unknown_events'] == 2                  # counted across reads of the same file
+    trade, = journal.trades()
+    assert trade.closed and [e.order_id for e in journal.protection_events(trade)] == ['s1']
+
+
 def test_connector_waiting_error_heartbeat_and_recovery_are_visible(tmp_path):
     journal = Journal(tmp_path / 'live.db')
     path = tmp_path / 'motivewave.ndjson'
@@ -228,8 +260,7 @@ def test_history_backfill_ticks_are_observed_ticks_with_their_own_label_and_are_
     assert not any('History backfill' in note for note in recorded['notes'])
     best = journal.best_metric(trade)                     # equal quality: the stream that saw more of the trade
     assert best['source'] == 'motivewave-ticks:history' and best['precision'] == 'observed-ticks'
-    # Recorded ticks only is the default policy, and backfilled prints satisfy it for the runner view too.
-    assert journal.display_settings()['excursion_policy'] == 'ticks-only'
+    # Only recorded ticks measure, and backfilled prints are recorded ticks, for the runner view too.
     runner = best_post_exit(journal, trade, minutes=5)
     assert (runner['source'], runner['precision'], runner['provenance']) == (
         'motivewave-ticks:history', 'observed-ticks', 'history-backfill')
@@ -289,9 +320,8 @@ def test_replay_history_ticks_are_real_ticks_of_their_own_run_and_never_of_anoth
     assert any('History backfill' in note for note in measured['notes'])
     assert not any('synthetic' in note or 'Replay generated' in note for note in measured['notes'])
     assert simulated['precision'] == 'replay-simulated' and simulated['provenance'] == 'replay-simulated'
-    # Ranked above the simulated replay prints, and the one measurement the tick-only policy keeps.
+    # Ranked above the simulated replay prints, and the one measurement shown: only recorded ticks measure.
     assert journal.best_metric(trade)['source'] == source
-    assert journal.display_settings()['excursion_policy'] == 'ticks-only'
     assert [m['source'] for m in metric_options(journal, trade)] == [source]
     # The chart draws it as real prints loaded afterwards, with this run's prices only.
     chart = trade_chart(trade, journal.prices('ESZ6', source), source)

@@ -278,20 +278,6 @@ def unit_selector(journal, container=st):
                              'quantity-weighted position profit.')
 
 
-def policy_selector(journal, container=st):
-    """MAE / MFE Accuracy: whether only recorded ticks measure a trade. Saved the moment it is chosen."""
-    policy_key = key(journal, 'excursion-policy')
-    st.session_state.setdefault(policy_key, journal.display_settings()['excursion_policy'])
-    def save_policy():
-        journal.set_excursion_policy(st.session_state[policy_key])
-    container.selectbox('MAE / MFE Accuracy', ['ticks-only', 'best-available'],
-                        format_func=lambda p: 'Recorded ticks only' if p == 'ticks-only' else 'Allow labelled estimates',
-                        key=policy_key, on_change=save_policy,
-                        help='Tick-only excludes OHLC, proxies, platform-only reports, simulated replay and recorded '
-                             'capture gaps. Missing tick history means unavailable, not zero. The candle chart is '
-                             'independent.')
-
-
 def excursion_unit(journal):
     widget_key = key(journal, 'excursion-unit')
     return st.session_state[widget_key] if widget_key in st.session_state else journal.display_settings()['excursion_unit']
@@ -313,16 +299,15 @@ def display_metric(journal, trade, metric, unit=None):
         return metric
     from mwjournal.metrics import excursions
     samples = journal.prices(trade.symbol, metric['source'], start=trade.opened, end=trade.closed)
-    calculated = excursions(trade, samples, metric['source'], basis=metric.get('basis', 'last'),
-                            now=journal.trade_clock(trade))
+    calculated = excursions(trade, samples, metric['source'], now=journal.trade_clock(trade))
     return {**metric, **{k: calculated.get(k) for k in ('mae_points', 'mfe_points', 'point_definition', 'point_precision')},
             'path': calculated.get('path', []), 'point_notes': calculated.get('notes', [])}
 
 
-def best_display_metric(journal, trade, *, policy=None, unit=None):
-    """The measurement a trade is shown with. The accuracy policy and the unit are read from the journal unless
-    given: rows_for reads them once for all the trades."""
-    options = metric_options(journal, trade, policy=policy)
+def best_display_metric(journal, trade, *, unit=None):
+    """The measurement a trade is shown with: from recorded ticks only (metric_options). The unit is read from
+    the journal unless given: rows_for reads it once for all the trades."""
+    options = metric_options(journal, trade)
     rank = {'platform-reported': 4, 'observed-ticks': 3, 'estimated-bars': 2,
             'replay-simulated': 1, 'proxy-estimate': 1, 'pending': 0}
     best = max(options, key=lambda m: (rank.get(m.get('precision'), 0), m.get('basis', 'last') == 'last',
@@ -339,7 +324,7 @@ def best_display_metric(journal, trade, *, policy=None, unit=None):
 
 
 def replay_ticks_pending(journal, trade) -> bool:
-    """A replay trade without a measurement from real ticks yet, under any accuracy policy. The study
+    """A replay trade without a measurement from real ticks yet. The study
     backfills one from MotiveWave's history once the trade is flat and the study is on the replay chart."""
     if getattr(journal, 'dataset', None) != 'replay' or not replay_run(getattr(trade, 'provider', '') or ''):
         return False
@@ -412,11 +397,10 @@ def account_name(journal, provider, account) -> str:
     return journals.alias(getattr(journal, 'capture_journal', journal), (provider, account))
 
 
-def metric_options(journal, trade, *, policy=None):
-    options = journal.metric_options(trade)
-    if (policy or journal.display_settings()['excursion_policy']) != 'ticks-only':
-        return options
-    return [m for m in options if m.get('precision') == 'observed-ticks'
+def metric_options(journal, trade):
+    """The measurements a trade can be shown with: from recorded ticks only, and none whose ticks the study
+    reported a gap in. Candles, proxies, simulated replay prints and platform reports never measure a trade."""
+    return [m for m in journal.metric_options(trade) if m.get('precision') == 'observed-ticks'
             and not journal.capture_gaps(m['source'], start=trade.opened, end=trade.closed, symbol=trade.symbol)]
 
 
@@ -429,7 +413,7 @@ def excursion_values(journal, trade, metric, risk=None):
 
 def display_excursion_rows(journal, rows):
     """MAE and MFE of trade rows (rows_for) in the chosen unit. Each row carries the measurement it is shown with,
-    chosen when the rows were built for this unit and accuracy policy, so no trade is read again here."""
+    chosen when the rows were built for this unit, so no trade is read again here."""
     result = []
     unit = excursion_unit(journal)
     sizes = journal.display_settings()['tick_sizes']
@@ -443,10 +427,12 @@ def display_excursion_rows(journal, rows):
     return result
 
 
-def excursion_help(journal, trade, metric, risk):
+def excursion_help(journal, trade, metric, at_risk):
     unit = excursion_unit(journal)
-    if unit == 'r' and not units.positive(risk):
-        st.info('R needs a stop: the stop order you place with the trade counts, or type your stop under Notes → Stop.')
+    if unit == 'r' and not units.positive(at_risk):
+        # Why there is no risk, as the Stop box under Notes says it: no stop reported, a stop on the wrong side...
+        st.info(risk.plan_for(journal, trade).why or 'R needs a stop: the stop order you place with the trade '
+                'counts, or type your stop under Notes → Stop.')
     if unit == 'ticks' and units.tick_size(trade.symbol, journal.display_settings()['tick_sizes']) is None:
         with st.popover('Set Tick Size for ' + trade.symbol):
             with st.form(key(journal, 'tick-size-' + trade.id)):
@@ -529,13 +515,13 @@ def rows_for(journal) -> list[dict]:
     aliases = journals.registry(getattr(journal, 'capture_journal', journal))['account_aliases']
     import json
     zone = display_zone(journal)
-    policy, unit = journal.display_settings()['excursion_policy'], excursion_unit(journal)
+    unit = excursion_unit(journal)
     rows = []
     trades = journal.trades()
     plans = risk.plans(journal, trades, annotations)
     for trade in trades:
         a = annotations.get(trade.id, {})
-        m = best_display_metric(journal, trade, policy=policy, unit=unit)
+        m = best_display_metric(journal, trade, unit=unit)
         tag_ids = tagging.effective(library, a, sessions.get(tagging.session_key(library, trade.opened), {}))
         # The risk to the trade's stop (risk.py): every R the app shows divides by it.
         at_risk = plans[trade.id].risk
@@ -646,8 +632,8 @@ def filter_rule(journal, rows: list[dict]) -> dict:
         numbers = st.multiselect('Number Ranges', list(NUMBER_LIMITS), format_func=NUMBER_LIMITS.get,
                                  key=key(journal, 'filter-numbers' + fresh),
                                  help='Each one adds a minimum and a maximum; an empty box is no limit. MAE and MFE are '
-                                      'in account currency under your accuracy setting, not the display unit. A trade '
-                                      'without a value never passes a limit; R needs a stop.')
+                                      'in account currency, not the display unit. A trade without a value never '
+                                      'passes a limit; R needs a stop.')
         limits = {}
         for name in numbers:
             low, high = st.columns(2)
@@ -738,7 +724,8 @@ def version_parts(text) -> tuple[int, ...] | None:
 
 def study_outdated(link) -> bool:
     """The study that reported in is ours and older than the one this app bundles. Studies before 0.3.3
-    never receive ticks and before 0.3.4 label replay prints simulated, so Setup asks for the update. Another writer's version numbers are its own."""
+    never receive ticks, before 0.3.4 label replay prints simulated, and before 0.3.5 link no prop account's
+    stops, so Setup asks for the update. Another writer's version numbers are its own."""
     if getattr(link, 'connector', '') != paths.STUDY_CONNECTOR:
         return False
     version = version_parts(getattr(link, 'version', ''))

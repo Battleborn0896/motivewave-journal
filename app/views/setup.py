@@ -2,8 +2,8 @@
 
 The first page reads top to bottom: one status line, green and alone when the study is recording; the one
 step that is missing when something is (install the study, add it to a chart, update an older study, or a
-study that has gone quiet); Time Zone and MAE / MFE Units, with accuracy and hide weekends under a small
-Advanced heading; a tile each for Tags, Playbooks & Checklists, Rating Systems and Data, with a link to each
+study that has gone quiet); Time Zone and MAE / MFE Units, with hide weekends under a small Advanced
+heading; a tile each for Tags, Playbooks & Checklists, Rating Systems and Data, with a link to each
 of their tabs; and one About line. Bridge paths and raw errors are on Data → Connection. The other pages are
 drawn by the parent through ``tool``, under a button back to this one.
 
@@ -77,7 +77,8 @@ STEPS = {
     'update': ('Update the Study', '',
                'Studies before 0.3.3 never received MotiveWave\'s live or replay prints, so MAE and MFE had only '
                'the trade tick backfill. Studies before 0.3.4 labelled replay prints simulated, which hides '
-               'replay MAE and MFE. The previous copy is kept beside the new one.'),
+               'replay MAE and MFE. Studies before 0.3.5 never linked a prop account\'s stop orders to its trades, '
+               'so those trades had no R. The previous copy is kept beside the new one.'),
     'quiet': ('The Study Has Gone Quiet',
               'Check that MotiveWave is open and the study is still on your chart.',
               'Nothing has been heard from the study for over a minute. It reports every ten seconds while it is '

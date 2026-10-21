@@ -14,6 +14,10 @@ from dataclasses import dataclass
 from .humanize import price
 from .model import instant
 
+# What R says for a MotiveWave trade with no stop order linked to it at all: the study links every stop it is
+# told about (study 0.3.5), so the platform did not report one.
+NOT_REPORTED = 'MotiveWave did not report a stop for this position. Type your stop to get R.'
+
 # Seconds after a trade's first fill at which its stop counts. With an OCO bracket the stop goes in
 # with the entry, and traders often drag it to the structure a second or two later: that is still
 # placing the stop. A stop moved after this is managing the trade and leaves its risk alone.
@@ -104,6 +108,9 @@ def plan(trade, annotation: dict, events) -> Plan:
         elif stop is None and len(prices) > 1:
             why = (f'Your stop orders had different prices {STOP_SETTLES} seconds after entry. '
                    'Type the stop R should use.')
+        elif stop is None and trade.provider.startswith('motivewave-native:') and not any(
+                e.role == 'stop' for e in events):
+            why = NOT_REPORTED
         elif stop is None:
             why = f'No stop order {STOP_SETTLES} seconds after entry. Type your stop to get R.'
         elif held is not None:
