@@ -70,6 +70,7 @@ def open_named(capture, id, *, refresh=True):
     if refresh and not definition['archived']:
         mirror(capture, journal, definition['scopes'])
         journal.reconcile_drafts()
+        measure_own(capture, journal)
     return journal
 
 
@@ -132,6 +133,15 @@ def account_alias(capture, provider, account, name):
     edit(capture, lambda state: state['account_aliases'].update({key: name}))
 
 
+def lock_named(db):
+    """Start a transaction holding the named journal's write lock and nothing on the attached capture journal.
+    BEGIN IMMEDIATE would take the capture's write lock too and hold up the watcher; a deferred transaction
+    that reads first can fail at once if another window writes in between. Writing to main first waits its
+    turn at the busy timeout, on the named journal alone."""
+    db.execute('BEGIN')
+    db.execute('DELETE FROM main.prices WHERE 0')
+
+
 def follow(journal, trade):
     """Bring a named journal's copy of an open trade up to date, as the watcher keeps the capture journal: the
     prices, gaps and orders the capture holds for it since, then its measurement. An open trade's one-second
@@ -148,8 +158,8 @@ def follow(journal, trade):
     sources = sorted({source for found in stored.values() for source in found})
     with journal.connect() as db:
         db.execute('ATTACH DATABASE ? AS capture', (str(capture.path),))
-        # IMMEDIATE: two windows on one named journal take turns at the busy timeout instead of one failing.
-        db.execute('BEGIN IMMEDIATE')
+        lock_named(db)
+        since = {}
         for label, found in stored.items():
             for source in found:
                 held = db.execute('SELECT ts, payload FROM main.prices WHERE symbol=? AND source=? ORDER BY ts DESC LIMIT 1',
@@ -162,10 +172,13 @@ def follow(journal, trade):
                     start = timestamp(instant(held['ts']) - RECENT)
                 else:
                     start = held['ts']
-                db.execute('INSERT INTO main.prices(key,symbol,source,ts,payload) SELECT key,symbol,source,ts,payload '
-                           'FROM capture.prices WHERE symbol=? AND source=? AND ts>=? AND true '
-                           'ON CONFLICT(key) DO UPDATE SET payload=excluded.payload WHERE main.prices.payload != excluded.payload',
-                           (label, source, start))
+                copied = db.execute('INSERT INTO main.prices(key,symbol,source,ts,payload) SELECT key,symbol,source,ts,payload '
+                                    'FROM capture.prices WHERE symbol=? AND source=? AND ts>=? AND true '
+                                    'ON CONFLICT(key) DO UPDATE SET payload=excluded.payload '
+                                    'WHERE main.prices.payload != excluded.payload RETURNING ts', (label, source, start)).fetchall()
+                if copied:
+                    first = instant(min(row[0] for row in copied))
+                    since[source] = min(since.get(source, first), first)
         if sources:
             db.execute('INSERT OR IGNORE INTO main.capture_events SELECT * FROM capture.capture_events WHERE source IN ('
                        + ','.join('?' * len(sources)) + ') AND ts>=?', (*sources, timestamp(trade.opened)))
@@ -179,12 +192,32 @@ def follow(journal, trade):
                        'ON CONFLICT(trade_id, basis, source) DO UPDATE SET payload=excluded.payload '
                        'WHERE main.metrics.payload != excluded.payload', (trade.id, trade.basis))
     if not measured:
-        # Measured here, each source carried on from where its measurement stopped (from entry the first time),
-        # whoever copied the prices in: this call or the whole page's mirror.
+        # Measured here: from the earliest price this call copied, so measure carries on from where the
+        # measurement stopped, or measures from entry when a copied price is older (or nothing was measured
+        # yet). Prices the whole page's mirror copied are measured by measure_own, on that page.
         held = journal.metric_options(trade)
         for source in journal.price_sources(trade.symbol, trade):
             stops = [m.get('last_ts') for m in held if m['source'] == source]
-            journal.measure(trade, source, since=instant(max(stops)) if stops and all(stops) else None)
+            if not (stops and all(stops)):
+                journal.measure(trade, source)
+            elif source in since:
+                journal.measure(trade, source, since=since[source])
+
+
+def measure_own(capture, journal):
+    """Measure the trades this journal holds differently from the capture journal (a fill added by hand, its own
+    multiplier), which the capture's watcher does not measure: an open one from entry, as the mirror may have
+    copied prices older than its measurement; a closed one once, when it has no measurement yet."""
+    with capture.connect() as db:
+        captured = {tuple(row) for row in db.execute('SELECT DISTINCT trade_id, basis FROM metrics')}
+    with journal.connect() as db:
+        measured = {tuple(row) for row in db.execute('SELECT DISTINCT trade_id, basis FROM metrics')}
+        priced = {product(label) for label in Journal._distinct(db, 'symbol')}
+    for trade in journal.trades():
+        own = trade.complete and (trade.id, trade.basis) not in captured and product(trade.symbol) in priced
+        if own and (trade.status == 'open' or (trade.id, trade.basis) not in measured):
+            for source in journal.price_sources(trade.symbol, trade):
+                journal.measure(trade, source)
 
 
 def alias(capture, scope):
@@ -207,7 +240,7 @@ def mirror(capture, target, scopes):
         stored = Journal._distinct(db, 'symbol')       # every symbol the capture holds prices under
     with target.connect() as db:
         db.execute('ATTACH DATABASE ? AS capture', (str(capture.path),))
-        db.execute('BEGIN IMMEDIATE')                  # as follow: two windows wait their turn
+        lock_named(db)
         db.execute('CREATE TEMP TABLE selected_fills AS SELECT key FROM capture.executions WHERE ' + where, params)
         conflicts = db.execute("SELECT held.key FROM main.executions held JOIN capture.executions incoming ON held.key=incoming.key "
                                "JOIN selected_fills chosen ON chosen.key=incoming.key WHERE "

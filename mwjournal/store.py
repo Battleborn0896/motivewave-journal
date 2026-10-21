@@ -677,7 +677,14 @@ class Journal(Workspace):
                         self.record_metric(trade, metric)
                     return
         samples = self.prices(trade.symbol, source, start=trade.opened, end=trade.closed)
-        for metric in measurements(trade, samples, source, **options):
+        measured = measurements(trade, samples, source, **options)
+        with self.connect() as db:
+            # The rows this source holds for the trade are exactly these: a bid/ask measurement whose prices the
+            # contract's own have since replaced does not stay behind.
+            kept = [encode([source, m.get('basis', 'last')]) for m in measured]
+            db.execute('DELETE FROM metrics WHERE trade_id=? AND basis=? AND json_extract(source, \'$[0]\')=? AND source NOT IN ('
+                       + ','.join('?' * len(kept)) + ')', (trade.id, trade.basis, source, *kept))
+        for metric in measured:
             self.record_metric(trade, metric)
 
     def metric_options(self, trade) -> list[dict]:

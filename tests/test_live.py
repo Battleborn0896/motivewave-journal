@@ -339,7 +339,7 @@ def test_follow_writes_nothing_when_nothing_is_new(tmp_path):
     watcher.close()
 
 
-def test_prices_the_whole_page_copied_are_measured_by_the_next_follow(tmp_path):
+def test_prices_a_whole_page_copies_are_measured_on_that_page_and_by_follow(tmp_path):
     capture, bridge, worker, id = named_with_open_trade(tmp_path)
     named = journals.open_named(capture, id)
     named.ingest([(Execution('motivewave-native:ws:live', 'SIM', 'NQZ6', 'buy', 1, 20010, '2026-10-07T14:00:01.5Z',
@@ -347,10 +347,49 @@ def test_prices_the_whole_page_copied_are_measured_by_the_next_follow(tmp_path):
     by_hand, = named.trades()
     journals.follow(named, by_hand)                       # measured here: the capture does not hold this trade
     assert named.best_metric(by_hand)['observations'] == 1
+    # A print the capture stores late, with a time before the measurement's newest: the whole page copies it.
     write(bridge, [tick(19970, '2026-10-07T14:00:03Z')])
     worker.poll()
-    named = journals.open_named(capture, id)             # a whole page: its mirror copies the print, measures nothing
+    named = journals.open_named(capture, id)             # its mirror copies the print and measures from entry
     by_hand, = named.trades()
-    assert named.best_metric(by_hand)['observations'] == 1
-    journals.follow(named, by_hand)                       # copies nothing new, yet measures what is held since
     assert named.best_metric(by_hand)['observations'] == 2 and named.best_metric(by_hand)['mae_points'] == 35
+    write(bridge, [tick(19960, '2026-10-07T14:00:04Z')])
+    worker.poll()
+    journals.follow(named, by_hand)                       # and the next print by follow, carried on
+    assert named.best_metric(by_hand)['observations'] == 3 and named.best_metric(by_hand)['mae_points'] == 45
+
+
+def test_a_named_journal_copying_does_not_hold_up_the_watcher(tmp_path):
+    import sqlite3
+    capture, bridge, worker, id = named_with_open_trade(tmp_path)
+    named = journals.open_named(capture, id)
+    with named.connect() as db:                           # what follow and mirror do, held open
+        db.execute('ATTACH DATABASE ? AS capture', (str(capture.path),))
+        journals.lock_named(db)
+        db.execute('SELECT count(*) FROM capture.prices').fetchone()
+        watcher = sqlite3.connect(capture.path, timeout=0.5)
+        watcher.execute('BEGIN IMMEDIATE')                # the capture stays writable
+        watcher.rollback()
+        watcher.close()
+        other = sqlite3.connect(named.path, timeout=0.2)
+        try:
+            other.execute('BEGIN IMMEDIATE')              # the named journal is held
+            raise AssertionError('the named journal was not locked')
+        except sqlite3.OperationalError:
+            pass
+        finally:
+            other.close()
+
+
+def test_measuring_from_entry_leaves_no_measurement_it_did_not_make(tmp_path):
+    journal = Journal(tmp_path / 'trades.sqlite3')
+    journal.ingest([(Execution('t', 'a', 'NQZ6', 'buy', 1, 20000, '2026-10-07T14:00:00Z', execution_id='in'), {})])
+    journal.ingest_prices([PriceSample('NQ', '2026-10-07T14:00:01Z', 'motivewave-ticks', 19995, 19995,
+                                       bid=19994.75, ask=19995.25)])
+    trade, = journal.trades()
+    journal.measure(trade, 'motivewave-ticks')
+    assert {m['basis'] for m in journal.metric_options(trade)} == {'last', 'liquidation'}
+    # The contract's own prints, without quotes, take over: the bid/ask measurement goes.
+    journal.ingest_prices([PriceSample('NQZ6', '2026-10-07T14:00:02Z', 'motivewave-ticks', 19990, 19990)])
+    journal.measure(trade, 'motivewave-ticks')
+    assert [m['basis'] for m in journal.metric_options(trade)] == ['last']
