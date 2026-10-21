@@ -390,7 +390,7 @@ def test_export_includes_new_workflow_definitions_and_run_history(home):
     definition = journal.save_checklist('Plan', starter())
     journal.start_checklist(definition)
     from views.export import files
-    data = json.loads(files(journal)[0][2])
+    data = json.loads(files(journal)[0][2]())
     assert len(data['workspace']['runs']) == 1
     assert definition in data['workspace']['checklists']
 

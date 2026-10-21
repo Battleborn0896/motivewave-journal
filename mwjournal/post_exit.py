@@ -39,8 +39,8 @@ def post_exit(trade, samples, source, *, minutes=15, now=None, initial_risk=None
     quantity, exit_price = exit_fill['qty'], exit_fill['price']
     result.update(exit_qty=quantity, exit_price=exit_price)
     if require_stop and stop_price is None:
-        result['notes'] = ['No stop is available. Type your stop under Notes or select an explicit breakeven '
-                           'hypothesis; a stop must not be guessed from MAE or price proximity.']
+        result['notes'] = ['No stop for this trade. Type your stop under Notes, or choose Breakeven as the '
+                           'runner stop.']
         return result
     if stop_price is not None:
         stop_price = finite(stop_price, 'Runner stop')
@@ -131,7 +131,7 @@ def post_exit(trade, samples, source, *, minutes=15, now=None, initial_risk=None
 
 def resolve_stop(journal, trade, mode='original'):
     if mode == 'breakeven':
-        return trade.entry_price, 'Entry average · gross breakeven hypothesis, excludes fees'
+        return trade.entry_price, 'Breakeven · your average entry, before fees'
     if mode == 'original':
         # The stop the trade's R uses, by the one rule in risk.py.
         plan = risk.plan_for(journal, trade)
@@ -146,8 +146,8 @@ def resolve_stop(journal, trade, mode='original'):
             last[event.order_id] = event
         working = [p for p in last.values() if p.state == 'working' and p.price is not None]
         if len(working) == 1:
-            return working[0].price, 'Recorded working stop before actual exit'
-        return None, 'No unique working stop at exit; multiple stops require an explicit hypothesis'
+            return working[0].price, 'Your stop order when you exited'
+        return None, 'No single stop order was working when you exited. Choose another runner stop.'
     raise ValueError('Unknown stop hypothesis.')
 
 

@@ -3,6 +3,7 @@
 AppTest runs the real script and the real background reader, but no browser: these tests see which
 elements exist and what they say, not how the page looks.
 """
+import dataclasses
 import datetime as dt
 import json
 import re
@@ -351,9 +352,17 @@ def test_full_recorded_path_and_runner_controls_render_without_claiming_missing_
     assert any(b.label == 'Download Full Path CSV' for b in app.download_button)
     widget(app.selectbox, 'Look after exit').set_value(120).run()
     assert not app.exception and said(app.caption, 'Partial or gapped horizon')
+    # What it was measured from, in words: no program codes.
+    assert said(app.caption, 'From candles, an estimate · price after exit not complete yet · 1 contract')
+    assert said(app.caption, 'Stop 4,998 · Your saved stop · the one R uses · waiting for prices')
+    assert not any(code in c.value for c in app.caption for code in ('estimated-bars', 'partial-window', 'awaiting-prices'))
     show(app, 'Edge')
+    assert not any(s.label == 'Runner comparison horizon' for s in app.selectbox)    # drawn only when its tab is open
+    open_tab(app, 'Runners')
     widget(app.selectbox, 'Runner comparison horizon').set_value(120).run()
-    assert not app.exception and said(app.info, 'No comparable completed windows')
+    assert not app.exception and not said(app.info, 'No comparable completed windows')   # not run until asked
+    press(app, 'Compare Runners')
+    assert said(app.info, 'No comparable completed windows')
     assert widget(app.selectbox, 'Compare runners by').options == [
         'Individual tags', 'Tag categories', 'Setup / playbook']
     assert not any(b.label in ('Analyze recorded post-exit prices', 'Calculate post-exit tag analysis')
@@ -375,7 +384,7 @@ def test_measured_trade_risk_and_bidask_variants_render():
     widget(app.selectbox, 'Measurement').set_value(liquidation).run()
     assert not app.exception
     assert widget(app.metric, 'MAE / risk').value == '1.25R'
-    show(app, 'Edge')
+    open_tab(show(app, 'Edge'), 'Compare')
     widget(app.selectbox, 'Compare by').set_value('Followed my plan').run()
     assert not app.exception
 
@@ -448,9 +457,81 @@ def test_rollover_filters_group_markets_but_keep_micro_contracts_separate(home):
     widget(app.multiselect, 'Exact Contracts').set_value([]).run()
     widget(app.multiselect, 'Markets').set_value(['MNQ']).run()
     assert len(listed(app)) == 1
-    show(app, 'Edge')
+    open_tab(show(app, 'Edge'), 'Compare')
     assert widget(app.multiselect, 'Markets').value == ['MNQ']
     assert widget(app.selectbox, 'Compare by').options[:2] == ['Market', 'Exact contract']
+
+
+def test_trade_rows_are_built_again_only_when_something_they_show_changed(home, monkeypatch):
+    journal = seed_preview(home)
+    built = []
+    original = common.rows_for
+    monkeypatch.setattr(common, 'rows_for', lambda journal: built.append(1) or original(journal))
+    app = open_app()
+    assert built and 'breakout' in widget(app.multiselect, 'Tags').options
+
+    def clicks(*actions):
+        """How many times the rows were built during these clicks."""
+        before = len(built)
+        for action in actions:
+            action()
+            assert not app.exception
+        return len(built) - before
+
+    trade = journal.trades()[0]
+    # Clicks that change nothing reuse the rows: a rerun, the open trade's row, another tab, Stats and back.
+    assert clicks(app.run, lambda: pick(app, trade.id), lambda: open_tab(app, 'Notes'),
+                  lambda: show(app, 'Edge'), lambda: show(app, 'Trades')) == 0
+    # A tag, a note, a fill and a measurement each build them once, with the change in them.
+    assert clicks(lambda: widget(app.pills, 'Other tags').set_value(['PAPER FIXTURE']).run()) == 1
+    assert 'breakout' not in widget(app.multiselect, 'Tags').options
+    assert clicks(lambda: widget(app.text_area, 'Review notes').set_value('Waited for the retest.').run()) == 1
+    assert clicks(app.run) == 0
+    journal.ingest([(Execution('motivewave', 'paper', 'ESZ6', 'buy', 1, 5010, '2026-10-08T14:00:00Z',
+                               execution_id='later'), {})])
+    assert clicks(app.run) == 1 and len(listed(app)) == 2
+    later = next(t for t in journal.trades() if t.id != trade.id)
+    journal.record_metric(later, {'source': 'motivewave-bars:1m', 'precision': 'pending', 'path': [], 'notes': []})
+    assert clicks(app.run, app.run) == 1
+
+    def shown(id):
+        return next(r for r in app.session_state[common.key(journal, 'trade-rows')][1] if r['id'] == id)
+
+    # A measurement stored again. The open trade's, which the watcher stores at every poll and the page draws live,
+    # reuses them; a closed trade's (prices that came in late) builds them once, with its new MAE.
+    journal.record_metric(later, {'source': 'motivewave-bars:1m', 'precision': 'pending', 'path': [], 'notes': ['again']})
+    assert clicks(app.run) == 0
+    from mwjournal.metrics import excursions
+    deeper = [dataclasses.replace(s, low=s.low - 3) for s in journal.prices(trade.symbol, 'motivewave-bars:1m')]
+    journal.record_metric(trade, excursions(trade, deeper, 'motivewave-bars:1m'))
+    assert shown(trade.id)['mae'] != journal.best_metric(trade)['mae']
+    assert clicks(app.run) == 1 and shown(trade.id)['mae'] == journal.best_metric(trade)['mae']
+    # A multiplier set again to another value: the trade's result in the list follows it.
+    journal.set_instrument('ESZ6', 50)
+    assert clicks(app.run) == 1 and '242.00' in app.button(key=f'pick-{trade.id}-live').label
+    journal.set_instrument('ESZ6', 5)
+    assert clicks(app.run) == 1 and '17.00' in app.button(key=f'pick-{trade.id}-live').label
+
+
+def test_stats_choices_are_still_chosen_after_another_tab_was_open(home):
+    """Only the open Stats tab is drawn, and Streamlit forgets the value of a widget a run does not draw."""
+    seed_preview(home)
+    app = open_tab(open_app('Edge'), 'Compare')
+    assert widget(app.selectbox, 'Compare by').value == 'Tags'
+    widget(app.selectbox, 'Compare by').set_value('Playbooks').run()
+    open_tab(app, 'Runners')
+    assert widget(app.selectbox, 'Runner comparison horizon').value == 15
+    assert widget(app.checkbox, 'Only winning trades').value
+    widget(app.selectbox, 'Runner comparison horizon').set_value(120)
+    widget(app.selectbox, 'Compare runners by').set_value('tag_categories')
+    widget(app.checkbox, 'Only winning trades').uncheck()
+    press(app, 'Compare Runners')
+    open_tab(app, 'Overview')
+    open_tab(app, 'Compare')
+    assert widget(app.selectbox, 'Compare by').value == 'Playbooks'
+    open_tab(app, 'Runners')
+    assert (widget(app.selectbox, 'Runner comparison horizon').value, widget(app.selectbox, 'Compare runners by').value,
+            widget(app.checkbox, 'Only winning trades').value) == (120, 'tag_categories', False)
 
 
 def test_simple_navigation_and_optional_controls_do_not_remove_reviews(home):
@@ -553,8 +634,10 @@ def test_edge_draws_excursions_for_captured_trades_nobody_has_reviewed(home):
     assert not journal.annotations()
     app = open_app('Edge')
     assert widget(app.metric, 'Win Rate').value == '50.0%'
+    assert len(app.get('plotly_chart')) == 2                  # Overview: the equity curve and the results
+    open_tab(app, 'MAE / MFE')
     assert helped(app.markdown, 'Giveback = ')
-    assert len(app.get('plotly_chart')) == 3
+    assert len(app.get('plotly_chart')) == 1
 
 
 # ---------------------------------------------------------------- import
@@ -648,6 +731,7 @@ def test_export_files_carry_the_whole_journal_and_are_named_after_the_environmen
     from views import export
     journal = seed_preview(home)
     (_, json_name, text, _), (_, csv_name, table, _), (_, db_name, backup, _) = export.files(journal)
+    text, table, backup = text(), table(), backup()                # each built only when asked for
     assert (json_name, csv_name, db_name) == ('motivewave-journal.json', 'motivewave-journal-trades.csv',
                                               'motivewave-journal.sqlite3')
     exported = json.loads(text)
@@ -974,7 +1058,7 @@ def test_missing_risk_and_unknown_tick_size_show_unavailable_with_one_time_setup
     assert journal.display_settings()['tick_sizes'] == {'CUSTOM': .5}
     show(app, 'Export')
     from views import export
-    payload = json.loads(next(content for label, _, content, _ in export.files(journal) if label == 'Download Journal JSON'))
+    payload = json.loads(next(build() for label, _, build, _ in export.files(journal) if label == 'Download Journal JSON'))
     assert payload['display_settings']['tick_sizes'] == {'CUSTOM': .5}
     assert payload['trades'][0]['mfe'] == 6  # original total currency, not relabelled price units
 
@@ -1011,11 +1095,15 @@ def test_analytics_is_question_based_and_selected_units_change_only_excursion_ax
     app = open_app('Edge')
     assert [t.label for t in app.tabs] == ['Overview', 'Compare', 'MAE / MFE', 'Runners', 'Dashboards']
     assert widget(app.metric, 'Average Trade').value == '+$242.00'
-    assert widget(app.selectbox, 'Compare by').value == 'Tags'
+    # Only the open tab is drawn: Overview's equity curve, and none of Compare's controls yet.
+    assert widget(app.metric, 'Gross P&L') and not any(s.label == 'Compare by' for s in app.selectbox)
+    open_tab(app, 'Compare')
+    assert widget(app.selectbox, 'Compare by').value == 'Tags' and not any(m.label == 'Gross P&L' for m in app.metric)
     table = next(d.value for d in app.dataframe if 'Average Trade' in d.value.columns)
     assert 'Trades' in table.columns and 'Tag' in table.columns
     display_setting(app, 'MAE / MFE Units', 'ticks', back='Edge')
     assert not app.exception and widget(app.metric, 'Net P&L').value == '+$242.00'
+    open_tab(app, 'MAE / MFE')
     excursion = next(json.loads(x.proto.spec) for x in app.get('plotly_chart') if 'One dot per measured trade' in x.proto.spec)
     assert excursion['layout']['xaxis']['title']['text'] == 'Against me · MAE (ticks)'
     assert excursion['layout']['yaxis']['title']['text'] == 'In my favour · MFE (ticks)'

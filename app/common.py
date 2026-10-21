@@ -8,15 +8,16 @@ never show each other's selections.
 from __future__ import annotations
 
 import datetime as dt
+import hashlib
 import sqlite3
-from dataclasses import dataclass, fields
+from dataclasses import dataclass
 from pathlib import Path
 
 import streamlit as st
 
 from mwjournal import Journal, paths
 from mwjournal.metrics import measurements
-from mwjournal.model import Trade, instant, instrument_market, point_value
+from mwjournal.model import instant, instrument_market, point_value
 from mwjournal.scope import replay_run
 from mwjournal import humanize, risk, units, tagging
 from mwjournal.sync import DEFAULT_CONNECTION
@@ -112,6 +113,23 @@ def tabs(labels, key: str):
     return st.tabs(list(labels), key=key, on_change=remember)
 
 
+def keep(defaults: dict):
+    """Gives each widget key in `defaults` that Streamlit has forgotten the value its widget last had (else its
+    default), before the widget is drawn, and returns the function that keeps new values: the widget's on_change,
+    or the on_click of the submit button of the form the widgets sit in. As in tabs(), the values are kept under
+    keys of their own, because Streamlit forgets the value of a widget a run does not draw, and a Stats tab is
+    drawn only while it is open. The widgets themselves take no default (Streamlit warns about a widget given
+    both)."""
+    for name, default in defaults.items():
+        if name not in st.session_state:
+            st.session_state[name] = st.session_state.get(name + '-chosen', default)
+
+    def remember():
+        for name in defaults:
+            st.session_state[name + '-chosen'] = st.session_state.get(name, defaults[name])
+    return remember
+
+
 def stamp(journal):
     """Changes when there is something new to show: a fill, or a trade's first excursions. Streaming
     prices revise excursions in place and leave it alone, so an open position does not redraw the page."""
@@ -125,12 +143,14 @@ def stamp(journal):
 
 def changes(journal):
     """Moves whenever the background watcher changes what the trade list shows: a new fill, a fill
-    the platform described again, a linked order, a multiplier or a trade's first measurement."""
+    the platform described again, a linked order, a multiplier (a new one, or one set to another value) or a
+    trade's first measurement."""
     try:
         with journal.connect() as db:
             return tuple(db.execute('SELECT (SELECT count(*) FROM executions), '
                                     '(SELECT total(length(payload)) FROM executions), (SELECT count(*) FROM metrics), '
-                                    '(SELECT count(*) FROM protection), (SELECT count(*) FROM instruments)').fetchone())
+                                    '(SELECT count(*) FROM protection), '
+                                    "(SELECT group_concat(symbol || '=' || point_value) FROM instruments)").fetchone())
     except sqlite3.Error:
         return None
 
@@ -285,9 +305,10 @@ def excursion_amount(value, unit, currency='USD'):
     return amount(value) + ('' if unit == 'r' else ' ') + units.suffix(unit, currency)
 
 
-def display_metric(journal, trade, metric):
+def display_metric(journal, trade, metric, unit=None):
     """Old stored reports need matching prices for points; never divide size-weighted currency blindly."""
-    if getattr(trade, 'merge_overlapping', False) or excursion_unit(journal) not in ('points', 'ticks') or not metric or 'mae_points' in metric:
+    unit = unit or excursion_unit(journal)
+    if getattr(trade, 'merge_overlapping', False) or unit not in ('points', 'ticks') or not metric or 'mae_points' in metric:
         return metric
     from mwjournal.metrics import excursions
     samples = journal.prices(trade.symbol, metric['source'], start=trade.opened, end=trade.closed)
@@ -297,20 +318,23 @@ def display_metric(journal, trade, metric):
             'path': calculated.get('path', []), 'point_notes': calculated.get('notes', [])}
 
 
-def best_display_metric(journal, trade):
-    options = metric_options(journal, trade)
+def best_display_metric(journal, trade, *, policy=None, unit=None):
+    """The measurement a trade is shown with. The accuracy policy and the unit are read from the journal unless
+    given: rows_for reads them once for all the trades."""
+    options = metric_options(journal, trade, policy=policy)
     rank = {'platform-reported': 4, 'observed-ticks': 3, 'estimated-bars': 2,
             'replay-simulated': 1, 'proxy-estimate': 1, 'pending': 0}
     best = max(options, key=lambda m: (rank.get(m.get('precision'), 0), m.get('basis', 'last') == 'last',
                                        m.get('observations', 0))) if options else {}
-    if excursion_unit(journal) not in ('points', 'ticks'):
+    unit = unit or excursion_unit(journal)
+    if unit not in ('points', 'ticks'):
         return best
-    options = [display_metric(journal, trade, m) for m in options]
+    options = [display_metric(journal, trade, m, unit) for m in options]
     available = [m for m in options if m.get('mae_points') is not None and m.get('mfe_points') is not None]
     rank = {'platform-reported': 4, 'observed-ticks': 3, 'estimated-bars': 2,
             'replay-simulated': 1, 'proxy-estimate': 1, 'pending': 0}
     return max(available, key=lambda m: (rank.get(m.get('point_precision'), 0),
-                                        m.get('basis', 'last') == 'last', m.get('observations', 0))) if available else display_metric(journal, trade, best)
+                                        m.get('basis', 'last') == 'last', m.get('observations', 0))) if available else display_metric(journal, trade, best, unit)
 
 
 def replay_ticks_pending(journal, trade) -> bool:
@@ -323,9 +347,9 @@ def replay_ticks_pending(journal, trade) -> bool:
     return not any(m.get('precision') == 'observed-ticks' for m in journal.metric_options(trade))
 
 
-def metric_options(journal, trade):
+def metric_options(journal, trade, *, policy=None):
     options = journal.metric_options(trade)
-    if journal.display_settings()['excursion_policy'] != 'ticks-only':
+    if (policy or journal.display_settings()['excursion_policy']) != 'ticks-only':
         return options
     return [m for m in options if m.get('precision') == 'observed-ticks'
             and not journal.capture_gaps(m['source'], start=trade.opened, end=trade.closed, symbol=trade.symbol)]
@@ -339,17 +363,14 @@ def excursion_values(journal, trade, metric, risk=None):
 
 
 def display_excursion_rows(journal, rows):
+    """MAE and MFE of trade rows (rows_for) in the chosen unit. Each row carries the measurement it is shown with,
+    chosen when the rows were built for this unit and accuracy policy, so no trade is read again here."""
     result = []
-    keys = [f.name for f in fields(Trade)]
     unit = excursion_unit(journal)
     sizes = journal.display_settings()['tick_sizes']
     for row in rows:
-        trade = Trade(**{k: row[k] for k in keys})
-        if row.get('merge_leg_ids'):
-            trade.merge_leg_ids = row['merge_leg_ids']
-            trade.merge_overlapping = row.get('merge_overlapping', False)
-        metric = best_display_metric(journal, trade)
-        mae, mfe = (units.value(metric, name, unit, risk=row.get('initial_risk'), tick=units.tick_size(trade.symbol, sizes))
+        metric = row['metric']
+        mae, mfe = (units.value(metric, name, unit, risk=row.get('initial_risk'), tick=units.tick_size(row['symbol'], sizes))
                     for name in ('mae', 'mfe'))
         precision = metric.get('point_precision') if unit in ('points', 'ticks') else metric.get('precision')
         result.append({**row, 'display_mae': mae, 'display_mfe': mfe,
@@ -378,7 +399,62 @@ def excursion_help(journal, trade, metric, risk):
                 'It cannot be converted safely from whole-position dollars alone.')
 
 
+# What the trade rows show besides fills, measurements, linked orders and multipliers (changes()): the journal_meta
+# entries holding the tag library, ratings, display time zone and settings, and merged trades.
+ROW_SETTINGS = ('workspace', 'tag_library', 'tag_catalog', 'display_settings', 'trade_merges')
+
+
+def rows_signature(journal) -> tuple | None:
+    """(what changes whenever a trade row could, the newest measurement of each trade), or None when the journal
+    cannot be read. The first: changes() (a fill, a trade's first measurement, a linked order, a multiplier), a
+    review, a day's tags, the tag library, a rating, a setting, a merge or an account's name. The second, by trade
+    id: a measurement stored again (prices that came in late, a gap the study reported) leaves changes() as it
+    was, but it replaces its row, and the new row has a higher rowid."""
+    capture = getattr(journal, 'capture_journal', journal)
+    found = hashlib.sha256()
+    try:
+        with journal.connect() as db:
+            for (text,) in db.execute(
+                    "SELECT 'a ' || trade_id || ' ' || payload FROM annotations UNION ALL "
+                    "SELECT 's ' || key || ' ' || payload FROM sessions UNION ALL "
+                    "SELECT 'm ' || key || ' ' || value FROM journal_meta WHERE key IN (%s)" % ','.join('?' * len(ROW_SETTINGS)),
+                    ROW_SETTINGS):
+                found.update(text.encode())
+            measured = dict(db.execute('SELECT trade_id, max(rowid) FROM metrics GROUP BY trade_id'))
+        with capture.connect() as db:
+            names = db.execute("SELECT value FROM journal_meta WHERE key='journal_registry'").fetchone()
+    except sqlite3.Error:
+        return None                            # never equal to a signature read before: the rows are built again
+    # A journal shown with its merged trades (merging.ReviewJournal) has other rows than the same journal without.
+    return (changes(journal), found.hexdigest(), names and names[0], excursion_unit(journal), humanize.local_zone(),
+            hasattr(journal, 'original')), measured
+
+
+def rows(journal) -> list[dict]:
+    """rows_for(journal), built again only when rows_signature says something they show has changed: a click
+    that changes nothing reuses the rows of the click before. An open trade's measurement stored again is left
+    out: the watcher stores it again at every poll, and the open trade's numbers are drawn live from the journal
+    (trades.py LIVE), not from these rows; its fills and its first measurement still count (changes())."""
+    cache = key(journal, 'trade-rows')
+    read = rows_signature(journal)             # read first: a change during the build builds them again next time
+    held = st.session_state.get(cache)
+
+    def signature(rows):
+        """What `rows` were built from, with the newest measurement of the trades not open in them."""
+        if read is None:
+            return None
+        found, measured = read
+        live = {r['id'] for r in rows if r['status'] == 'open'}
+        return found, max((n for id, n in measured.items() if id not in live), default=None)
+
+    if read is None or held is None or held[0] != signature(held[1]):
+        built = rows_for(journal)
+        held = st.session_state[cache] = (signature(built), built)
+    return held[1]
+
+
 def rows_for(journal) -> list[dict]:
+    """One row per trade with its review, tags, risk and measurement. The journal's settings are read once."""
     annotations = journal.annotations()
     library = journal.tag_library()
     sessions = journal.get('sessions')
@@ -388,12 +464,13 @@ def rows_for(journal) -> list[dict]:
     aliases = journals.registry(getattr(journal, 'capture_journal', journal))['account_aliases']
     import json
     zone = display_zone(journal)
+    policy, unit = journal.display_settings()['excursion_policy'], excursion_unit(journal)
     rows = []
     trades = journal.trades()
     plans = risk.plans(journal, trades, annotations)
     for trade in trades:
         a = annotations.get(trade.id, {})
-        m = best_display_metric(journal, trade)
+        m = best_display_metric(journal, trade, policy=policy, unit=unit)
         tag_ids = tagging.effective(library, a, sessions.get(tagging.session_key(library, trade.opened), {}))
         # The risk to the trade's stop (risk.py): every R the app shows divides by it.
         at_risk = plans[trade.id].risk

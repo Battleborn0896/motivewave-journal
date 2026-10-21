@@ -25,6 +25,6 @@ def render(journal, rows, *, capture=None) -> None:
         if panel.open:
             with panel:
                 if label == 'Connection' and capture is not None:
-                    connection.render(capture, common.rows_for(capture))
+                    connection.render(capture, common.rows(capture))
                 else:
                     VIEWS[label].render(journal, rows)

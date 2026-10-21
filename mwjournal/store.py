@@ -719,6 +719,12 @@ class Journal(Workspace):
         for metric in measured:
             self.record_metric(trade, metric)
 
+    def measured(self) -> set[tuple[str, str, str]]:
+        """(trade id, basis, source) of every stored measurement, read from the table's key alone."""
+        with self.connect() as db:
+            return {(row[0], row[1], json.loads(row[2])[0])
+                    for row in db.execute('SELECT trade_id, basis, source FROM metrics')}
+
     def metric_options(self, trade) -> list[dict]:
         if not trade.complete:
             return []
@@ -999,11 +1005,11 @@ class Journal(Workspace):
                        (name, identity, position, checkpoint))
 
     def backup(self) -> bytes:
-        """Use SQLite backup so an active watcher cannot leave the exported DB inconsistent."""
-        copy = sqlite3.connect(':memory:')
-        try:
+        """A complete copy of the journal as one consistent snapshot, so an active watcher cannot leave it
+        inconsistent. SQLite writes it straight to a private temporary file beside the journal (VACUUM INTO),
+        which is read once and removed, rather than building a second database in memory."""
+        with tempfile.TemporaryDirectory(dir=self.path.parent, prefix='.backup-') as folder:
+            copy = Path(folder) / self.path.name
             with self.connect() as db:
-                db.backup(copy)
-            return copy.serialize()
-        finally:
-            copy.close()
+                db.execute('VACUUM INTO ?', (str(copy),))
+            return copy.read_bytes()

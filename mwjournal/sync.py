@@ -206,30 +206,37 @@ class SyncWorker:
         return self.trade_list
 
     def recalculate(self):
-        """Late fills use cached prices; new prices measure only the trades they overlap, which while
-        trading is the open one, so its MAE / MFE follow the market at every poll (POLL_SECONDS). New prices
-        alone wait at least as long as the last measurement took, so a long-held trade with a long tape
-        keeps the watcher busy half the time at most and the file is still read every poll."""
+        """New fills measure only the trades whose fills they changed: a trade's basis is a fingerprint of its
+        fills, so those are the trades with no measurement stored for their basis from a source, and each is
+        measured from entry with the prices already stored. New prices measure only the trades they overlap,
+        which while trading is the open one, so its MAE / MFE follow the market at every poll (POLL_SECONDS).
+        New prices alone wait at least as long as the last measurement took, so a long-held trade with a long
+        tape keeps the watcher busy half the time at most and the file is still read every poll. After an
+        upgrade (rebuild) every trade is measured again from entry, once."""
         fills = bool(self.rebuild or self.dirty_executions)    # a bool: the set is cleared below
         if not fills and (not self.dirty_prices or time.monotonic() < self.measure_after):
             return
         began = time.monotonic()
         now = dt.datetime.now(dt.timezone.utc)
+        measured = set() if self.rebuild else self.journal.measured() if fills else None
+        sources = {}                                   # every source of a contract's prices, read once per contract
         for trade in self.trades():
             if not trade.complete:
                 continue                               # its excursions are unknown, whatever prices exist
-            fills_changed = self.rebuild or (
-                trade.provider, trade.account, trade.symbol, trade.currency) in self.dirty_executions
-            if fills_changed:
-                sources = self.journal.price_sources(trade.symbol, trade)
-            else:
-                sources = [source for (market, source), window in self.dirty_prices.items()
-                           if market == product(trade.symbol) and allows_source(trade, source) and window[1] >= instant(trade.opened)
-                           and window[0] < (instant(trade.closed) if trade.closed else now)]
-            for source in sources:
+            fresh = []
+            if fills:
+                if trade.symbol not in sources:
+                    sources[trade.symbol] = self.journal.price_sources(trade.symbol)
+                fresh = [source for source in sources[trade.symbol] if allows_source(trade, source)
+                         and (trade.id, trade.basis, source) not in measured]
+            for source in fresh:
+                self.journal.measure(trade, source)
+            for (market, source), window in self.dirty_prices.items():
                 # New prices alone: from where the trade's measurement stopped, when they all come after it.
-                window = None if fills_changed else self.dirty_prices.get((product(trade.symbol), source))
-                self.journal.measure(trade, source, since=window[0] if window else None)
+                if (source not in fresh and market == product(trade.symbol) and allows_source(trade, source)
+                        and window[1] >= instant(trade.opened)
+                        and window[0] < (instant(trade.closed) if trade.closed else now)):
+                    self.journal.measure(trade, source, since=window[0])
         if self.rebuild:
             self.journal.recalculation_done()
             self.rebuild = False

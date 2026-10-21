@@ -111,7 +111,7 @@ if journal is not None:
         except (ValueError, OSError, sqlite3.Error):
             pass                           # the other journal cannot be opened; switching to it says why
     st.session_state[common.key(journal, SEEN_KEY)] = common.stamp(capture)    # authoritative source counts trigger a mirror refresh
-    rows = common.rows_for(journal)
+    rows = common.rows(journal)
     for warning in journal.merge_warnings:
         st.warning(warning)
     currencies = sorted({r['currency'] for r in rows})

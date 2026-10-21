@@ -13,7 +13,7 @@ from mwjournal import tagging
 from mwjournal.metrics import measurements
 from mwjournal.model import instant
 from mwjournal.post_exit import best_post_exit
-from test_app import display_setting, helped, listed, open_app, press, said, show, widget
+from test_app import display_setting, helped, listed, open_app, open_tab, press, said, show, widget
 from test_chart import seed_preview
 
 
@@ -47,7 +47,7 @@ def test_tick_only_is_default_for_every_unit_and_raw_estimates_remain_in_backup(
     assert common.display_excursion_rows(journal, rows)[0]['display_mfe'] is None
     assert common.best_display_metric(journal, trade) == {}
     from views import export
-    payload = json.loads(export.files(journal)[0][2])
+    payload = json.loads(export.files(journal)[0][2]())
     assert payload['trades'][0]['mfe'] is None
     assert payload['measurements'][trade.id][0]['precision'] == 'estimated-bars'
     backup = home / 'snapshot.sqlite3'
@@ -82,6 +82,7 @@ def test_accuracy_control_is_distinct_from_units_and_propagates_to_headers_and_a
     display_setting(app, 'MAE / MFE Accuracy', 'best-available')
     assert not app.exception and widget(app.metric, 'MFE').value == '12.00 ticks'
     display_setting(app, 'MAE / MFE Accuracy', 'ticks-only', back='Edge')
+    open_tab(app, 'MAE / MFE')
     assert said(app.caption, '0 of 1 closed trades measured')
     assert widget(app.metric, 'Net P&L').value == '+$242.00'
     assert journal.best_metric(journal.trades()[0])['precision'] == 'estimated-bars'
@@ -145,7 +146,7 @@ def test_day_tags_and_playbook_can_be_clicked_without_retyping_and_daily_notes_d
     press(app, 'Apply Combination')
     assert common.rows_for(journal)[0]['playbooks'] == ['Calm pullback']
     assert said(app.success, 'Matches: Calm pullback')
-    show(app, 'Edge')
+    open_tab(show(app, 'Edge'), 'Compare')
     widget(app.selectbox, 'Compare by').set_value('Playbooks').run()
     table = next(d.value for d in app.dataframe if 'Playbook' in d.value.columns)
     assert table.iloc[0]['Playbook'] == 'Calm pullback'
