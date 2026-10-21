@@ -1005,11 +1005,11 @@ class Journal(Workspace):
                        (name, identity, position, checkpoint))
 
     def backup(self) -> bytes:
-        """Use SQLite backup so an active watcher cannot leave the exported DB inconsistent."""
-        copy = sqlite3.connect(':memory:')
-        try:
+        """A complete copy of the journal as one consistent snapshot, so an active watcher cannot leave it
+        inconsistent. SQLite writes it straight to a private temporary file beside the journal (VACUUM INTO),
+        which is read once and removed, rather than building a second database in memory."""
+        with tempfile.TemporaryDirectory(dir=self.path.parent, prefix='.backup-') as folder:
+            copy = Path(folder) / self.path.name
             with self.connect() as db:
-                db.backup(copy)
-            return copy.serialize()
-        finally:
-            copy.close()
+                db.execute('VACUUM INTO ?', (str(copy),))
+            return copy.read_bytes()

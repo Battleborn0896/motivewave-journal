@@ -47,7 +47,7 @@ def test_tick_only_is_default_for_every_unit_and_raw_estimates_remain_in_backup(
     assert common.display_excursion_rows(journal, rows)[0]['display_mfe'] is None
     assert common.best_display_metric(journal, trade) == {}
     from views import export
-    payload = json.loads(export.files(journal)[0][2])
+    payload = json.loads(export.files(journal)[0][2]())
     assert payload['trades'][0]['mfe'] is None
     assert payload['measurements'][trade.id][0]['precision'] == 'estimated-bars'
     backup = home / 'snapshot.sqlite3'

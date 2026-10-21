@@ -681,6 +681,7 @@ def test_export_files_carry_the_whole_journal_and_are_named_after_the_environmen
     from views import export
     journal = seed_preview(home)
     (_, json_name, text, _), (_, csv_name, table, _), (_, db_name, backup, _) = export.files(journal)
+    text, table, backup = text(), table(), backup()                # each built only when asked for
     assert (json_name, csv_name, db_name) == ('motivewave-journal.json', 'motivewave-journal-trades.csv',
                                               'motivewave-journal.sqlite3')
     exported = json.loads(text)
@@ -1007,7 +1008,7 @@ def test_missing_risk_and_unknown_tick_size_show_unavailable_with_one_time_setup
     assert journal.display_settings()['tick_sizes'] == {'CUSTOM': .5}
     show(app, 'Export')
     from views import export
-    payload = json.loads(next(content for label, _, content, _ in export.files(journal) if label == 'Download Journal JSON'))
+    payload = json.loads(next(build() for label, _, build, _ in export.files(journal) if label == 'Download Journal JSON'))
     assert payload['display_settings']['tick_sizes'] == {'CUSTOM': .5}
     assert payload['trades'][0]['mfe'] == 6  # original total currency, not relabelled price units
 

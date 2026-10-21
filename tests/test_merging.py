@@ -120,7 +120,7 @@ def test_merge_ui_compound_tagging_checklists_and_json_retain_originals(home):
     definition = journal.save_checklist('Plan', starter())
     assert view.start_checklist(definition, merged.id)
     from views.export import files
-    exported = json.loads(files(view)[0][2])
+    exported = json.loads(files(view)[0][2]())
     assert len(exported['trades']) == 1 and len(exported['original_trade_rows']) == 2
     assert len(exported['executions']) == len(journal.executions())
     press(app, 'Split Into Original Trades')
