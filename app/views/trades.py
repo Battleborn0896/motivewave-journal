@@ -181,7 +181,7 @@ def day_html(day, rows, zone, selected=False) -> str:
 # ---------------------------------------------------------------- the page
 
 def render(journal, rows, *, every=None) -> None:
-    """`rows` have passed the saved filter; `every` has not, so a new saved filter can name any trade's details."""
+    """`rows` have passed the saved filter; `every` has not, so the session tools see every trade."""
     every = rows if every is None else every
     st.markdown(CSS, unsafe_allow_html=True)
     report_key = common.key(journal, REPORT)
@@ -200,8 +200,7 @@ def render(journal, rows, *, every=None) -> None:
     seen = common.changes(capture)
     selected = common.key(journal, 'selected-trade')
     shown, options_slot = top_row(journal, every, open_rows, rows)
-    filter_state = {k: st.session_state[k] for k in st.session_state
-                    if k.startswith('filter-') and k.endswith('-' + getattr(journal, 'ui_scope', journal.dataset))}
+    filter_state = {k: st.session_state[k] for k in common.filter_keys(journal)}
     signature = json.dumps(filter_state, sort_keys=True, default=str)
     signature_key = common.key(journal, 'review-filter-signature')
     unchanged = st.session_state.get(signature_key) == signature
@@ -249,7 +248,7 @@ def top_row(journal, every, open_rows, rows=None):
             return [], None
         with st.popover('Filters', help='Narrow the list by market, date, account, tag, playbook or rating. The '
                                         'saved filter here applies to every page.'):
-            shown = preferences.filter_menu(journal, rows, every)
+            shown = preferences.filter_menu(journal, rows)
         options = st.popover('Options', help='Chart settings, and merging or splitting trades.')
     return shown, options
 

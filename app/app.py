@@ -146,7 +146,7 @@ for pending, target in [('dashboard-next', 'dashboard-page'), ('checklist-next',
         st.session_state[common.key(journal, target)] = st.session_state.pop(common.key(journal, pending))
 saved_filters = journal.workspace()['filters']
 global_filter = preferences.chosen_filter(journal, saved_filters)      # chosen in Filters on Trades or Stats
-every_row = rows                           # saving a new filter offers every account, contract and tag
+every_row = rows                           # the session tools on Trades and Setup's settings see every trade
 if global_filter:
     rows = filter_sample(rows, saved_filters[global_filter])
     st.caption(common.md(f'Saved filter: {global_filter}'),
@@ -164,6 +164,6 @@ if view == 'Settings':
             SETUP_PAGES[page].render(journal, rows)
     setup.render(journal, rows, tool=tool, display=lambda target, _: preferences.render(target, every_row))
 elif view == 'Analytics':
-    edge.render(journal, rows, every=every_row)
+    edge.render(journal, rows)
 else:
     trades.render(journal, rows, every=every_row)

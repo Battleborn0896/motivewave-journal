@@ -11,8 +11,8 @@ import pytest
 import common
 import runtime
 from mwjournal import Execution, Journal, PriceSample, paths
-from test_app import (CREDIT, heartbeat, helped, open_app, press, said, show, states, status_of, study_writes,
-                      wait_until, widget)
+from test_app import (CREDIT, heartbeat, helped, listed, open_app, press, said, show, states, status_of,
+                      study_writes, wait_until, widget)
 from test_chart import seed_preview
 from views import connection, setup
 
@@ -411,24 +411,119 @@ def test_the_saved_filter_is_chosen_in_the_filters_menu_and_applies_to_every_pag
     assert any(m.label == 'Net P&L' for m in app.metric)
 
 
-def test_saving_a_new_filter_offers_every_contract_even_while_a_saved_filter_is_on():
-    journal = Journal()
-    for symbol, hour in (('ESZ6', 14), ('NQZ6', 15)):
-        journal.ingest([(Execution('motivewave', 'paper', symbol, 'buy', 1, 100, f'2026-10-07T{hour}:00:00Z',
-                                   execution_id=symbol + 'a'), {}),
-                        (Execution('motivewave', 'paper', symbol, 'sell', 1, 101, f'2026-10-07T{hour}:05:00Z',
-                                   execution_id=symbol + 'b'), {})])
-    journal.save_filter('ES only', {'symbols': ['ESZ6']})
-    app = open_app()
-    widget(app.selectbox, 'Saved Filter on Every Page').set_value('ES only').run()
-    assert not app.exception and said(app.main.caption, 'Saved filter: ES only')
-    assert any(e.label == 'Save a Filter' for e in app.main.expander)
-    assert app.multiselect(key='saved-global-symbols-live').options == ['ESZ6', 'NQZ6']
-    widget(app.text_input, 'Filter name').set_value('NQ only')
-    app.multiselect(key='saved-global-symbols-live').set_value(['NQZ6'])
-    press(app, 'Save Filter')
-    assert journal.workspace()['filters']['NQ only']['symbols'] == ['NQZ6']
-    assert widget(app.selectbox, 'Saved Filter on Every Page').options == ['All trades', 'ES only', 'NQ only']
+def round_trips(journal, *trades):
+    """A closed trade for each (account, contract, day, hour): in on the hour, out five minutes later."""
+    for account, symbol, day, hour in trades:
+        id = f'{account}-{symbol}-{day}-{hour}'
+        journal.ingest([(Execution('motivewave', account, symbol, 'buy', 1, 100, f'{day}T{hour}:00:00Z',
+                                   execution_id=id + '-in'), {}),
+                        (Execution('motivewave', account, symbol, 'sell', 1, 101, f'{day}T{hour}:05:00Z',
+                                   execution_id=id + '-out'), {})])
+    return journal
+
+
+def save(app, name):
+    """Saving a filter, once the Filters menu is open: type a name, click Save Filter."""
+    widget(app.text_input, 'Filter Name').set_value(name)
+    return press(app, 'Save Filter')
+
+
+def test_saving_a_filter_is_a_name_and_one_click_and_shows_the_same_trades():
+    journal = round_trips(Journal(), ('paper', 'ESZ6', '2026-10-07', 14), ('paper', 'NQZ6', '2026-10-07', 15))
+    app = open_app(review=False)
+    widget(app.multiselect, 'Markets').set_value(['NQ']).run()
+    shown = listed(app)
+    assert len(shown) == 1
+    save(app, 'NQ only')
+    assert journal.workspace()['filters']['NQ only']['markets'] == ['NQ']
+    # The new filter is the one in use and the menu's own filters are empty again: the same trade, listed alone.
+    assert widget(app.selectbox, 'Saved Filter on Every Page').value == 'NQ only'
+    assert said(app.main.caption, 'Saved filter: NQ only')
+    assert widget(app.multiselect, 'Markets').value == [] and widget(app.text_input, 'Filter Name').value == ''
+    assert listed(app) == shown
+    widget(app.selectbox, 'Saved Filter on Every Page').set_value('').run()
+    assert len(listed(app)) == 2
+
+
+def test_saving_while_a_saved_filter_is_on_saves_the_two_together_as_one_filter():
+    journal = round_trips(Journal(), ('paper', 'ESZ6', '2026-10-07', 14), ('paper', 'NQZ6', '2026-10-07', 15),
+                          ('second', 'NQZ6', '2026-10-07', 16))
+    journal.save_filter('Paper', {'accounts': ['paper']})
+    app = open_app(review=False)
+    widget(app.selectbox, 'Saved Filter on Every Page').set_value('Paper').run()
+    widget(app.multiselect, 'Markets').set_value(['NQ']).run()
+    shown = listed(app)
+    assert len(shown) == 1
+    save(app, 'Paper NQ')
+    saved = journal.workspace()['filters']
+    assert (saved['Paper NQ']['accounts'], saved['Paper NQ']['markets']) == (['paper'], ['NQ'])
+    assert saved['Paper']['markets'] == []                        # the filter that was in use is left as it was
+    assert said(app.main.caption, 'Saved filter: Paper NQ') and listed(app) == shown
+    widget(app.multiselect, 'Directions').set_value(['long']).run()
+    save(app, 'Paper NQ')                                         # the same name replaces it
+    assert journal.workspace()['filters']['Paper NQ']['directions'] == ['long'] and listed(app) == shown
+
+
+def test_a_filter_no_single_rule_can_say_is_refused_in_one_line_and_nothing_changes(home):
+    journal = seed_preview(home)
+    trade = journal.trades()[0]
+    journal.set_trade_tag_group(trade, 'Setup', ['Breakout'])
+    journal.set_trade_tag_group(trade, 'Mindset', ['Patient'])
+    journal.save_filter('Breakout or pullback', {'tags_any': ['Breakout', 'Pullback']})
+    app = open_app(review=False)
+    widget(app.selectbox, 'Saved Filter on Every Page').set_value('Breakout or pullback').run()
+    widget(app.multiselect, 'Tags').set_value(['Patient']).run()
+    widget(app.radio, 'Tag Match').set_value('Any selected').run()
+    shown = listed(app)
+    assert len(shown) == 1
+    save(app, 'Mixed')
+    assert [e.value for e in app.error] == ["Two different 'any of these tags' choices cannot be saved as one filter."]
+    assert 'Mixed' not in journal.workspace()['filters'] and widget(app.text_input, 'Filter Name').value == 'Mixed'
+    assert widget(app.multiselect, 'Tags').value == ['Patient'] and listed(app) == shown
+
+
+def test_only_a_narrowed_side_of_the_entry_dates_is_saved_so_a_new_days_trades_still_show():
+    journal = round_trips(Journal(), *[('paper', 'ESZ6', f'2026-10-0{day}', 14) for day in (6, 7, 8)])
+    app = open_app(review=False)
+    assert widget(app.date_input, 'Entry Dates').value == (dt.date(2026, 10, 6), dt.date(2026, 10, 8))
+    save(app, 'Everything')
+    assert not {'start', 'end'} & set(journal.workspace()['filters']['Everything'])      # the full span: no limit
+    widget(app.date_input, 'Entry Dates').set_value((dt.date(2026, 10, 7), dt.date(2026, 10, 8))).run()
+    assert len(listed(app)) == 2
+    save(app, 'From Oct 7')
+    rule = journal.workspace()['filters']['From Oct 7']
+    assert rule['start'] == '2026-10-07' and 'end' not in rule
+    round_trips(journal, ('paper', 'ESZ6', '2026-10-09', 14))
+    app.run()
+    assert len(listed(app)) == 3 and said(app.main.caption, 'Saved filter: From Oct 7')
+    assert widget(app.date_input, 'Entry Dates').value == (dt.date(2026, 10, 7), dt.date(2026, 10, 9))
+
+
+def test_the_filters_menu_is_one_editor_with_short_title_case_labels(home):
+    seed_preview(home)
+    app = open_app(review=False)
+    widget(app.multiselect, 'Number Ranges').set_value(['net']).run()
+    assert len(listed(app)) == 1                                  # an empty box is no limit
+    widget(app.number_input, 'Max Net P&L').set_value(0.0).run()
+    assert not app.exception and not listed(app)                 # the fixture's trade made money
+    assert not any(e.label == 'Save a Filter' for e in app.expander)
+    kinds = ('multiselect', 'selectbox', 'date_input', 'radio', 'number_input', 'text_input')
+    labels = {w.label for kind in kinds for w in getattr(app, kind)
+              if w.key and w.key.startswith(('filter-', 'save-filter', 'global-saved-filter'))}
+    assert labels == {'Saved Filter on Every Page', 'Markets', 'Entry Dates', 'Accounts', 'Exact Contracts', 'Tags',
+                      'Tag Match', 'Exclude Tags', 'Playbook', 'Trade Status', 'Directions', 'Process Ratings',
+                      'Number Ranges', 'Min Net P&L', 'Max Net P&L', 'Filter Name'}
+    assert all(title_case(label) for label in labels) and any(b.label == 'Save Filter' for b in app.button)
+
+
+def test_dashboard_page_filters_still_save_on_their_own(home):
+    journal = seed_preview(home)
+    app = show(open_app(review=False), 'Dashboard')
+    app.multiselect(key='page-filter-default-directions-live').set_value(['short'])
+    press(app, 'Save Page Filters')
+    page = next(iter(journal.workspace()['dashboards'].values()))
+    assert page['filters']['directions'] == ['short'] and widget(app.metric, 'Trades').value == '0'
+    assert not journal.workspace()['filters']                    # a dashboard's filters are not a saved filter
 
 
 SMALL = {'a', 'an', 'and', 'as', 'at', 'by', 'for', 'from', 'in', 'into', 'of', 'on', 'or', 'the', 'to', 'with'}

@@ -442,9 +442,9 @@ def test_rollover_filters_group_markets_but_keep_micro_contracts_separate(home):
     widget(app.multiselect, 'Markets').set_value(['NQ']).run()
     assert not app.exception and len(listed(app)) == 2
     assert {r['symbol'] for r in common.rows_for(journal) if r['market'] == 'NQ'} == {'NQZ6', 'NQM7'}
-    widget(app.multiselect, 'Exact contracts').set_value(['NQM7']).run()
+    widget(app.multiselect, 'Exact Contracts').set_value(['NQM7']).run()
     assert len(listed(app)) == 1
-    widget(app.multiselect, 'Exact contracts').set_value([]).run()
+    widget(app.multiselect, 'Exact Contracts').set_value([]).run()
     widget(app.multiselect, 'Markets').set_value(['MNQ']).run()
     assert len(listed(app)) == 1
     show(app, 'Edge')

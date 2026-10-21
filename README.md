@@ -52,8 +52,9 @@ app version, study version and data folder.
   box, and small **Check-Ins**, **Drafts** (pre-trade drafts) and **Checklist** (a session checklist)
   menus. When the timer runs out, one click on a tag is the check-in.
 - **Dashboards** are the last tab of Stats, always there; the Stats filters narrow them too.
-- The **saved filter** and **Save a Filter** are in the Filters menus of Trades and Stats, and still apply
-  on every page.
+- The **saved filter** is in the Filters menus of Trades and Stats, and still applies on every page. To save
+  one, type a name under the filters and click **Save Filter** (or press Enter): it keeps exactly the trades
+  shown, and becomes the saved filter in use.
 - Connection's **Capture enabled** switch is now **Read Trades From MotiveWave**, under Advanced at the
   bottom of Data → Connection. It is on unless you switched it off.
 
@@ -229,7 +230,7 @@ and backups remain in Setup. See [reference notes and remaining gaps](docs/trade
 
 **Markets** automatically groups recognised futures expiries: NQZ6/NQM7 → NQ, ESZ6/ESH7 → ES,
 and MNQZ6/MNQM7 → MNQ. Micros remain separate from full-size contracts. Use **Filters → More Filters →
-Exact contracts** to narrow to one expiry, or **Stats → Compare → Market / Exact contract**
+Exact Contracts** to narrow to one expiry, or **Stats → Compare → Market / Exact contract**
 to compare them. Unknown symbols stay unchanged.
 
 This is an analytics rollup, not a continuous futures price series: fills, round trips, protective
