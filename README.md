@@ -7,6 +7,24 @@ Live/paper and replay have separate databases. No routine CSV export/import is r
 MotiveWave Journal is an independent open-source project. It is not affiliated with, endorsed by or
 supported by MotiveWave Software.
 
+## What's new in 0.4.6: open trades follow the market everywhere, and a filter saves with a name and Enter
+
+- **Long trades update every second.** An open trade's MAE and MFE are carried on from where they stopped
+  instead of measured again from entry each time. A trade with 100,000 prints now updates in about 15 ms
+  instead of over a second, with the same result; the tests check that on random tapes.
+- **More → MAE / MFE follows an open trade** every second too. The full recorded path is shown and exported
+  once the trade is closed.
+- **Named journals are live for every open trade**, also one you changed in the named journal alone (a fill
+  added by hand, its own multiplier): it is measured there as prices arrive.
+- **One set of filters.** The Filters menu on Trades and Stats has one editor, now with Trade Status, Number
+  Ranges, Playbook and Process Ratings. To save what is shown, type a name under the filters and press
+  Enter or click **Save Filter**: it becomes the saved filter in use, together with the one that was in use.
+- **The session bar is one row** on a 1024-pixel-wide window; **Minutes Between Check-Ins** is in the
+  **Check-Ins** menu.
+- A console error when switching a trade's tabs is gone.
+
+Journals, tags, reviews and settings are unchanged, and the study stays 0.3.4.
+
 ## What's new in 0.4.5: live open trades, prices matched by product, replay MAE/MFE by default, and a short Setup
 
 This release comes with study **0.3.4**. Setup asks for it in one line while MotiveWave runs an older
@@ -52,9 +70,8 @@ app version, study version and data folder.
   box, and small **Check-Ins**, **Drafts** (pre-trade drafts) and **Checklist** (a session checklist)
   menus. When the timer runs out, one click on a tag is the check-in.
 - **Dashboards** are the last tab of Stats, always there; the Stats filters narrow them too.
-- The **saved filter** is in the Filters menus of Trades and Stats, and still applies on every page. To save
-  one, type a name under the filters and click **Save Filter** (or press Enter): it keeps exactly the trades
-  shown, and becomes the saved filter in use.
+- The **saved filter** and **Save a Filter** are in the Filters menus of Trades and Stats, and still apply
+  on every page.
 - Connection's **Capture enabled** switch is now **Read Trades From MotiveWave**, under Advanced at the
   bottom of Data → Connection. It is on unless you switched it off.
 
@@ -262,8 +279,8 @@ snapshot, answers, counters and collected tags: a trade's run in its Checklist t
 Checklist menu above the trade list. Applying those tags is explicit; no checklist can
 place, modify or block an order. This editor is not pixel/shortcut/format compatible with CheckMate.
 
-**Session tools**, the bar at the top of Trades, provide an optional repeating check-in timer (play, pause,
-stop and a duration in minutes). Groups are chosen under **Check-Ins**; when the timer runs out, one click
+**Session tools**, the bar at the top of Trades, provide an optional repeating check-in timer (play, pause
+and stop; the minutes between check-ins and the groups are chosen under **Check-Ins**). When it runs out, one click
 on a tag is the check-in, logged to the session or an explicitly selected open position. Timer state is not
 persisted or restarted automatically, and there are no background notifications or sounds.
 Pre-trade drafts (the **Drafts** menu) are not fake executions. An armed draft needs a precise provider/account/exact
@@ -290,8 +307,8 @@ The study records fills, linked order updates and prices into newline-committed 
 the app watches it without routine exports. This follows the platform-connector/local-app
 pattern documented by [SCS Trading Journal](https://www.scstudies.com/trading-journal), not its
 proprietary implementation. Tick prices remain stored at their original resolution. The default
-P&L chart is compacted for display; **Show/export full recorded trade path** reconstructs every
-available observation with held quantity, average cost and realised P&L. Missing prices are not
+P&L chart is compacted for display; once a trade is closed, **Show/export full recorded trade path**
+reconstructs every available observation with held quantity, average cost and realised P&L. Missing prices are not
 invented, and OHLC bounds remain estimates.
 
 ### Study-only capture
