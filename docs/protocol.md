@@ -22,6 +22,12 @@ The data home is `MWJ_HOME` when set, otherwise `~/Library/Application Support/M
 - Every event carries `"version": 1`, a `type` and a `provider`. `mode` is `live` or `replay`; an event
   without `mode` counts as live. Live events are rejected by the replay journal and the other way round.
 
+## Rules for readers
+
+- An event whose `type` the reader does not know is skipped and counted, never an error, so a newer writer
+  never stops an older reader: the fills, stops and heartbeats around it still arrive. The app (0.4.8 and
+  later) shows the count on Data → Connection. Before 0.4.8 an unknown type rejected the file's batch.
+
 ## Events
 
 **execution**: one fill.
@@ -43,8 +49,11 @@ platform's own position id and its entry flag), `price_known`, `currency_assumed
 **protection**: a stop or target that is explicitly linked to a trade.
 `provider`, `account`, `symbol`, `order_id`, `ts`, `role` (`stop`/`target`), `state`
 (`working`/`cancelled`/`filled`/`rejected`), `price` (required while working), and a link:
-`entry_execution_id` or `trade_id`. Orders that are not linked are never guessed from price.
+`entry_execution_id` (any fill that opened or added to the trade) or `trade_id`. Orders that are not
+linked are never guessed from price.
 The app reads only stops, for R (`mwjournal/risk.py`); it keeps target orders but does not show or use them.
+Study 0.3.5 and later write stops only (`role` is always `stop`); the [stop link rule](#stops-protection)
+says which position a stop belongs to.
 
 **metric**: excursions reported by the platform instead of computed from prices.
 
@@ -124,6 +133,13 @@ observed ticks, not as simulated, whatever the replay itself played.
 
 ## Field notes for the MotiveWave study
 
+Study 0.3.5 changes no event's shape. It writes stop orders only (no take-profit orders), links them by
+the [stop link rule](#stops-protection), adds the stop part of the heartbeat's `warnings`, builds a fill's
+event only when the fill is new or changed, and saves `<bridge file>.replay-clock` when the replay run changes
+and otherwise at most every ten seconds (and when the study closes), instead of at every poll. It also
+writes a few lines starting `MotiveWave Journal probe:` to MotiveWave's log, once each per session, which
+the next version needs (docs/design/study-measures.md, section 7); they are never written to the bridge.
+
 What study 0.3.3 writes beyond the required fields. `native_position_id`, `native_entry`, `observed_at`
 and `capture_kind` have been written since 0.2. New in 0.3.1: `price_known`, `currency_assumed`, the two
 label clauses, the heartbeat's `warnings`, history ticks and a gap's `symbol`. Study 0.3.2 changes the
@@ -182,6 +198,7 @@ One sentence, parts joined by `; `, each part with its count. The parts, in this
 | `N fills with no fill price` | Fills MotiveWave holds without a price, including ones study 0.2 wrote under the plain label. |
 | `N replay fills waiting for a replay chart with the study` | Replay fills that cannot be given a replay run yet. |
 | `N fill records changed after capture (not duplicated)` | MotiveWave changed a fill the study had already written; the first version stands. |
+| `N working stop orders not linked to a position: <reason> (orders: …)` | Study 0.3.5. Working stops that no position has taken for five seconds (a stop often appears a poll before the fill that opens its position). Reasons: `no position on that account and contract`, `only positions on the stop's own side` (a buy stop beside a long: an entry or an add, not a stop), `no position at the stop's time`; with more than one, each has its count. The parenthesis counts every order of the snapshot at each step: `R read, S stop, F new, I without instrument, T without state, P with a position, C on the closing side, L linked`. MotiveWave's log has one line per such stop, once: its id, parent id, position id, account, symbol, side, state and last-modified time, beside the open positions' account and symbol, word for word. A cancelled, filled or rejected stop that no position takes is counted but never warned about. |
 
 Example: `3 fills skipped: instrument unavailable; 2 fills with an assumed currency`. Counts are of what
 MotiveWave holds right now, not of new events, and a singular reads `1 fill …`. `detail` on a `connected`
@@ -191,6 +208,29 @@ says changes.
 
 While any fill is skipped the study cannot be sure which positions are open, so it records every live
 print instead of only those around a position.
+
+<a id="stops-protection"></a>**Stops (`protection`)**
+
+Study 0.3.5. The orders read are MotiveWave's stop and trailing-stop orders that have an instrument and are
+working, filled, cancelled or rejected; take-profit (limit) orders are not read, and orders MotiveWave has not
+sent yet (new) are skipped. A stop is linked by one rule, with no parent or position id (prop accounts fill
+with neither):
+
+- it must be on the same mode, account and contract as a position, and of the same replay run, and on its
+  closing side: a sell stop for a long, a buy stop for a short;
+- the first time this run of the study links an order id: a working stop goes to the open position;
+  otherwise the stop goes to the position held at the order's last-modified time (from its first fill to
+  its last, or to now while open);
+- that choice is kept for the order id for as long as the study runs, so a stop that is moved, filled or
+  cancelled stays with its position. After a restart a cancelled stop can only go to the position held when
+  it was last changed, never to a later one.
+
+Positions, for this rule, are the fills the study has written, per account, contract and replay run, netted
+flat to flat in time order (a fill MotiveWave calls an entry of its position first at one instant), with a
+reversal starting the next position at the fill that crosses: how the app groups fills without a position
+id. `entry_execution_id` is the position's first fill and `provider` that fill's provider. The same order with
+another price or state is another line, as before. Earlier studies linked a stop only through its parent
+order or position id to an entry fill, so a prop account's stops were never written.
 
 **History ticks (`motivewave-ticks:history`)**
 

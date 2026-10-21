@@ -7,6 +7,36 @@ Live/paper and replay have separate databases. No routine CSV export/import is r
 MotiveWave Journal is an independent open-source project. It is not affiliated with, endorsed by or
 supported by MotiveWave Software.
 
+## What's new in 0.4.8: stops on prop accounts, and MAE that banked profit no longer hides
+
+This release comes with study **0.3.5**.
+
+- **Your stop is found on prop accounts too.** A prop account's fills carry no position id, so earlier
+  studies never tied its stop orders to the trade and those trades had no R. Study 0.3.5 ties a stop to
+  your position by account, contract and side (a sell stop protects a long, a buy stop a short), on SIM
+  and prop alike. A MotiveWave trade with no stop at all now says *MotiveWave did not report a stop for
+  this position* where R would show.
+- **Dollar MAE and MFE measure the contracts you still hold.** Profit you banked with a partial exit no
+  longer hides a move against the rest. Long 2 NQ at 100, sell 1 at 104, then price drops to 99: MAE is
+  1 point on the 1 contract still held, **$20**. 0.4.7 said $0, because it added the $80 already banked.
+  Points and ticks are unchanged; R follows the dollars. Every trade is measured again once, from the ticks
+  already stored, the first time the app starts, so trades with a partial exit may show new dollar and R
+  values.
+- **Only recorded ticks measure MAE and MFE.** The MAE / MFE Accuracy setting and the Measurement choice
+  under More → MAE / MFE are gone, and so is the separate bid / ask measurement. Candles still draw the
+  chart.
+- Take-profit orders are no longer recorded (R never used them), and an event a newer study writes that
+  this app does not know is skipped and counted on Data → Connection instead of stopping the import.
+
+**What to do:**
+
+1. Open **Setup** and click **Install MotiveWave Study** in its *Update the Study* step.
+2. Quit MotiveWave completely and open it again.
+3. Place one bracket order (entry with a stop and a target) on SIM and one on your prop account. Each trade
+   should show its stop on the chart and an R. If Data → Connection says *working stop order not linked*,
+   MotiveWave's log has one line per stop saying why: send it along with the lines that start
+   *MotiveWave Journal probe:*, which the study writes once per session for the next version.
+
 ## What's new in 0.4.7: R from your stop, nothing typed is lost, and a faster journal
 
 - **R comes from your stop.** You no longer type a dollar risk: R is your result divided by what your
@@ -200,20 +230,22 @@ new setup names can still be entered normally.
 preference is remembered independently for Live and Replay, and applies to the trade list, detail
 cards, excursion plots and runner views. Actual net P&L is unchanged.
 
-**MAE / MFE Accuracy** is a separate control, under Setup's **Advanced** heading. **Recorded ticks only** is the default: OHLC bounds,
+Only recorded ticks measure MAE and MFE (since 0.4.8 there is no accuracy to choose): OHLC bounds,
 proxies, platform-only reports, simulated replay and sources with reported capture gaps do not
-qualify. Missing qualifying ticks show unavailable, not zero. **Allow labelled estimates** is an
-explicit opt-in. One-minute candles can still be used as chart context without estimating MAE/MFE.
-This is a source policy, not proof that an observed feed delivered every tick. JSON retains all raw
-measurement alternatives; summary excursions/CSV follow the accuracy policy in account currency.
+qualify. Missing ticks show unavailable, not zero. One-minute candles are chart context only. This is
+a rule about sources, not proof that an observed feed delivered every tick. JSON keeps every stored
+measurement; summary excursions and the CSV are in account currency.
 
-- Currency: gross realised + unrealised whole-position P&L, before fees.
+MAE and MFE mean the same in every unit: how far price went against (MAE) or for (MFE) the contracts
+you held at that moment, from their average entry. Profit banked by a partial exit never counts.
+
+- Currency: that move times the contracts held and the point value, at each moment, before fees.
 - Points: directional price move from the **currently held average entry**, regardless of size.
   Scale-ins update that average; partial-exit realised profit is not added to price movement.
 - Ticks: those points divided by the contract's confirmed minimum price increment. Outright
   ES/MES/NQ/MNQ are detected automatically; other symbols need a one-time size in MAE/MFE or
   Setup → Data → Connection. Unknown sizes stay unavailable, not guessed. Average entries can produce fractional ticks.
-- R: whole-position currency excursion divided by the **risk to the trade's stop**. No stop means
+- R: the currency excursion divided by the **risk to the trade's stop**. No stop means
   unavailable, not zero.
 
 Price extrema use all available observations and confirmed fill prices, before chart compaction.
@@ -497,11 +529,13 @@ copy the live bridge path shown in Data → Connection into the study's File set
   partial. OHLC estimates, proxies, simulated replay and observed ticks stay visibly distinct.
   Missing data means unavailable MAE/MFE, not zero. Observed ticks do not prove feed completeness.
 
-Currency MAE/MFE are non-negative magnitudes of **gross realised plus open-position P&L** across
-the holding window, including scale-ins/outs. Fees are excluded from excursions; recorded fees
+Currency MAE/MFE are non-negative magnitudes of the **moves of the contracts held** across the
+holding window, each move times the size held then, including scale-ins/outs; profit banked by a
+partial exit is not added. Fees are excluded from excursions; recorded fees
 reduce net trade P&L. Fees are whatever MotiveWave reports for each fill: set commission rates in MotiveWave, and a
-fill MotiveWave reports with no commission counts as $0. A stop order needs an explicit
-order/position link; a stop you type under Notes replaces it for R, and the chart shows both.
+fill MotiveWave reports with no commission counts as $0. A stop order counts when it is on the same
+account and contract as the position and on its closing side (study 0.3.5); a stop you type under
+Notes replaces it for R, and the chart shows both.
 
 ## Verify
 
