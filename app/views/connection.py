@@ -152,8 +152,9 @@ def status_card(dataset: str) -> None:
         [(link.detail, False)]
         + [('The study says: ' + said, False)] * bool(said and not status.get('error'))
         # What the study skipped or could not link while capture works: fills it could not read, or a working
-        # stop no position takes (MotiveWave's log says why, one line per stop).
-        + [(f'The study also says: {warned}.', True)] * bool(warned and not status.get('error'))
+        # stop no position takes (MotiveWave's log says why, one line per stop). Not drawn as a warning: on a prop
+        # account 'fills with an assumed currency' is said at every heartbeat, and nothing is wrong.
+        + [(f'The study also says: {warned}.', False)] * bool(warned and not status.get('error'))
         + [(f'{damaged} damaged lines in the bridge file were skipped. MotiveWave closing in the middle of a '
             'write leaves one; the events around it are unaffected.', True)] * bool(damaged)
         + [(f'Events of a kind this version does not read, skipped: {unknown}. A newer study wrote them; fills, '

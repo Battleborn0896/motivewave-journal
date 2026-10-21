@@ -207,7 +207,10 @@ def follow(journal, trade):
 def measure_own(capture, journal):
     """Measure the trades this journal holds differently from the capture journal (a fill added by hand, its own
     multiplier), which the capture's watcher does not measure: an open one from entry, as the mirror may have
-    copied prices older than its measurement; a closed one once, when it has no measurement yet."""
+    copied prices older than its measurement; a closed one once, when it has no measurement yet, and once more
+    when this journal was measured under older rules (store.MEASUREMENT_RULES). It counts as measured under
+    these rules only once the capture journal is, so nothing the mirror copies is left from the older ones."""
+    again = journal.recalculation_due()
     with capture.connect() as db:
         captured = {tuple(row) for row in db.execute('SELECT DISTINCT trade_id, basis FROM metrics')}
     with journal.connect() as db:
@@ -215,9 +218,11 @@ def measure_own(capture, journal):
         priced = {product(label) for label in Journal._distinct(db, 'symbol')}
     for trade in journal.trades():
         own = trade.complete and (trade.id, trade.basis) not in captured and product(trade.symbol) in priced
-        if own and (trade.status == 'open' or (trade.id, trade.basis) not in measured):
+        if own and (again or trade.status == 'open' or (trade.id, trade.basis) not in measured):
             for source in journal.price_sources(trade.symbol, trade):
                 journal.measure(trade, source)
+    if again and not capture.recalculation_due():
+        journal.recalculation_done()
 
 
 def alias(capture, scope):

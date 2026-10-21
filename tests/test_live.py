@@ -393,6 +393,43 @@ def test_prices_a_whole_page_copies_are_measured_on_that_page_and_by_follow(tmp_
     assert named.best_metric(by_hand)['observations'] == 3 and named.best_metric(by_hand)['mae_points'] == 45
 
 
+def test_a_named_journals_own_trades_are_measured_again_once_under_new_rules(tmp_path):
+    """MEASUREMENT_RULES 2 reaches named journals too, which have no watcher of their own: a trade only the named
+    journal holds (here closed by a fill added by hand) is measured again from its stored prints, and the bid / ask
+    rows 0.4.7 kept go, once the capture journal has been measured again too."""
+    capture, bridge, worker, id = named_with_open_trade(tmp_path)
+    named = journals.open_named(capture, id)
+    named.ingest([(Execution('motivewave-native:ws:live', 'SIM', 'NQZ6', 'sell', 1, 20010, '2026-10-07T14:00:01.5Z',
+                             execution_id='by-hand', point_value=20), {})])
+    named = journals.open_named(capture, id)
+    own, = named.trades()
+    assert own.closed and not capture.metric_options(own)
+    fresh = named.best_metric(own)
+    assert (fresh['mae'], fresh['mae_points']) == (100, 5)    # 19995 against 20000, 1 contract of $20 a point
+    # As 0.4.7 left both journals: measured under rules 1, a stale number and bid / ask rows.
+    stale = {**fresh, 'mae': 999.0}
+    named.record_metric(own, stale)
+    named.record_metric(own, {**stale, 'basis': 'liquidation'})
+    with named.connect() as db:                           # a bid / ask row the mirror copied from the capture
+        db.execute('INSERT INTO metrics VALUES(?,?,?,?)', (own.id, 'capture-basis', json.dumps(['motivewave-ticks', 'liquidation']),
+                                                           json.dumps({**stale, 'basis': 'liquidation'})))
+    for journal in (named, capture):
+        with journal.connect() as db:
+            db.execute("UPDATE journal_meta SET value='1' WHERE key='measurement_rules'")
+    named = journals.open_named(capture, id)
+    assert [(m['basis'], m['mae']) for m in named.metric_options(own)] == [('last', 100)]
+    assert named.recalculation_due()                      # not done until the capture is: its mirror may still copy
+    SyncWorker(Journal(capture.path)).recalculate()
+    assert not capture.recalculation_due()
+    named = journals.open_named(capture, id)
+    assert not named.recalculation_due()
+    with named.connect() as db:
+        assert db.execute("SELECT count(*) FROM metrics WHERE json_extract(source, '$[1]')='liquidation'").fetchone()[0] == 0
+    named.record_metric(own, stale)                       # once only: a closed trade is not measured again
+    journals.open_named(capture, id)
+    assert named.best_metric(own)['mae'] == 999
+
+
 def test_a_named_journal_copying_does_not_hold_up_the_watcher(tmp_path):
     import sqlite3
     capture, bridge, worker, id = named_with_open_trade(tmp_path)
