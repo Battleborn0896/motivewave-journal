@@ -440,6 +440,9 @@ def test_saving_a_filter_is_a_name_and_one_click_and_shows_the_same_trades():
     assert widget(app.selectbox, 'Saved Filter on Every Page').value == 'NQ only'
     assert said(app.main.caption, 'Saved filter: NQ only')
     assert widget(app.multiselect, 'Markets').value == [] and widget(app.text_input, 'Filter Name').value == ''
+    # New widgets, not the old ones emptied: a browser goes on showing a widget's choices under the same key.
+    assert widget(app.multiselect, 'Markets').key == 'filter-markets-1-live'
+    assert widget(app.text_input, 'Filter Name').key == 'save-filter-name-1-live'
     assert listed(app) == shown
     widget(app.selectbox, 'Saved Filter on Every Page').set_value('').run()
     assert len(listed(app)) == 2

@@ -79,7 +79,7 @@ def save_row(journal, rule, old: dict) -> None:
     """Saves the trades shown as one filter: the saved filter in use (`old`) and this page's filters (`rule`).
     That filter is then the one in use and this page's filters are cleared, so the list stays the same.
     Enter in the name box saves too."""
-    name_key = common.key(journal, 'save-filter-name')
+    name_key = common.key(journal, 'save-filter-name' + common.filter_generation(journal))
     with st.form(common.key(journal, 'save-filter'), border=False):
         name_col, button_col = st.columns([3, 2], vertical_alignment='bottom')
         name = name_col.text_input('Filter Name', max_chars=80, key=name_key, placeholder='Filter Name',
@@ -95,4 +95,7 @@ def save_row(journal, rule, old: dict) -> None:
             else:
                 for widget in [*common.filter_keys(journal), name_key]:
                     st.session_state.pop(widget, None)
+                # New widgets for the menu: the browser would go on showing the old ones' choices.
+                saves = common.key(journal, 'filters-saved')
+                st.session_state[saves] = st.session_state.get(saves, 0) + 1
                 st.rerun()

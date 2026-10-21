@@ -447,15 +447,24 @@ def filter_keys(journal) -> list[str]:
     return [name for name in st.session_state if name.startswith('filter-') and name.endswith(scope)]
 
 
+def filter_generation(journal) -> str:
+    """'' until a filter is saved here, then '-1', '-2' and so on: part of the key of every Filters-menu widget,
+    so a save gives the menu new, empty widgets. A browser keeps showing what a widget held as long as its key
+    is the same, whatever the session says."""
+    saved = st.session_state.get(key(journal, 'filters-saved'), 0)
+    return f'-{saved}' if saved else ''
+
+
 def filter_rule(journal, rows: list[dict]) -> dict:
     """Draws the Filters menu's own filters and returns them as a rule for workspace.filter_sample: the same
     kind of rule a saved filter is, so saving one keeps exactly the trades these show."""
     if not rows:
         return {}
+    fresh = filter_generation(journal)
     library = journal.tag_library()
     c1, c2 = st.columns([1, 1])
     markets = c1.multiselect('Markets', sorted({r['market'] for r in rows}),
-                             key=key(journal, 'filter-markets'),
+                             key=key(journal, 'filter-markets' + fresh),
                              placeholder='All markets · expiries grouped',
                              help='NQZ6, NQM6 and other NQ expiries share NQ. Micros stay separate. '
                                   'Charts and MAE/MFE still use the exact traded contract.')
@@ -464,30 +473,30 @@ def filter_rule(journal, rows: list[dict]) -> dict:
     first, last = min(days), max(days)
     # The span is part of the key: a trade on a new day widens the filter instead of hiding behind
     # the range that was right yesterday.
-    period = c2.date_input('Entry Dates', (first, last), key=key(journal, f'filter-dates-{first}-{last}'),
+    period = c2.date_input('Entry Dates', (first, last), key=key(journal, f'filter-dates-{first}-{last}' + fresh),
                            help=f'Calendar days in your display time zone, {zone}.')
     with st.expander('More Filters'):
         c1, c2, c3 = st.columns(3)
-        accounts = c1.multiselect('Accounts', sorted({r['account'] for r in rows}), key=key(journal, 'filter-accounts'))
-        symbols = c2.multiselect('Exact Contracts', sorted({r['symbol'] for r in rows}), key=key(journal, 'filter-symbols'))
+        accounts = c1.multiselect('Accounts', sorted({r['account'] for r in rows}), key=key(journal, 'filter-accounts' + fresh))
+        symbols = c2.multiselect('Exact Contracts', sorted({r['symbol'] for r in rows}), key=key(journal, 'filter-symbols' + fresh))
         available_tags = {t for r in rows for t in r['tags']}
         # A removed tag can still be an active filter; do not silently broaden the list on return.
-        available_tags.update(st.session_state.get(key(journal, 'filter-tags'), []))
-        tags = c3.multiselect('Tags', sorted(available_tags), key=key(journal, 'filter-tags'),
+        available_tags.update(st.session_state.get(key(journal, 'filter-tags' + fresh), []))
+        tags = c3.multiselect('Tags', sorted(available_tags), key=key(journal, 'filter-tags' + fresh),
                               help='Trades with all of these tags, or any of them: choose under Tag Match.')
-        match = c3.radio('Tag Match', ['All selected', 'Any selected'], horizontal=True, key=key(journal, 'filter-tag-match'))
-        excluded = c3.multiselect('Exclude Tags', sorted(available_tags), key=key(journal, 'filter-exclude-tags'))
+        match = c3.radio('Tag Match', ['All selected', 'Any selected'], horizontal=True, key=key(journal, 'filter-tag-match' + fresh))
+        excluded = c3.multiselect('Exclude Tags', sorted(available_tags), key=key(journal, 'filter-exclude-tags' + fresh))
         books = [p for p in library['playbooks'].values() if not p.get('retired')]
         book = c1.selectbox('Playbook', [None, *[p['id'] for p in books]],
                             format_func=lambda id: next(p['name'] for p in books if p['id'] == id) if id else 'Any playbook',
-                            key=key(journal, 'filter-playbook'), help='Trades whose tags complete this playbook.')
+                            key=key(journal, 'filter-playbook' + fresh), help='Trades whose tags complete this playbook.')
         status = c1.multiselect('Trade Status', ['closed', 'open', 'incomplete'], format_func=str.title,
-                                key=key(journal, 'filter-status'))
+                                key=key(journal, 'filter-status' + fresh))
         directions = c2.multiselect('Directions', ['long', 'short'], format_func=str.title,
-                                    key=key(journal, 'filter-directions'))
-        ratings = c2.multiselect('Process Ratings', [1, 2, 3, 4, 5], key=key(journal, 'filter-ratings'))
+                                    key=key(journal, 'filter-directions' + fresh))
+        ratings = c2.multiselect('Process Ratings', [1, 2, 3, 4, 5], key=key(journal, 'filter-ratings' + fresh))
         numbers = st.multiselect('Number Ranges', list(NUMBER_LIMITS), format_func=NUMBER_LIMITS.get,
-                                 key=key(journal, 'filter-numbers'),
+                                 key=key(journal, 'filter-numbers' + fresh),
                                  help='Each one adds a minimum and a maximum; an empty box is no limit. MAE and MFE are '
                                       'in account currency under your accuracy setting, not the display unit. A trade '
                                       'without a value never passes a limit; R needs a saved planned risk.')
@@ -496,7 +505,7 @@ def filter_rule(journal, rows: list[dict]) -> dict:
             low, high = st.columns(2)
             for column, end, word in [(low, '_min', 'Min '), (high, '_max', 'Max ')]:
                 limits[name + end] = column.number_input(word + NUMBER_LIMITS[name], value=None, step=1.0,
-                                                         key=key(journal, f'filter-{name}{end}'), placeholder='No limit')
+                                                         key=key(journal, f'filter-{name}{end}' + fresh), placeholder='No limit')
 
     def ids(names):
         # A renamed tag keeps its identity; a name no tag has any more matches no trade.
