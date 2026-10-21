@@ -61,8 +61,8 @@ def filter_editor(journal, rows, prefix, old=None):
                                 default=[name for name in choices if old.get(name + '_min') is not None or old.get(name + '_max') is not None],
                                 format_func=choices.get, key=key('numeric-fields'),
                                 help='MAE / MFE limits use account currency under your accuracy setting, not the '
-                                     'display unit. A trade without a value never passes a limit. R needs a saved '
-                                     'planned risk; duration is in minutes.')
+                                     'display unit. A trade without a value never passes a limit. R needs a stop; '
+                                     'duration is in minutes.')
         for name in ranges:
             cols = st.columns(2)
             for col, suffix, word in [(cols[0], '_min', 'Minimum'), (cols[1], '_max', 'Maximum')]:
@@ -240,7 +240,7 @@ def draw(journal, rows, widget, page_id):
         widget = {**widget, 'metric': 'Tag score' if kind == 'Tag score' else 'Rating' if kind == 'Rating' else widget.get('metric', 'Net P&L')}
         data = values(journal, closed, widget)
         if not data:
-            st.info('No closed values to show. A rating needs a rating system chosen in the widget; R needs a planned risk.')
+            st.info('No closed values to show. A rating needs a rating system chosen in the widget; R needs a stop.')
             return
         frame = pd.DataFrame(data)
         money = widget['metric'] in ('Net P&L', 'Gross P&L')

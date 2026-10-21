@@ -120,7 +120,7 @@ def test_playbook_or_within_and_across_groups_apply_preserves_review_and_renames
     row = common.rows_for(journal)[0]
     assert set(row['tags']) == {'Pullback', 'Followed plan', 'Patient'}
     assert row['playbooks'] == ['Patient setup']
-    assert row['notes'] == 'Keep' and row['initial_risk'] == 100
+    assert row['notes'] == 'Keep' and journal.annotations()[trade.id]['initial_risk'] == 100
     journal.edit_tag(tag_id(journal, 'Patient'), name='Calm')
     journal.edit_tag_group('Mindset', name='Psychology')
     assert common.rows_for(journal)[0]['playbooks'] == ['Patient setup']

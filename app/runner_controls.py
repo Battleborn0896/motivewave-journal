@@ -6,16 +6,18 @@ import streamlit as st
 import common
 import theme
 from mwjournal.post_exit import best_post_exit, runner_groups
+from mwjournal.risk import plan_for
 from mwjournal import tagging, units
 
 HORIZONS = [5, 15, 30, 60, 120]
-STOPS = {'original': 'Original/planned stop', 'at-exit': 'Recorded stop at exit',
+STOPS = {'original': 'Your stop · the one R uses', 'at-exit': 'Recorded stop at exit',
          'breakeven': 'Entry average · gross breakeven hypothesis'}
 
 
-def trade_panel(journal, trade, annotation):
+def trade_panel(journal, trade):
     if not trade.closed:
         return
+    risk = plan_for(journal, trade).risk
     with st.expander('Could I Have Let This Trade Run?'):
         minutes = st.selectbox('Look after exit', HORIZONS, index=1, format_func=lambda n: f'{n} minutes',
                                key=common.key(journal, 'runner-horizon-' + trade.id),
@@ -23,14 +25,14 @@ def trade_panel(journal, trade, annotation):
                                     'A later peak is hindsight, not an exit you could have made or a tested stop rule.')
         stop_mode = st.selectbox('Runner stop rule', list(STOPS), format_func=STOPS.get,
                                   key=common.key(journal, 'runner-stop-' + trade.id))
-        result = best_post_exit(journal, trade, minutes, annotation.get('initial_risk'), stop_mode=stop_mode)
+        result = best_post_exit(journal, trade, minutes, risk, stop_mode=stop_mode)
         if result['extra_mfe'] is None:
             st.info(result['notes'][0])
             return
         c1, c2, c3 = st.columns(3)
         unit = common.excursion_unit(journal)
         def convert(value):
-            return units.runner_value(value, unit, risk=annotation.get('initial_risk'),
+            return units.runner_value(value, unit, risk=risk,
                                       tick=units.tick_size(trade.symbol, journal.display_settings()['tick_sizes']),
                                       multiplier=trade.point_value, quantity=result.get('exit_qty'))
         peak_label = common.excursion_amount(convert(result['extra_mfe']), unit, trade.currency)
@@ -43,7 +45,7 @@ def trade_panel(journal, trade, annotation):
                   else common.excursion_amount(horizon, unit))
         if result['extra_mfe_r'] is not None:
             st.caption(f"Extra peak {result['extra_mfe_r']:.2f}R · adverse {result['extra_mae_r']:.2f}R",
-                       help='Divided by the total risk you planned before entry.')
+                       help='Divided by the risk to your stop.')
         if result['minutes_to_peak'] is not None:
             st.caption(f"Peak about {result['minutes_to_peak']:.1f} minutes after exit",
                        help='With candles this finds the peak candle, not the exact moment.')
@@ -76,7 +78,7 @@ def edge_panel(journal, rows):
                                  key=common.key(journal, 'runner-edge-stop'))
         winners = st.checkbox('Only winning trades', value=True, key=common.key(journal, 'runner-winners'))
         one_r = st.checkbox('Only exits near 1R · 0.8–1.2R', key=common.key(journal, 'runner-one-r'),
-                            help='Requires planned initial risk. Uses actual net result divided by that risk.')
+                            help='Needs the trade\'s stop. Uses the actual net result divided by the risk to that stop.')
         labels = {'tags': 'Individual tags', 'tag_categories': 'Tag categories', 'setup': 'Setup / playbook'}
         group = st.selectbox('Compare runners by', list(labels), format_func=labels.get,
                              key=common.key(journal, 'runner-group'))
@@ -113,7 +115,7 @@ def edge_panel(journal, rows):
         else:
             st.info('No comparable completed windows yet. Keep price capture running after exits. '
                     'The study now defaults to continuous chart ticks; older position-gated settings need enough After Exit time. '
-                    'R also needs saved initial risk; ticks need a known tick size.')
+                    'R also needs a stop; ticks need a known tick size.')
         st.caption('Hindsight to test, not profit you missed',
                    help='Only prices before the stop is touched or the cutoff count. A stop touch is not a guaranteed '
                         'fill, and trailing stops are not modelled. Do not add these peaks to your expectancy: pick '

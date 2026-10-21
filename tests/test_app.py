@@ -366,15 +366,15 @@ def test_measured_trade_risk_and_bidask_variants_render():
                     (Execution('test', 'paper', 'ESZ6', 'sell', 1, 5002, '2026-10-07T14:03:00Z', execution_id='b'), {})])
     trade = journal.trades()[0]
     samples = [PriceSample('ESZ6', '2026-10-07T14:00:30Z', 'test-prices', 4999, 4999, bid=4998.75, ask=4999.25)]
-    journal.annotate(trade.id, {'setup': 'Failed breakout', 'initial_risk': 50, 'adherence': 'Yes'})
+    journal.annotate(trade.id, {'setup': 'Failed breakout', 'planned_stop': 4999, 'adherence': 'Yes'})
     for metric in measurements(trade, samples, 'test-prices'):
         journal.record_metric(trade, metric)
     app = open_app()
-    assert widget(app.metric, 'MAE / planned risk').value == '1.00R'
+    assert widget(app.metric, 'MAE / risk').value == '1.00R'
     liquidation = next(i for i, metric in enumerate(journal.metric_options(trade)) if metric['basis'] == 'liquidation')
     widget(app.selectbox, 'Measurement').set_value(liquidation).run()
     assert not app.exception
-    assert widget(app.metric, 'MAE / planned risk').value == '1.25R'
+    assert widget(app.metric, 'MAE / risk').value == '1.25R'
     show(app, 'Edge')
     widget(app.selectbox, 'Compare by').set_value('Followed my plan').run()
     assert not app.exception
@@ -386,13 +386,14 @@ def test_chart_renders_and_planned_protection_persists_with_tags(home):
     assert any(x.label == 'Chart price source' for x in app.selectbox)
     assert widget(app.selectbox, 'Chart price source').value == 'motivewave-bars:1m'
     assert said(app.main.caption, CREDIT)           # under the chart too, for a closed sidebar
-    widget(app.text_input, 'Planned stop-loss').set_value('4997.75')
-    widget(app.text_input, 'Planned take-profit').set_value('5006')
+    assert not any(w.label.startswith(('Planned take-profit', 'Initial planned risk'))
+                   for w in [*app.text_input, *app.number_input])
+    widget(app.text_input, 'Stop').set_value('4997.75')
     press(app, 'Save Plan')
     annotation = journal.annotations()[journal.trades()[0].id]
-    assert annotation['planned_stop'] == 4997.75 and annotation['planned_target'] == 5006
+    assert annotation['planned_stop'] == 4997.75 and annotation['planned_target'] == 5005   # kept, not shown
     assert annotation['tags'] == ['PAPER FIXTURE', 'breakout']
-    widget(app.text_input, 'Planned stop-loss').set_value('not-a-price')
+    widget(app.text_input, 'Stop').set_value('not-a-price')
     press(app, 'Save Plan')
     assert said(app.error, 'must be a number')
     assert journal.annotations()[journal.trades()[0].id]['planned_stop'] == 4997.75
@@ -925,7 +926,7 @@ def test_excursion_unit_picker_updates_detail_list_plot_and_persists_without_rew
     reviews = journal.annotations()
     app = open_app('General')
     assert widget(app.selectbox, 'MAE / MFE Units').options == [
-        'Dollars / account currency', 'Points', 'Ticks', 'R · planned risk']
+        'Dollars / account currency', 'Points', 'Ticks', 'R · risk to your stop']
     display_setting(app, 'MAE / MFE Units', 'points')
     assert widget(app.metric, 'MFE').value == '3.00 pts'
     path = next(json.loads(x.proto.spec) for x in app.get('plotly_chart') if 'Price move' in x.proto.spec)
@@ -963,7 +964,7 @@ def test_missing_risk_and_unknown_tick_size_show_unavailable_with_one_time_setup
         journal.record_metric(trade, metric)
     app = open_app()
     display_setting(app, 'MAE / MFE Units', 'r')
-    assert widget(app.metric, 'MFE').value == '—' and said(app.info, 'R needs your initial total risk')
+    assert widget(app.metric, 'MFE').value == '—' and said(app.info, 'R needs a stop')
     assert any(b.label == 'Recalculate From Stored Prices' for b in app.button)
     display_setting(app, 'MAE / MFE Units', 'ticks')
     assert widget(app.metric, 'MFE').value == '—'

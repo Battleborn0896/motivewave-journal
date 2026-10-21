@@ -4,7 +4,7 @@ import math
 from .model import product
 
 UNITS = ('currency', 'points', 'ticks', 'r')
-LABELS = {'currency': 'Dollars / account currency', 'points': 'Points', 'ticks': 'Ticks', 'r': 'R · planned risk'}
+LABELS = {'currency': 'Dollars / account currency', 'points': 'Points', 'ticks': 'Ticks', 'r': 'R · risk to your stop'}
 # Outright index futures only, not spread or option ticks. CME contract specifications.
 TICK_SIZES = {'ES': .25, 'MES': .25, 'NQ': .25, 'MNQ': .25}
 POINT_DEFINITION = 'held-average-entry'
@@ -69,5 +69,5 @@ def description(unit):
                   'Scale-ins update that entry; realised profits from partial exits are not added.',
         'ticks': 'Price excursion in points ÷ this contract’s minimum tick size. Fractional ticks are possible '
                  'with average entries or estimated bars.',
-        'r': 'Gross whole-trade excursion ÷ your saved initial total risk. No saved risk means unavailable, not zero.',
+        'r': 'Gross whole-trade excursion ÷ the risk to your stop. No stop means unavailable, not zero.',
     }[unit]

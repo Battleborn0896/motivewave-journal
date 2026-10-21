@@ -32,7 +32,7 @@ LABELS = {'closed': 'Exit', 'net': 'Net P&L', 'mae': 'MAE', 'mfe': 'MFE', 'max_q
           'precision': 'Measured from', 'symbol': 'Instrument', 'setup': 'Setup', 'giveback': 'Giveback'}
 COMPARE_HELP = ('Start with Trades, the sample size, then Average Trade, the net result per trade after recorded '
                 'fees. A trade with several tags counts in each, so tag rows overlap. Average R uses only trades '
-                'with a saved planned risk. These describe your recorded trades, not proof of an edge: small '
+                'with a stop. These describe your recorded trades, not proof of an edge: small '
                 'samples mislead.')
 
 
@@ -220,8 +220,8 @@ def show_costs(closed, stat):
                             'Missing fees are not proven zero, and platform fees can be estimates.')
         cols[2].metric('Fees Per Trade', money(costs['fee_per_trade'], currency, signed=False),
                        help='Recorded fees divided by the number of closed trades.')
-        r_help = (f"Across {stat['risk_recorded']} trades with a saved planned risk." if stat['expectancy_r'] is not None
-                  else 'Needs a planned risk saved on the trade, under Notes.')
+        r_help = (f"Across {stat['risk_recorded']} trades with a stop." if stat['expectancy_r'] is not None
+                  else 'Needs a stop: the stop order you place with a trade counts, or type it under Notes.')
         if costs['fee_per_r'] is not None:
             r_help += f" Recorded fees average {costs['fee_per_r']:.3f}R across {costs['risk_recorded']} trades."
         cols[3].metric('Average R', f"{stat['expectancy_r']:+.2f}R" if stat['expectancy_r'] is not None else '—',
@@ -251,7 +251,7 @@ def excursion(journal, closed):
                help='Only trades with a price path that meets your MAE / MFE Units and Accuracy (Setup and Setup → '
                     'Advanced). Unavailable values are left out, never counted as zero.')
     if measured.empty:
-        st.info('No MAE / MFE values in these units yet. They need recorded prices; R also needs a planned risk, '
+        st.info('No MAE / MFE values in these units yet. They need recorded prices; R also needs a stop, '
                 'and ticks need a known tick size.')
         return
     measured['giveback'] = (measured.mfe - measured.gross).clip(lower=0)

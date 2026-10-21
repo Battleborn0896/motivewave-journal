@@ -26,11 +26,11 @@ import runner_controls
 import tag_controls
 from views import checklists, daily, preferences, session
 from common import PRECISION, money
-from mwjournal.chart import ENTRY, EXIT, STOP, TARGET, chart_window, trade_chart
+from mwjournal.chart import ENTRY, EXIT, STOP, chart_window, trade_chart
 from mwjournal.model import WHY_INCOMPLETE, finite, instant
 from mwjournal.metrics import excursions
 from mwjournal.scope import LIVE_TICKS, PROVENANCE, provenance
-from mwjournal import humanize, units
+from mwjournal import humanize, risk, units
 from mwjournal import journals, merging
 
 ADHERENCE = ['Unreviewed', 'Yes', 'No']
@@ -327,7 +327,7 @@ def options_menu(journal, rows, trade) -> None:
                          '' if names.count(PROVENANCE[provenance(s)]) == 1 and provenance(s) != 'imported' else f' · {s}'))
     st.selectbox('Context each side', CONTEXT, format_func=lambda n: f'{n} minutes',
                  key=common.key(journal, 'chart-context'), help='Minutes of chart before entry and after exit.')
-    st.checkbox('Show SL / TP levels', value=True, key=common.key(journal, 'chart-levels'))
+    st.checkbox('Show Stop', value=True, key=common.key(journal, 'chart-levels'))
     st.markdown('**Merge Trades**')
     originals = [r for r in rows if r['status'] == 'closed' and r.get('complete', True) and not r.get('merge_leg_ids')]
     by_id = {r['id']: r for r in originals}
@@ -402,7 +402,7 @@ def detail(journal, trade, ids, zone) -> None:
                 st.info('Runner analysis stays per original trade: a merged trade can have different stops. '
                         'Split it to analyse each original runner.')
             elif trade.closed:
-                runner_controls.trade_panel(journal, trade, annotation)
+                runner_controls.trade_panel(journal, trade)
             else:
                 st.info('Post-exit runner analysis becomes available after the trade closes.')
 
@@ -435,7 +435,7 @@ def numbers(journal, trade, annotation: dict, zone) -> None:
     outcome = 'positive' if result is not None and result > 0 else 'negative' if result is not None and result < 0 else 'neutral'
     with cols[0].container(key='trade-result-' + outcome):
         st.metric(label, money(result, trade.currency) if result is not None else 'Unknown', help=why)
-    mae, mfe = common.excursion_values(journal, trade, metric, annotation.get('initial_risk'))
+    mae, mfe = common.excursion_values(journal, trade, metric, risk.plan_for(journal, trade).risk)
     explain = units.description(unit) + (f' Measured from: {measured}.' if measured else '')
     cols[1].metric('MAE', common.excursion_amount(mae, unit, trade.currency), help=explain)
     cols[2].metric('MFE', common.excursion_amount(mfe, unit, trade.currency), help=explain)
@@ -502,36 +502,52 @@ def review_form(journal, trade, a: dict) -> None:
                  key=notes_key, height=160, on_change=tag_controls.save_field,
                  args=(journal, trade.id, 'notes', notes_key), help='Saves when you leave the box.')
     theme.section('Trade Plan')
+    plan = risk.plan_for(journal, trade)
     with st.form(common.key(journal, 'review-' + trade.id)):
         c1, c2 = st.columns(2)
-        risk = c1.number_input('Initial planned risk · total currency', min_value=0.,
-                               value=float(a.get('initial_risk') or 0.),
-                               help='The risk you planned before entry. Zero leaves R unavailable.')
+        shown = stop_text(plan.stop)
+        if plan.source != 'merged':
+            typed = c1.text_input('Stop', shown, placeholder='Your stop price',
+                                  help=f'The price R is measured from. Blank uses your stop order as it stood '
+                                       f'{risk.STOP_SETTLES} seconds after entry; moving it later is managing the '
+                                       'trade and leaves R alone.')
+        c1.caption(common.md(stop_caption(plan, trade.currency)))
         adherence = c2.selectbox('Followed my plan', ADHERENCE,
                                  index=ADHERENCE.index(a.get('adherence', 'Unreviewed')))
-        c1, c2 = st.columns(2)
-        planned_stop = c1.text_input('Planned stop-loss price · optional',
-                                     '' if a.get('planned_stop') is None else str(a['planned_stop']),
-                                     help='Your saved plan, not a confirmed order. Blank removes the line.')
-        planned_target = c2.text_input('Planned take-profit price · optional',
-                                       '' if a.get('planned_target') is None else str(a['planned_target']),
-                                       help='Your saved plan. Orders the study captured are drawn separately.')
         if not st.form_submit_button('Save Plan', type='primary'):
             return
-        try:
-            stop = finite(planned_stop, 'Planned stop') if planned_stop.strip() else None
-            target = finite(planned_target, 'Planned target') if planned_target.strip() else None
-        except ValueError as exc:
-            st.error(str(exc))
-            return
-        journal.update_annotation(trade.id, {'initial_risk': risk or None, 'planned_stop': stop,
-                                             'planned_target': target, 'adherence': adherence})
+        changes = {'adherence': adherence}
+        # Only a stop that was edited is saved: the one shown may be the stop order, which stays the order's.
+        if plan.source != 'merged' and typed.strip() != shown:
+            try:
+                changes['planned_stop'] = finite(typed, 'Stop') if typed.strip() else None
+            except ValueError as exc:
+                st.error(str(exc))
+                return
+        journal.update_annotation(trade.id, changes)
         st.rerun()
+
+
+def stop_text(price) -> str:
+    """A stop price as typed, with no thousands separators, so the box reads back exactly what it shows."""
+    return '' if price is None else f'{price:.6f}'.rstrip('0').rstrip('.')
+
+
+def stop_caption(plan, currency) -> str:
+    """Where the trade's stop came from and the risk it gives: 'From your stop order, 10 seconds after entry · risk $250'."""
+    where = {'saved': 'Your stop', 'order': f'From your stop order, {risk.STOP_SETTLES} seconds after entry',
+             'merged': 'The trades merged here, together'}.get(plan.source)
+    result = plan.why if plan.risk is None else 'risk ' + money(plan.risk, currency, signed=False)
+    text = ' · '.join(part for part in (where, result) if part)
+    if plan.source == 'saved' and plan.order is not None and plan.order != plan.stop:
+        text += f'. Clear it to use your stop order, {humanize.price(plan.order)}.'
+    return text
 
 
 def excursions_panel(journal, trade, a: dict, zone) -> None:
     theme.section('MAE / MFE')
     unit = common.excursion_unit(journal)
+    at_risk = risk.plan_for(journal, trade).risk
     tick = units.tick_size(trade.symbol, journal.display_settings()['tick_sizes'])
     options = [common.display_metric(journal, trade, m) for m in common.metric_options(journal, trade)]
     if not options and common.replay_ticks_pending(journal, trade):
@@ -553,15 +569,17 @@ def excursions_panel(journal, trade, a: dict, zone) -> None:
                                  format_func=lambda i: f"{PRECISION.get(options[i].get('point_precision') if unit in ('points', 'ticks') else options[i]['precision'], 'Unavailable')} · {options[i]['source']} · "
                                                       f"{options[i].get('basis', 'last')}")]
         m = common.display_metric(journal, trade, m)
-        common.excursion_help(journal, trade, m, a.get('initial_risk'))
-        mae, mfe = common.excursion_values(journal, trade, m, a.get('initial_risk'))
+        common.excursion_help(journal, trade, m, at_risk)
+        mae, mfe = common.excursion_values(journal, trade, m, at_risk)
         c1, c2 = st.columns(2)
         c1.metric('Maximum adverse excursion', common.excursion_amount(mae, unit, trade.currency), help=units.description(unit))
         c2.metric('Maximum favorable excursion', common.excursion_amount(mfe, unit, trade.currency), help=units.description(unit))
-        if a.get('initial_risk') and unit != 'r':
+        if at_risk and unit != 'r':
             c1, c2 = st.columns(2)
-            c1.metric('MAE / planned risk', f"{m['mae'] / a['initial_risk']:.2f}R" if m.get('mae') is not None else '—')
-            c2.metric('MFE / planned risk', f"{m['mfe'] / a['initial_risk']:.2f}R" if m.get('mfe') is not None else '—')
+            c1.metric('MAE / risk', f"{m['mae'] / at_risk:.2f}R" if m.get('mae') is not None else '—',
+                      help='MAE divided by the risk to your stop.')
+            c2.metric('MFE / risk', f"{m['mfe'] / at_risk:.2f}R" if m.get('mfe') is not None else '—',
+                      help='MFE divided by the risk to your stop.')
         for note in dict.fromkeys([*m.get('notes', []), *(m.get('point_notes', []) if unit in ('points', 'ticks') else [])]):
             st.caption(note)
         if m.get('path'):
@@ -593,8 +611,8 @@ def excursions_panel(journal, trade, a: dict, zone) -> None:
                 if compact:
                     path = pd.DataFrame(compact['path'])
             fig = go.Figure()
-            high = [units.path_value(p, 'high', unit, risk=a.get('initial_risk'), tick=tick) for p in path.to_dict('records')]
-            low = [units.path_value(p, 'low', unit, risk=a.get('initial_risk'), tick=tick) for p in path.to_dict('records')]
+            high = [units.path_value(p, 'high', unit, risk=at_risk, tick=tick) for p in path.to_dict('records')]
+            low = [units.path_value(p, 'low', unit, risk=at_risk, tick=tick) for p in path.to_dict('records')]
             if all(v is None for v in high + low):
                 st.info('No path values are available in these units yet.')
             else:
@@ -671,8 +689,9 @@ def chart_panel(journal, trade, annotation: dict, zone) -> None:
         # The minute in progress has no platform candle yet: the study's prints draw it.
         after = max((instant(s.ts) for s in samples), default=start)
         prints = journal.prices(trade.symbol, LIVE_TICKS, start=after.isoformat(), end=end.isoformat())
-    events = journal.protection_events(trade)
-    payload = trade_chart(trade, samples, source, annotation, events, now=clock, prints=prints, prints_source=LIVE_TICKS)
+    events = [e for e in journal.protection_events(trade) if e.role == 'stop']      # take profit plays no part
+    payload = trade_chart(trade, samples, source, risk.plan_for(journal, trade).stop, events, now=clock,
+                          prints=prints, prints_source=LIVE_TICKS)
     candles = payload['series']['data']
     if candles:
         overlays = payload['overlays'] if levels else {**payload['overlays'], 'levels': []}
@@ -683,10 +702,11 @@ def chart_panel(journal, trade, annotation: dict, zone) -> None:
                      visible_range={'from': candles[0]['time'], 'to': max(candles[-1]['time'], candles[0]['time'] + 60)})
         # Drawn dots rather than '●', which IBM Plex Sans does not have.
         legend = ' '.join(f"<span class='mwj-dot' style='background:{colour}'></span>{name}" for name, colour in
-                          (('Entry', ENTRY), ('Exit', EXIT), ('Stop', STOP), ('Target', TARGET)))
+                          (('Entry', ENTRY), ('Exit', EXIT), ('Stop', STOP)))
         st.caption(f"<span class='mwj-legend'>{legend}</span> · {common.CREDIT}", unsafe_allow_html=True,
-                   help='Hover an arrow for its exact fill. Scroll to zoom, drag to pan, double-click to reset. '
-                        'Review only: nothing here can place an order.')
+                   help='The solid stop is the one R uses; dashed, where your stop order was moved after that. Hover '
+                        'an arrow for its exact fill. Scroll to zoom, drag to pan, double-click to reset. Review '
+                        'only: nothing here can place an order.')
     else:
         st.info('This source has no usable 1-minute candles in the trade window. Full OHLC or observed ticks are '
                 'needed; high/low-only and 5-minute history cannot be turned into real 1-minute candles.')
@@ -698,10 +718,11 @@ def chart_panel(journal, trade, annotation: dict, zone) -> None:
         for note in payload['notes']:
             st.caption(note)
         if events:
-            st.dataframe(pd.DataFrame([{**e.__dict__, 'ts': common.moment(e.ts, zone)} for e in events]),
+            st.dataframe(pd.DataFrame([{'Time': common.moment(e.ts, zone), 'Stop order': e.order_id,
+                                        'State': e.state.title(), 'Price': e.price} for e in events]),
                          hide_index=True, width='stretch')
         else:
-            st.caption('No linked SL/TP orders were captured. Add planned prices under Notes; orders are never guessed.')
+            st.caption('No linked stop order was captured. Type your stop under Notes; orders are never guessed.')
         st.dataframe(pd.DataFrame([{'Time': common.moment(f['ts'], zone), 'Role': f['role'].title(),
                                     'Side': f['side'].title(), 'Qty': f['qty'], 'Price': f['price'],
                                     'Execution': f['execution_id']} for f in trade.fills]),

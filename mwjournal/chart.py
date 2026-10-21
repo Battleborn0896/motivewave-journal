@@ -1,4 +1,4 @@
-"""Pure, UTC-based trade chart payloads. No made-up candles or guessed protective orders."""
+"""Pure, UTC-based trade chart payloads. No made-up candles or guessed stop orders."""
 
 from __future__ import annotations
 
@@ -6,10 +6,10 @@ import datetime as dt
 from collections import defaultdict
 
 from .model import PriceSample, Trade, instant, trade_prices
+from .risk import settles_at
 from .scope import allows_source, is_history, is_simulated, provenance
 
 STOP = '#F05B70'
-TARGET = '#36C9A0'
 ENTRY = '#58A6FF'
 EXIT = '#E8B45A'
 
@@ -74,41 +74,42 @@ def minute_candles(samples: list[PriceSample], symbol: str, source: str) -> tupl
     return data, notes
 
 
-def protection_segments(trade: Trade, events, annotation: dict, *, now=None) -> list[dict]:
+def protection_segments(trade: Trade, events, stop=None, *, now=None) -> list[dict]:
+    """The stop the trade's R uses (risk.py), solid across the trade, and its linked stop orders from the
+    moment that stop settled on, dashed: the moves that managed the trade. Take-profit orders are not drawn."""
     start = instant(trade.opened).timestamp()
     end = (instant(trade.closed) if trade.closed else (now or dt.datetime.now(dt.timezone.utc))).timestamp()
+    settled = settles_at(trade).timestamp() if trade.fills else start
     result = []
-    for field, role, colour in [('planned_stop', 'SL', STOP), ('planned_target', 'TP', TARGET)]:
-        if annotation.get(field) is not None:
-            result.append({'from': start, 'to': end, 'price': annotation[field],
-                           'label': role + ' · saved plan', 'color': colour, 'style': 'dotted'})
+    if stop is not None:
+        result.append({'from': start, 'to': end, 'price': stop, 'label': 'Stop · R', 'color': STOP, 'style': 'solid'})
+
+    def moved(left, right, price):
+        left = max(left, settled)
+        if right > left and price != stop:       # the stop R uses is drawn already
+            result.append({'from': left, 'to': right, 'price': price, 'label': 'Stop order', 'color': STOP,
+                           'style': 'dashed'})
+
     working = {}
-    for event in sorted(events, key=lambda e: instant(e.ts)):
+    for event in sorted((e for e in events if e.role == 'stop'), key=lambda e: instant(e.ts)):
         stamp = instant(event.ts).timestamp()
         if stamp > end:
             continue
-        key = (event.order_id, event.role)
-        old = working.pop(key, None)
+        old = working.pop(event.order_id, None)
         if old:
-            left, price = old
-            if stamp > max(left, start):
-                result.append({'from': max(left, start), 'to': stamp, 'price': price,
-                               'label': ('SL' if event.role == 'stop' else 'TP') + ' · captured ' + event.order_id,
-                               'color': STOP if event.role == 'stop' else TARGET, 'style': 'dashed'})
+            moved(old[0], stamp, old[1])
         if event.state == 'working':
-            working[key] = (stamp, event.price)
-    for (order_id, role), (left, price) in working.items():
-        if end > max(left, start):
-            result.append({'from': max(left, start), 'to': end, 'price': price,
-                           'label': ('SL' if role == 'stop' else 'TP') + ' · captured ' + order_id,
-                           'color': STOP if role == 'stop' else TARGET, 'style': 'dashed'})
+            working[event.order_id] = (stamp, event.price)
+    for left, price in working.values():
+        moved(left, end, price)
     return result
 
 
-def trade_chart(trade: Trade, samples: list[PriceSample], source: str, annotation=None, events=(), *, now=None,
+def trade_chart(trade: Trade, samples: list[PriceSample], source: str, stop=None, events=(), *, now=None,
                 prints: list[PriceSample] = (), prints_source: str = '') -> dict:
-    """`prints`, of `prints_source`, draw the minutes after the last candle of `source`: the one in
-    progress, before the platform has its candle. One chart, as on any trading platform."""
+    """`stop` is the price the trade's R uses (risk.plan), `events` its linked protective orders. `prints`,
+    of `prints_source`, draw the minutes after the last candle of `source`: the one in progress, before
+    the platform has its candle. One chart, as on any trading platform."""
     if not allows_source(trade, source):
         samples = []
     data, notes = minute_candles(samples, trade.symbol, source)
@@ -134,7 +135,7 @@ def trade_chart(trade: Trade, samples: list[PriceSample], source: str, annotatio
                       'role': fill['role'], 'ts': fill['ts'], 'execution_id': fill['execution_id'],
                       'label': f"{'Entry' if fill['role'] == 'entry' else 'Exit'} · {fill['qty']:g} @ {fill['price']:g}",
                       'color': ENTRY if fill['role'] == 'entry' else EXIT, 'sequence': i})
-    segments = protection_segments(trade, events, annotation or {}, now=now)
+    segments = protection_segments(trade, events, stop, now=now)
     # Whitespace keeps clock spacing and exact fill placement through missing minutes.
     chart_data = data
     if data:

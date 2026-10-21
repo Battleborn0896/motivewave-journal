@@ -155,7 +155,7 @@ def groups(journal) -> list[str]:
 # ---------------------------------------------------------------- the menus
 
 MENUS = {'Check-Ins': 'Which tag groups ask how you are doing when the timer runs out, and the latest check-ins.',
-         'Drafts': 'Pre-trade drafts: a plan that attaches its tags, note and risk to the next trade captured on '
+         'Drafts': 'Pre-trade drafts: a plan that attaches its tags, note and stop to the next trade captured on '
                    'that account and contract.',
          'Checklist': 'Run a checklist for the whole session. A trade\'s own checklist is its Checklist tab.'}
 
@@ -200,7 +200,7 @@ def draft_panel(journal, rows):
     scopes = sorted({(r['provider'], r['account'], r['symbol']) for r in rows})
     if scopes:
         scope = st.selectbox('Next-trade source', scopes, format_func=lambda x: ' · '.join(x), key=common.key(journal, 'draft-scope'),
-                             help='A draft is a plan, not a fill. It attaches its tags, note and risk to the next trade '
+                             help='A draft is a plan, not a fill. It attaches its tags, note and stop to the next trade '
                                   'captured on this exact provider, account and contract inside the time window. Only '
                                   'trades captured after arming qualify; an ambiguous match attaches nothing; anything '
                                   'already reviewed on the trade wins.')
@@ -216,12 +216,14 @@ def draft_panel(journal, rows):
                 values = st.pills(group, options, selection_mode='single' if library['groups'][group]['exclusive'] else 'multi',
                                   key=common.key(journal, 'draft-tags-' + group))
                 tags.extend([values] if isinstance(values, str) else values or [])
-            risk = st.number_input('Planned total risk · 0 leaves unknown', min_value=0., value=0.)
+            stop = st.text_input('Stop · optional', placeholder='Your stop price',
+                                 help='The stop R uses for the trade, unless you change it under Notes. Blank: the '
+                                      'stop order you place with the trade counts.')
             notes = st.text_area('Pre-trade note', height=90)
             if st.form_submit_button('Arm Draft', type='primary'):
                 try:
                     journal.save_draft(name, provider=scope[0], account=scope[1], symbol=scope[2], start=start, end=end,
-                                        tags=tags, notes=notes, risk=risk)
+                                        tags=tags, notes=notes, stop=stop.strip() or None)
                     st.rerun()
                 except ValueError as exc:
                     st.error(str(exc))
@@ -232,7 +234,8 @@ def draft_panel(journal, rows):
         zone = common.display_zone(journal)
         st.dataframe([{'Plan': d['name'], 'Account': d['account'], 'Contract': d['symbol'],
                        'From': common.moment(d['start'], zone, seconds=False), 'Until': common.moment(d['end'], zone, seconds=False),
-                       'State': d['state'], 'Trade': d['trade_id']} for d in drafts.values()], hide_index=True)
+                       'Stop': d.get('stop'), 'State': d['state'], 'Trade': d['trade_id']} for d in drafts.values()],
+                     hide_index=True)
         active = [id for id, d in drafts.items() if d['state'] in ('armed', 'ambiguous', 'needs review')]
         if active:
             id = st.selectbox('Cancel draft', active, format_func=lambda id: drafts[id]['name'])
