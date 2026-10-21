@@ -3,6 +3,7 @@
 AppTest runs the real script and the real background reader, but no browser: these tests see which
 elements exist and what they say, not how the page looks.
 """
+import dataclasses
 import datetime as dt
 import json
 import re
@@ -492,6 +493,24 @@ def test_trade_rows_are_built_again_only_when_something_they_show_changed(home, 
     later = next(t for t in journal.trades() if t.id != trade.id)
     journal.record_metric(later, {'source': 'motivewave-bars:1m', 'precision': 'pending', 'path': [], 'notes': []})
     assert clicks(app.run, app.run) == 1
+
+    def shown(id):
+        return next(r for r in app.session_state[common.key(journal, 'trade-rows')][1] if r['id'] == id)
+
+    # A measurement stored again. The open trade's, which the watcher stores at every poll and the page draws live,
+    # reuses them; a closed trade's (prices that came in late) builds them once, with its new MAE.
+    journal.record_metric(later, {'source': 'motivewave-bars:1m', 'precision': 'pending', 'path': [], 'notes': ['again']})
+    assert clicks(app.run) == 0
+    from mwjournal.metrics import excursions
+    deeper = [dataclasses.replace(s, low=s.low - 3) for s in journal.prices(trade.symbol, 'motivewave-bars:1m')]
+    journal.record_metric(trade, excursions(trade, deeper, 'motivewave-bars:1m'))
+    assert shown(trade.id)['mae'] != journal.best_metric(trade)['mae']
+    assert clicks(app.run) == 1 and shown(trade.id)['mae'] == journal.best_metric(trade)['mae']
+    # A multiplier set again to another value: the trade's result in the list follows it.
+    journal.set_instrument('ESZ6', 50)
+    assert clicks(app.run) == 1 and '242.00' in app.button(key=f'pick-{trade.id}-live').label
+    journal.set_instrument('ESZ6', 5)
+    assert clicks(app.run) == 1 and '17.00' in app.button(key=f'pick-{trade.id}-live').label
 
 
 def test_simple_navigation_and_optional_controls_do_not_remove_reviews(home):

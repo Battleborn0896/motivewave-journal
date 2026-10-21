@@ -126,12 +126,14 @@ def stamp(journal):
 
 def changes(journal):
     """Moves whenever the background watcher changes what the trade list shows: a new fill, a fill
-    the platform described again, a linked order, a multiplier or a trade's first measurement."""
+    the platform described again, a linked order, a multiplier (a new one, or one set to another value) or a
+    trade's first measurement."""
     try:
         with journal.connect() as db:
             return tuple(db.execute('SELECT (SELECT count(*) FROM executions), '
                                     '(SELECT total(length(payload)) FROM executions), (SELECT count(*) FROM metrics), '
-                                    '(SELECT count(*) FROM protection), (SELECT count(*) FROM instruments)').fetchone())
+                                    '(SELECT count(*) FROM protection), '
+                                    "(SELECT group_concat(symbol || '=' || point_value) FROM instruments)").fetchone())
     except sqlite3.Error:
         return None
 
@@ -385,9 +387,12 @@ def excursion_help(journal, trade, metric, risk):
 ROW_SETTINGS = ('workspace', 'tag_library', 'tag_catalog', 'display_settings', 'trade_merges')
 
 
-def rows_signature(journal) -> tuple:
-    """Changes whenever a trade row could: changes() (a fill, a trade's first measurement, a linked order, a
-    multiplier), a review, a day's tags, the tag library, a rating, a setting, a merge or an account's name."""
+def rows_signature(journal) -> tuple | None:
+    """(what changes whenever a trade row could, the newest measurement of each trade), or None when the journal
+    cannot be read. The first: changes() (a fill, a trade's first measurement, a linked order, a multiplier), a
+    review, a day's tags, the tag library, a rating, a setting, a merge or an account's name. The second, by trade
+    id: a measurement stored again (prices that came in late, a gap the study reported) leaves changes() as it
+    was, but it replaces its row, and the new row has a higher rowid."""
     capture = getattr(journal, 'capture_journal', journal)
     found = hashlib.sha256()
     try:
@@ -398,23 +403,36 @@ def rows_signature(journal) -> tuple:
                     "SELECT 'm ' || key || ' ' || value FROM journal_meta WHERE key IN (%s)" % ','.join('?' * len(ROW_SETTINGS)),
                     ROW_SETTINGS):
                 found.update(text.encode())
+            measured = dict(db.execute('SELECT trade_id, max(rowid) FROM metrics GROUP BY trade_id'))
         with capture.connect() as db:
             names = db.execute("SELECT value FROM journal_meta WHERE key='journal_registry'").fetchone()
     except sqlite3.Error:
         return None                            # never equal to a signature read before: the rows are built again
     # A journal shown with its merged trades (merging.ReviewJournal) has other rows than the same journal without.
     return (changes(journal), found.hexdigest(), names and names[0], excursion_unit(journal), humanize.local_zone(),
-            hasattr(journal, 'original'))
+            hasattr(journal, 'original')), measured
 
 
 def rows(journal) -> list[dict]:
     """rows_for(journal), built again only when rows_signature says something they show has changed: a click
-    that changes nothing reuses the rows of the click before."""
+    that changes nothing reuses the rows of the click before. An open trade's measurement stored again is left
+    out: the watcher stores it again at every poll, and the open trade's numbers are drawn live from the journal
+    (trades.py LIVE), not from these rows; its fills and its first measurement still count (changes())."""
     cache = key(journal, 'trade-rows')
-    signature = rows_signature(journal)        # read first: a change during the build builds them again next time
+    read = rows_signature(journal)             # read first: a change during the build builds them again next time
     held = st.session_state.get(cache)
-    if signature is None or held is None or held[0] != signature:
-        held = st.session_state[cache] = (signature, rows_for(journal))
+
+    def signature(rows):
+        """What `rows` were built from, with the newest measurement of the trades not open in them."""
+        if read is None:
+            return None
+        found, measured = read
+        live = {r['id'] for r in rows if r['status'] == 'open'}
+        return found, max((n for id, n in measured.items() if id not in live), default=None)
+
+    if read is None or held is None or held[0] != signature(held[1]):
+        built = rows_for(journal)
+        held = st.session_state[cache] = (signature(built), built)
     return held[1]
 
 
