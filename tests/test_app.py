@@ -351,9 +351,17 @@ def test_full_recorded_path_and_runner_controls_render_without_claiming_missing_
     assert any(b.label == 'Download Full Path CSV' for b in app.download_button)
     widget(app.selectbox, 'Look after exit').set_value(120).run()
     assert not app.exception and said(app.caption, 'Partial or gapped horizon')
+    # What it was measured from, in words: no program codes.
+    assert said(app.caption, 'From candles, an estimate · price after exit not complete yet · 1 contract')
+    assert said(app.caption, 'Stop 4,998 · Your saved stop · the one R uses · waiting for prices')
+    assert not any(code in c.value for c in app.caption for code in ('estimated-bars', 'partial-window', 'awaiting-prices'))
     show(app, 'Edge')
+    assert not any(s.label == 'Runner comparison horizon' for s in app.selectbox)    # drawn only when its tab is open
+    open_tab(app, 'Runners')
     widget(app.selectbox, 'Runner comparison horizon').set_value(120).run()
-    assert not app.exception and said(app.info, 'No comparable completed windows')
+    assert not app.exception and not said(app.info, 'No comparable completed windows')   # not run until asked
+    press(app, 'Compare Runners')
+    assert said(app.info, 'No comparable completed windows')
     assert widget(app.selectbox, 'Compare runners by').options == [
         'Individual tags', 'Tag categories', 'Setup / playbook']
     assert not any(b.label in ('Analyze recorded post-exit prices', 'Calculate post-exit tag analysis')
@@ -375,7 +383,7 @@ def test_measured_trade_risk_and_bidask_variants_render():
     widget(app.selectbox, 'Measurement').set_value(liquidation).run()
     assert not app.exception
     assert widget(app.metric, 'MAE / risk').value == '1.25R'
-    show(app, 'Edge')
+    open_tab(show(app, 'Edge'), 'Compare')
     widget(app.selectbox, 'Compare by').set_value('Followed my plan').run()
     assert not app.exception
 
@@ -448,7 +456,7 @@ def test_rollover_filters_group_markets_but_keep_micro_contracts_separate(home):
     widget(app.multiselect, 'Exact Contracts').set_value([]).run()
     widget(app.multiselect, 'Markets').set_value(['MNQ']).run()
     assert len(listed(app)) == 1
-    show(app, 'Edge')
+    open_tab(show(app, 'Edge'), 'Compare')
     assert widget(app.multiselect, 'Markets').value == ['MNQ']
     assert widget(app.selectbox, 'Compare by').options[:2] == ['Market', 'Exact contract']
 
@@ -586,8 +594,10 @@ def test_edge_draws_excursions_for_captured_trades_nobody_has_reviewed(home):
     assert not journal.annotations()
     app = open_app('Edge')
     assert widget(app.metric, 'Win Rate').value == '50.0%'
+    assert len(app.get('plotly_chart')) == 2                  # Overview: the equity curve and the results
+    open_tab(app, 'MAE / MFE')
     assert helped(app.markdown, 'Giveback = ')
-    assert len(app.get('plotly_chart')) == 3
+    assert len(app.get('plotly_chart')) == 1
 
 
 # ---------------------------------------------------------------- import
@@ -1045,11 +1055,15 @@ def test_analytics_is_question_based_and_selected_units_change_only_excursion_ax
     app = open_app('Edge')
     assert [t.label for t in app.tabs] == ['Overview', 'Compare', 'MAE / MFE', 'Runners', 'Dashboards']
     assert widget(app.metric, 'Average Trade').value == '+$242.00'
-    assert widget(app.selectbox, 'Compare by').value == 'Tags'
+    # Only the open tab is drawn: Overview's equity curve, and none of Compare's controls yet.
+    assert widget(app.metric, 'Gross P&L') and not any(s.label == 'Compare by' for s in app.selectbox)
+    open_tab(app, 'Compare')
+    assert widget(app.selectbox, 'Compare by').value == 'Tags' and not any(m.label == 'Gross P&L' for m in app.metric)
     table = next(d.value for d in app.dataframe if 'Average Trade' in d.value.columns)
     assert 'Trades' in table.columns and 'Tag' in table.columns
     display_setting(app, 'MAE / MFE Units', 'ticks', back='Edge')
     assert not app.exception and widget(app.metric, 'Net P&L').value == '+$242.00'
+    open_tab(app, 'MAE / MFE')
     excursion = next(json.loads(x.proto.spec) for x in app.get('plotly_chart') if 'One dot per measured trade' in x.proto.spec)
     assert excursion['layout']['xaxis']['title']['text'] == 'Against me · MAE (ticks)'
     assert excursion['layout']['yaxis']['title']['text'] == 'In my favour · MFE (ticks)'

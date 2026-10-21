@@ -59,23 +59,23 @@ def render(journal, rows) -> None:
         st.info('Statistics need at least one closed round trip with a known multiplier.')
     labels = [*sections, DASHBOARDS]
     panels = dict(zip(labels, common.tabs(labels, common.key(journal, 'analytics-tabs'))))
-    if panels[DASHBOARDS].open:                # drawn only when open: every widget is a chart of its own
+    # Each tab is drawn only while it is open: each goes over every closed trade, and some read prices too.
+    if panels[DASHBOARDS].open:                # every widget is a chart of its own
         from views import dashboard
         with panels[DASHBOARDS]:
             dashboard.render(journal, rows)
     if not closed:
         return
-    frame = pd.DataFrame(closed).sort_values('closed')
-    if 'Overview' in panels:
+    if 'Overview' in panels and panels['Overview'].open:
         with panels['Overview']:
-            overview(journal, closed, stat, frame)
-    if 'Compare' in panels:
+            overview(journal, closed, stat, pd.DataFrame(closed).sort_values('closed'))
+    if 'Compare' in panels and panels['Compare'].open:
         with panels['Compare']:
             comparisons(journal, closed)
-    if 'MAE / MFE' in panels:
+    if 'MAE / MFE' in panels and panels['MAE / MFE'].open:
         with panels['MAE / MFE']:
             excursion(journal, closed)
-    if 'Runners' in panels:
+    if 'Runners' in panels and panels['Runners'].open:     # the comparison itself waits for its button
         with panels['Runners']:
             st.markdown('### Was There Room to Hold Longer?',
                         help='A separate hindsight check of the prices after your final exit. It is not the '
