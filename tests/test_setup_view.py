@@ -121,9 +121,9 @@ def test_before_the_study_reports_in_setup_asks_to_install_it_then_to_add_it_to_
     if connection.JAR.is_file():
         press(app, setup.INSTALL)
         assert (extensions_folder / 'motivewave-journal.jar').read_bytes() == connection.JAR.read_bytes()
-        # The click itself redraws the page: the next step already says to restart, and the button is gone.
+        # The click itself redraws the page: the next step is already shown, and the button is gone.
         assert steps_shown(app) == ['Add It to Your Chart'] and not app.success
-        assert said(app.main.markdown, 'Restart MotiveWave, then add **Journal → MotiveWave Journal**')
+        assert said(app.main.markdown, 'Add **Journal → MotiveWave Journal** to the chart you trade')
         assert not any(b.label == setup.INSTALL for b in app.button)
     else:
         install_the_study(extensions_folder)
@@ -133,7 +133,7 @@ def test_before_the_study_reports_in_setup_asks_to_install_it_then_to_add_it_to_
     assert ('add **Journal → MotiveWave Journal** to the chart you trade' in step.value
             or 'Add **Journal → MotiveWave Journal** to the chart you trade' in step.value)
     assert 'contract chart (ESZ6) or a continuous one (ES) both work' in step.proto.help
-    assert step.value.count('Restart MotiveWave, then add') == int(connection.JAR.is_file())   # installed just now
+    assert 'Restart MotiveWave' not in step.value and 'Restart MotiveWave first if the study was just' in step.proto.help
     assert 'There is nothing to set.' in step.value and 'File' not in step.value
     assert 'To install it again, use Data → Connection.' in step.proto.help
     assert not any(b.label == setup.INSTALL for b in app.button)
@@ -612,7 +612,7 @@ def test_the_study_can_be_installed_again_from_connection_after_it_has_reported_
     install = app.button(key='connection-study-install')
     assert install.label == setup.INSTALL and 'kept beside it as a backup' in install.help
     install.click().run()
-    assert not app.exception and said(app.success, 'Installed. MotiveWave starts it in a few seconds')
+    assert not app.exception and said(app.success, 'Installed. If Setup still names an older study')
     assert (extensions / 'motivewave-journal.jar').read_bytes() == connection.JAR.read_bytes()
     app.button(key='connection-study-install').click().run()                     # again: the copy there is kept
     assert said(app.success, 'The previous copy was kept as a backup.')

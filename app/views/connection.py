@@ -89,7 +89,7 @@ LIMITS = ('The study is read-only: it never places, changes or cancels an order.
           'time and no further; those count as real ticks of that run either way. Studies before 0.3.3 recorded no '
           'live or replay ticks, before 0.3.4 labelled replay prints simulated, and before 0.3.6 recorded no stop '
           'order at all: install the study again from this page. From 0.3.6 on, a new study takes over from the old '
-          'one in a few seconds; an older one keeps running until MotiveWave is quit and opened again.')
+          'one in a few seconds; an older one stops recording prices until MotiveWave is quit and opened again.')
 
 
 def render(journal, rows) -> None:
@@ -137,8 +137,8 @@ def study_section() -> None:
                       'already there is kept beside it as a backup.'):
         try:
             _, backup = install_study()
-            st.success('Installed. MotiveWave starts it in a few seconds; if Setup still names an older study, quit '
-                       'MotiveWave completely and open it again.'
+            st.success('Installed. If Setup still names an older study in a few seconds, quit MotiveWave completely '
+                       'and open it again.'
                        + (' The previous copy was kept as a backup.' if backup else ''))
         except (OSError, ValueError) as exc:
             st.error('The study could not be installed: ' + str(exc))

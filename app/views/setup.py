@@ -242,8 +242,6 @@ def step(link, dataset: str = '') -> None:
     elif which == 'install' and not connection.JAR.is_file():
         line = ('In MotiveWave choose **Study → All Studies → Import** and pick motivewave-journal.jar, then add '
                 'the study to your chart.')
-    if which == 'chart' and installed:
-        line = 'Restart MotiveWave, then a' + line[1:]
     with st.container(border=True, key='setup-step-' + which):
         st.markdown(f'**{title}**  \n{line}', help=explained)
         if which in ('install', 'update') and connection.JAR.is_file() and not installed:

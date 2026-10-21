@@ -99,7 +99,8 @@ def test_a_replay_runs_own_minute_bars_draw_its_trades_chart_and_never_measure_t
     journal = Journal(tmp_path / 'replay.db', dataset='replay')
     apply_preview(journal, preview_bridge(lines([bar(28, 4995, 4998), bar(29, 4997, 5001), bar(30, 4996, 5004),
                                                  bar(31, 4999, 5006), bar(30, 4000, 4001, run='run-b'),
-                                                 fill('a'), tick(5003), fill('b', 'sell', 5002, ts='2022-01-03T14:32:00Z')]),
+                                                 fill('a'), tick(5003), tick(5002, ts='2022-01-03T14:32:00Z'),
+                                                 fill('b', 'sell', 5002, ts='2022-01-03T14:32:00Z')]),
                                           dataset='replay'))
     trade = journal.trades()[0]
     sources = journal.price_sources('ESZ6', trade)
@@ -108,6 +109,12 @@ def test_a_replay_runs_own_minute_bars_draw_its_trades_chart_and_never_measure_t
     assert PROVENANCE[provenance('motivewave-replay:run-a:bars')] == 'Platform candles'
     chart = trade_chart(trade, journal.prices('ESZ6', 'motivewave-replay:run-a:bars'), 'motivewave-replay:run-a:bars')
     assert [c['high'] for c in chart['series']['data']] == [4998, 5001, 5004, 5006]
+    # The exit's minute has no bar yet (a bar is written once the replay is past it): the run's own prints draw it,
+    # as live prints draw a live chart's minute in progress.
+    drawn = trade_chart(trade, journal.prices('ESZ6', 'motivewave-replay:run-a:bars'), 'motivewave-replay:run-a:bars',
+                        prints=journal.prices('ESZ6', 'motivewave-replay:run-a:ticks'),
+                        prints_source='motivewave-replay:run-a:ticks')
+    assert [c['high'] for c in drawn['series']['data']] == [4998, 5001, 5004, 5006, 5002]
     assert excursions(trade, journal.prices('ESZ6', 'motivewave-replay:run-a:bars'),
                       'motivewave-replay:run-a:bars')['precision'] != 'observed-ticks'          # bars never measure
     assert journal.best_metric(trade) is None or journal.best_metric(trade)['source'].endswith(':ticks')

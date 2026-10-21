@@ -129,11 +129,11 @@ public class MotiveWaveJournal extends Study {
         replayNow = ctx.getCurrentTime();
         replayChart = capture;
         // The replay's past as 1-minute bars, up to the replay's own time and never later (nothing of what comes
-        // next is ever loaded), filed under its run: what a replay trade's chart is drawn from. Asked again
-        // every 15 minutes of replay time; onTick tops up each minute as the replay plays.
+        // next is ever loaded), filed under its run: what a replay trade's chart is drawn from. Loaded once a run
+        // (again after a rewind, which starts another); onTick tops up each minute as the replay plays.
         int days = Math.max(0, Math.min(DAYS_MAX, getSettings().getInteger(DAYS, DAYS_DEFAULT)));
-        if (run == null || days == 0 || replayNow <= 0) return;
-        String request = "replay:" + run + ":" + capture + ":" + replayNow / 900000 + ":" + days;
+        if (run == null || days == 0 || replayNow <= 0 || !getSettings().is(REPLAY, REPLAY_DEFAULT)) return;
+        String request = "replay:" + run + ":" + capture + ":" + days;
         synchronized (this) {
           if (request.equals(lastRequest)) return;
           lastRequest = request;
@@ -187,7 +187,8 @@ public class MotiveWaveJournal extends Study {
         replayChart = capture;
         // The minutes the replay just closed, as its run's bars (calculateValues has the rule). A rewind
         // changes the minute too, and its bars go to the new run.
-        if (print != null && observer != null && getSettings().getInteger(DAYS, DAYS_DEFAULT) > 0) {
+        if (print != null && observer != null && getSettings().getInteger(DAYS, DAYS_DEFAULT) > 0
+            && getSettings().is(REPLAY, REPLAY_DEFAULT)) {
           long minute = print.time() / 60000;
           if (lastReplayMinute.getAndSet(minute) != minute)
             submitHistory(capture, (minute - 2) * 60000, minute * 60000, true, 0, capture.proxy(), false, run);

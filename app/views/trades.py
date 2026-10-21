@@ -707,13 +707,15 @@ def chart_panel(journal, trade, annotation: dict, zone) -> None:
     start, end = chart_window(trade, context, now=clock)
     samples = window_prices(journal, trade, source, start, end)
     prints = []
-    if provenance(source) == 'platform-bars' and LIVE_TICKS in sources:
-        # The minute in progress has no platform candle yet: the study's prints draw it.
+    # The trade's own recorded prints: live, or its replay run's.
+    recorded = next((s for s in sources if provenance(s) in ('recorded-live', 'replay-ticks', 'replay-simulated')), None)
+    if provenance(source) == 'platform-bars' and recorded:
+        # The minute in progress has no platform candle yet, nor has a replay's last minute: the prints draw it.
         after = max((instant(s.ts) for s in samples), default=start)
-        prints = journal.prices(trade.symbol, LIVE_TICKS, start=after.isoformat(), end=end.isoformat())
+        prints = journal.prices(trade.symbol, recorded, start=after.isoformat(), end=end.isoformat())
     events = [e for e in journal.protection_events(trade) if e.role == 'stop']      # take profit plays no part
     payload = trade_chart(trade, samples, source, risk.plan_for(journal, trade).stop, events, now=clock,
-                          prints=prints, prints_source=LIVE_TICKS)
+                          prints=prints, prints_source=recorded or LIVE_TICKS)
     candles = payload['series']['data']
     if candles:
         overlays = payload['overlays'] if levels else {**payload['overlays'], 'levels': []}
