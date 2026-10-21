@@ -498,8 +498,9 @@ bash scripts/test.sh
 bash study/scripts/check_contract.sh
 ```
 
-`scripts/test.sh` builds/tests Java, writes synthetic live/replay bridge files to a fresh build
-subfolder, and runs Python tests against those files. Set `MWJ_PYTHON` to choose another interpreter.
+`scripts/test.sh` builds/tests Java, writes synthetic live/replay bridge files, and runs Python tests
+against those files, all from a temporary folder it removes afterwards: the checkout, including the committed
+study jar, is left as it was. Set `MWJ_PYTHON` to choose another interpreter.
 Python-only tests: `python -m pytest -q`; the two cross-language tests explicitly skip unless their
 Java samples were supplied. The contract check does not launch MotiveWave or initialise account code.
 
