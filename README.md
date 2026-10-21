@@ -14,8 +14,9 @@ This release comes with study **0.3.5**.
 - **Your stop is found on prop accounts too.** A prop account's fills carry no position id, so earlier
   studies never tied its stop orders to the trade and those trades had no R. Study 0.3.5 ties a stop to
   your position by account, contract and side (a sell stop protects a long, a buy stop a short), on SIM
-  and prop alike. A MotiveWave trade with no stop at all now says *MotiveWave did not report a stop for
-  this position* where R would show.
+  and prop alike. A trade with no stop order recorded says so where R would show: *No stop order was
+  recorded for this trade*. Trades from before 0.3.5 keep that line (MotiveWave keeps no orders of past
+  sessions); type their stop under Notes to give them R.
 - **Dollar MAE and MFE measure the contracts you still hold.** Profit you banked with a partial exit no
   longer hides a move against the rest. Long 2 NQ at 100, sell 1 at 104, then price drops to 99: MAE is
   1 point on the 1 contract still held, **$20**. 0.4.7 said $0, because it added the $80 already banked.
@@ -369,8 +370,8 @@ the app watches it without routine exports. This follows the platform-connector/
 pattern documented by [SCS Trading Journal](https://www.scstudies.com/trading-journal), not its
 proprietary implementation. Tick prices remain stored at their original resolution. The default
 P&L chart is compacted for display; once a trade is closed, **Show/export full recorded trade path**
-reconstructs every available observation with held quantity, average cost and realised P&L. Missing prices are not
-invented, and OHLC bounds remain estimates.
+reconstructs every available observation with held quantity and average cost. Missing prices are not
+invented.
 
 ### Study-only capture
 
@@ -399,8 +400,7 @@ touch are never credited. If no stop is touched by the cutoff, the result is lab
 at cutoff, not the final lifetime peak. Stop and peak in the same OHLC candle are order-ambiguous:
 report conservative/possible bounds and exclude that case from default comparisons.
 
-Incomplete/gapped windows are excluded from default comparisons. Observed ticks, OHLC estimates,
-proxies and simulated replay are separate groups; bars overlapping exit or the horizon are excluded.
+Only recorded ticks are used; incomplete or gapped windows are left out.
 This is a frozen-stop price-path hypothesis, not an execution-accurate strategy backtest or an
 achievable-profit claim. No spread/slippage, additional fees, dynamic trailing rules or perfect
 peak execution is simulated. Tick completeness and actual stop fills remain unverified.

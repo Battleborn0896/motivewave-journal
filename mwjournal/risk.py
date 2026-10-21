@@ -14,9 +14,10 @@ from dataclasses import dataclass
 from .humanize import price
 from .model import instant
 
-# What R says for a MotiveWave trade with no stop order linked to it at all: the study links every stop it is
-# told about (study 0.3.5), so the platform did not report one.
-NOT_REPORTED = 'MotiveWave did not report a stop for this position. Type your stop to get R.'
+# What R says for a MotiveWave trade with no stop order recorded at all: a trade without one, one captured before
+# study 0.3.5 on an account whose fills carry no position id, or a stop the study could not link (Data →
+# Connection says why).
+NOT_REPORTED = 'No stop order was recorded for this trade. Type your stop to get R.'
 
 # Seconds after a trade's first fill at which its stop counts. With an OCO bracket the stop goes in
 # with the entry, and traders often drag it to the structure a second or two later: that is still

@@ -160,14 +160,14 @@ def test_a_study_that_has_gone_quiet_gets_only_the_quiet_step():
     assert not any(b.label == setup.INSTALL for b in app.button)
 
 
-@pytest.mark.parametrize('version', ['0.3.2', '0.1.0'])
+@pytest.mark.parametrize('version', ['0.3.4', '0.3.2', '0.1.0'])
 def test_a_study_older_than_the_bundled_one_gets_only_the_update_step(version):
     study_writes([heartbeat(version=version)])
     app = open_app('Setup')
     wait_until(lambda: status_of().get('heartbeat'))
     app.run()
     assert states(app.main) == ['Connected'] and steps_shown(app) == ['Update the Study']
-    line = f'Study {version} records no live or replay ticks'
+    line = f'Study {version} is out of date; this app comes with {paths.STUDY_VERSION}'
     assert said(app.main.markdown, line) and said(app.main.markdown, 'then restart MotiveWave')
     assert 'mwj-status-note' not in status_line(app)
     assert not said(app.sidebar.markdown, line)
@@ -197,7 +197,7 @@ def test_the_bundled_study_or_another_writer_gets_no_update_step():
     assert not common.study_outdated(on(version='0.3.2-beta'))                 # not a version this app wrote
     assert not common.study_outdated(on(version='0.1.0', connector='another-writer'))
     assert not common.study_outdated(SimpleNamespace(state='Connected'))
-    assert setup.update_line(on(version='0.3.2')).startswith('Study 0.3.2 records no live or replay ticks: ')
+    assert setup.update_line(on(version='0.3.2')).startswith(f'Study 0.3.2 is out of date; this app comes with {paths.STUDY_VERSION}: ')
     assert setup.update_line(on(version=paths.STUDY_VERSION)) is None
 
 

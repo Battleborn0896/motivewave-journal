@@ -126,6 +126,8 @@ public final class JournalAccountCaptureTest {
     backToBack(folder);
     ownSideBesideHistory(folder);
     leftWorkingAfterFlat(folder);
+    leftWorkingAcrossRestart(folder);
+    quietWhileFlat(folder);
     cancelledAndReplaced(folder);
     replayStops(folder);
     if (Boolean.getBoolean("mwj.checkNativeContract")) {
@@ -410,6 +412,47 @@ public final class JournalAccountCaptureTest {
     assert lines.stream().filter(line -> line.contains("\"left\"")).count() == 2
         && lines.stream().filter(line -> line.contains("\"left\"")).allMatch(line -> line.contains("\"entry_execution_id\":\"w1\""))
         && lines.stream().anyMatch(line -> line.contains("\"new\"") && line.contains("\"entry_execution_id\":\"w3\"")) : lines;
+  }
+
+  /** The same as leftWorkingAfterFlat, but the study first sees the stops after a restart, with the second long
+   * open: the stop left working goes to the long held when it was placed, as it does without the restart, and
+   * the new long keeps its own stop alone (R from one price). */
+  private static void leftWorkingAcrossRestart(Path folder) throws Exception {
+    var file = folder.resolve("left-working-restart.ndjson");
+    var fills = List.of(prop("k1", true, 1, 5000, TIME), prop("k2", false, 1, 5004, TIME + 60_000),
+        prop("k3", true, 1, 5002, TIME + 180_000));
+    var orders = List.of(stop("left", "", "", false, "working", 4990, TIME + 10),
+        stop("new", "", "", false, "working", 4995, TIME + 180_010));
+    var capture = JournalAccountCapture.fixture(file, () -> new Snapshot("workspace", fills, orders));
+    capture.poll();
+    capture.close();
+    var lines = protection(file);
+    assert lines.size() == 2 && lines.stream().anyMatch(line -> line.contains("\"left\"") && line.contains("\"entry_execution_id\":\"k1\""))
+        && lines.stream().anyMatch(line -> line.contains("\"new\"") && line.contains("\"entry_execution_id\":\"k3\"")) : lines;
+  }
+
+  /** Flat, with an entry stop resting (a buy stop above the market) and a bracket's stop waiting for its limit
+   * entry: neither is a stop of a position yet, so nothing is said however long they rest. When the limit fills,
+   * the bracket's stop goes to the new position. */
+  private static void quietWhileFlat(Path folder) throws Exception {
+    var file = folder.resolve("flat.ndjson");
+    var fills = new ArrayList<Fill>(List.of(prop("f1", true, 1, 5000, TIME), prop("f2", false, 1, 5004, TIME + 60_000)));
+    var orders = List.of(stop("entry", "", "", true, "working", 5020, TIME + 120_000),
+        stop("bracket", "", "", false, "working", 4990, TIME + 120_010));
+    var capture = JournalAccountCapture.fixture(file, () -> new Snapshot("workspace", List.copyOf(fills), orders));
+    long now = System.nanoTime();
+    capture.poll(now);
+    capture.poll(now + 2 * JournalAccountCapture.UNLINKED_GRACE_NANOS);
+    assert capture.warnings.equals("2 fills with an assumed currency") : "Nothing to say while flat: " + capture.warnings;
+    var logged = new ArrayList<String>();
+    capture.drainLog(logged::add);
+    assert logged.stream().noneMatch(line -> line.contains("is not linked")) : logged;
+    fills.add(prop("f3", true, 1, 5000, TIME + 150_000));                        // the limit entry fills
+    capture.poll(now + 3 * JournalAccountCapture.UNLINKED_GRACE_NANOS);
+    capture.close();
+    var lines = protection(file);
+    assert lines.size() == 1 && lines.getFirst().contains("\"bracket\"") && lines.getFirst().contains("\"entry_execution_id\":\"f3\"")
+        : lines;
   }
 
   /** A stop moved by cancelling it and placing another: both go to the position, and the new one takes it out. */

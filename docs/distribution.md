@@ -14,7 +14,7 @@ contains no screen, video or audio recorder.
 5. Leave the study's file setting unchanged. The app and study use the same per-user folder by
    default.
 
-The study is read-only. It observes retained account fills, linked stop/target orders, chart trade
+The study is read-only. It observes retained account fills, stop orders, chart trade
 prints, one-minute history and replay events. It cannot place, change or cancel orders.
 
 ## Trade grouping and partials

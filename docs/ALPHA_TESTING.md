@@ -2,7 +2,7 @@
 
 This is an early, local-first tester release. Use a MotiveWave **simulation account or Replay**
 before considering live-account observation. The study is read-only: it cannot place, modify or
-cancel orders. It records account fills, linked stop/target observations and prices delivered to the
+cancel orders. It records account fills, stop orders and prices delivered to the
 chart. Journal data stays on the tester's computer.
 
 ## Install
@@ -31,8 +31,8 @@ alpha is not Authenticode-signed.
    recorded. There is nothing to set: the study's first tab says so, and every setting is under
    **Advanced** with defaults that record fills, every trade print, and real ticks for closed live and
    replay trades.
-5. If Setup says the study records no live or replay ticks, click **Install MotiveWave Study** and restart MotiveWave:
-   studies before 0.3.3 never received live or replay prints.
+5. If Setup says the study is out of date, click **Install MotiveWave Study** and restart MotiveWave:
+   studies before 0.3.3 never received live or replay prints, and before 0.3.5 never linked a prop account's stops.
 
 One study instance records only the trade prints MotiveWave delivers to that chart. Once a replay
 trade is flat, the study loads the real ticks of its holding time from MotiveWave's tick history, never

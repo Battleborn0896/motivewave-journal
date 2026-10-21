@@ -630,7 +630,7 @@ def test_edge_draws_excursions_for_captured_trades_nobody_has_reviewed(home):
     assert widget(app.metric, 'Win Rate').value == '50.0%'
     assert len(app.get('plotly_chart')) == 2                  # Overview: the equity curve and the results
     open_tab(app, 'MAE / MFE')
-    assert helped(app.markdown, 'Giveback = ')
+    assert helped(app.markdown, 'Colour shows how the move was measured') and not helped(app.markdown, 'Giveback')
     assert len(app.get('plotly_chart')) == 1
 
 

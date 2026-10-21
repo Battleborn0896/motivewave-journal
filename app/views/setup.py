@@ -89,12 +89,13 @@ INSTALLED_HERE = 'setup-study-installed'   # this visit installed the study: the
 
 
 def update_line(link) -> str | None:
-    """One line for a study older than the one this app bundles, which receives no live or replay ticks; else None."""
+    """One line for a study older than the one this app bundles, else None. What each older version misses is in
+    the step's help (STEPS['update'])."""
     if not common.study_outdated(link):
         return None
     how = ('click Install MotiveWave Study' if connection.JAR.is_file()
            else 'import the new motivewave-journal.jar under Study → All Studies → Import')
-    return f'Study {link.version} records no live or replay ticks: {how}, then restart MotiveWave.'
+    return f'Study {link.version} is out of date; this app comes with {paths.STUDY_VERSION}: {how}, then restart MotiveWave.'
 
 
 def needed_step(link, installed: bool) -> str | None:

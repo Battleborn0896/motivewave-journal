@@ -29,7 +29,7 @@ SECTIONS = ['Overview', 'Compare', 'MAE / MFE', 'Runners']
 DASHBOARDS = 'Dashboards'          # always the last tab, so Customize can never hide it
 AXES = {'trade': 'By Trade', 'time': 'By Date'}
 LABELS = {'closed': 'Exit', 'net': 'Net P&L', 'mae': 'MAE', 'mfe': 'MFE', 'max_qty': 'Size',
-          'precision': 'Measured from', 'symbol': 'Instrument', 'setup': 'Setup', 'giveback': 'Giveback'}
+          'precision': 'Measured from', 'symbol': 'Instrument', 'setup': 'Setup'}
 COMPARE_HELP = ('Start with Trades, the sample size, then Average Trade, the net result per trade after recorded '
                 'fees. A trade with several tags counts in each, so tag rows overlap. Average R uses only trades '
                 'with a stop. These describe your recorded trades, not proof of an edge: small '
@@ -241,8 +241,7 @@ def excursion(journal, closed):
     currency = closed[0]['currency']
     st.markdown('### How Far Did Trades Move?', help=(
         units.description(unit) + ' Left is less movement against you; up is more movement in your favour. '
-        'Colour shows how the move was measured, not a win or loss. Giveback = MFE minus the final gross P&L, '
-        'always in account currency; it is not a guaranteed alternative exit.'
+        'Colour shows how the move was measured, not a win or loss.'
         + (' Points and ticks are not worth the same in every market: filter to one market at a time.'
            if unit in ('points', 'ticks') else '')))
     shown = pd.DataFrame(common.display_excursion_rows(journal, closed))
@@ -254,14 +253,12 @@ def excursion(journal, closed):
         st.info('No MAE / MFE values in these units yet. They need recorded prices; R also needs a stop, '
                 'and ticks need a known tick size.')
         return
-    measured['giveback'] = (measured.mfe - measured.gross).clip(lower=0)
     measured['Net P&L'] = [money(v, currency) for v in measured.net]
-    measured['Giveback'] = [money(v, currency, signed=False) for v in measured.giveback]
     label = units.suffix(unit, currency)
     labels = {**LABELS, 'display_mae': f'Against me · MAE ({label})',
               'display_mfe': f'In my favour · MFE ({label})', 'display_precision': 'Measured from'}
     figure = px.scatter(measured, x='display_mae', y='display_mfe', color='display_precision', size='max_qty',
-                        labels=labels, hover_data={'symbol': True, 'Net P&L': True, 'setup': True, 'Giveback': True,
+                        labels=labels, hover_data={'symbol': True, 'Net P&L': True, 'setup': True,
                                                    'max_qty': True},
                         title='One dot per measured trade')
     if unit == 'currency':

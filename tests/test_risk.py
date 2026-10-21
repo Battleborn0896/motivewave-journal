@@ -60,8 +60,7 @@ def test_a_motivewave_trade_with_no_stop_reported_says_so_where_r_would_show(hom
     journal = Journal()
     native = 'motivewave-native:workspace:live'
     t = trade(journal, ('in', 'buy', 1, 5000, 0), ('out', 'sell', 1, 5004, 60), provider=native)
-    assert plan(t, {}, []).why == NOT_REPORTED == ('MotiveWave did not report a stop for this position. '
-                                                   'Type your stop to get R.')
+    assert plan(t, {}, []).why == NOT_REPORTED == 'No stop order was recorded for this trade. Type your stop to get R.'
     # A stop was reported but was not standing 10 seconds after entry: that is said instead.
     assert plan(t, {}, [order(30, 4996, provider=native)]).why.startswith('No stop order 10 seconds after entry')
     # Typed: R, and nothing to say.

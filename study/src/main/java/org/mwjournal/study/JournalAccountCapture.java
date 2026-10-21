@@ -542,20 +542,22 @@ final class JournalAccountCapture {
   }
 
   /** The stop link rule, for a stop on the same mode, account and contract (and replay run) as these positions
-   * and on their closing side (a sell stop for a long, a buy stop for a short): a working stop goes to the open
-   * position, otherwise to the position held at the order's last-modified time, from its first fill to its last
-   * (to now while open). At the instant one position ends and the next begins, a stop that ended then (filled,
-   * cancelled or rejected) ended with the first, and a working one was placed for the next. Null when there is
-   * none. The order's parent and position ids play no part: prop accounts fill with no position id and no
-   * entry flag. */
+   * and on their closing side (a sell stop for a long, a buy stop for a short): the position held at the order's
+   * last-modified time, from its first fill to its last (to now while open); a working stop no position held
+   * then (a bracket's stop placed a moment before its entry fills) goes to the open position. The same answer
+   * whenever the study first sees the stop, so a stop left working after a position closed by hand stays with
+   * that position across a restart. At the instant one position ends and the next begins, a stop that ended
+   * then (filled, cancelled or rejected) ended with the first, and a working one was placed for the next. Null
+   * when there is none. The order's parent and position ids play no part: prop accounts fill with no position
+   * id and no entry flag. */
   static Position link(List<Position> closingSide, JournalNativeAccess.ProtectiveOrder order) {
-    if (order.working()) for (var position : closingSide) if (position.open()) return position;
     Position held = null;
     for (var position : closingSide)
       if (position.from() <= order.time() && (position.open() || order.time() <= position.to())) {
         held = position;
         if (!order.working()) break; // positions are in time order: the first one held then is the one it ended with
       }
+    if (held == null && order.working()) for (var position : closingSide) if (position.open()) return position;
     return held;
   }
 
@@ -616,6 +618,9 @@ final class JournalAccountCapture {
       }
       if (position == null) {
         if (!order.working()) continue; // an old stop of a position MotiveWave no longer holds: nothing to say
+        // Nothing open on this side of MotiveWave (live or replay): an entry stop, or a bracket's stop waiting
+        // for its entry to fill. Nothing to say, and the grace starts again once a position is open.
+        if (!anyOpen(books, order.replay())) continue;
         waiting.add(id);
         long since = unlinkedSince.computeIfAbsent(id, key -> nowNanos);
         if (nowNanos - since < UNLINKED_GRACE_NANOS) continue;
@@ -639,6 +644,11 @@ final class JournalAccountCapture {
     }
     unlinkedSince.keySet().retainAll(waiting);
     return new Stops(snapshot.orderCounts(), withPosition, closingSide, linked, unlinked);
+  }
+
+  private static boolean anyOpen(Map<Book, List<Position>> books, boolean replay) {
+    return books.entrySet().stream().anyMatch(book -> book.getKey().replay() == replay
+        && book.getValue().stream().anyMatch(Position::open));
   }
 
   /** The open positions of one mode as account and symbol, word for word, for the log. */

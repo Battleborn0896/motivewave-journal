@@ -198,7 +198,7 @@ One sentence, parts joined by `; `, each part with its count. The parts, in this
 | `N fills with no fill price` | Fills MotiveWave holds without a price, including ones study 0.2 wrote under the plain label. |
 | `N replay fills waiting for a replay chart with the study` | Replay fills that cannot be given a replay run yet. |
 | `N fill records changed after capture (not duplicated)` | MotiveWave changed a fill the study had already written; the first version stands. |
-| `N working stop orders not linked to a position: <reason> (orders: …)` | Study 0.3.5. Working stops that no position has taken for five seconds (a stop often appears a poll before the fill that opens its position). Reasons: `no position on that account and contract`, `the open position is on the stop's own side` (a buy stop beside a long: an entry or an add, not a stop), `no position at the stop's time` (flat now, and no position on the stop's closing side was held when it was last changed); with more than one, each has its count. The parenthesis counts every order of the snapshot at each step: `R read, S stop, F new, I without instrument, T without state, P with a position, C on the closing side, L linked`. MotiveWave's log has one line per such stop, once: its id, parent id, position id, account, symbol, side, state and last-modified time, beside the open positions' account and symbol, word for word. A cancelled, filled or rejected stop that no position takes is counted but never warned about. |
+| `N working stop orders not linked to a position: <reason> (orders: …)` | Study 0.3.5. Working stops that no position has taken for five seconds (a stop often appears a poll before the fill that opens its position), counted only while a position of the same mode (live or replay) is open: while flat, a working stop is an entry stop or a bracket's stop waiting for its entry, and nothing is said. Reasons: `no position on that account and contract`, `the open position is on the stop's own side` (a buy stop beside a long: an entry or an add, not a stop), `no position at the stop's time` (flat now, and no position on the stop's closing side was held when it was last changed); with more than one, each has its count. The parenthesis counts every order of the snapshot at each step: `R read, S stop, F new, I without instrument, T without state, P with a position, C on the closing side, L linked`. MotiveWave's log has one line per such stop, once: its id, parent id, position id, account, symbol, side, state and last-modified time, beside the open positions' account and symbol, word for word. A cancelled, filled or rejected stop that no position takes is counted but never warned about. |
 
 Example: `3 fills skipped: instrument unavailable; 2 fills with an assumed currency`. Counts are of what
 MotiveWave holds right now, not of new events, and a singular reads `1 fill …`. `detail` on a `connected`
@@ -218,14 +218,16 @@ sent yet (new) are skipped. A stop is linked by one rule, with no parent order o
 
 - it must be on the same mode, account and contract as a position, and of the same replay run, and on its
   closing side: a sell stop for a long, a buy stop for a short;
-- the first time this run of the study links an order id: a working stop goes to the open position;
-  otherwise the stop goes to the position held at the order's last-modified time (from its first fill to
-  its last, or to now while open). At the instant one position ends and the next begins, a stop that ended
-  then (filled, cancelled or rejected) goes to the one that ended, and a working stop, stamped then as a
-  bracket's stop is when its entry fills, to the one that began;
+- the first time this run of the study links an order id, the stop goes to the position held at the
+  order's last-modified time (from its first fill to its last, or to now while open); a working stop that no
+  position held then (a bracket's stop placed a moment before its entry fills) goes to the open position. At
+  the instant one position ends and the next begins, a stop that ended then (filled, cancelled or rejected)
+  goes to the one that ended, and a working stop, stamped then as a bracket's stop is when its entry fills,
+  to the one that began;
 - that choice is kept for the order id for as long as the study runs, so a stop that is moved, filled or
-  cancelled stays with its position. After a restart a cancelled stop can only go to the position held when
-  it was last changed, never to a later one.
+  cancelled stays with its position. The rule gives the same answer whenever the study first sees a stop, so
+  after a restart a stop left working after its position was closed by hand stays with that position, and a
+  cancelled stop never goes to a later one.
 
 Positions, for this rule, are the trades the app makes of the fills the study has written (`mwjournal/matching.py`),
 per account, contract and replay run: fills with MotiveWave's position id are netted inside that position,

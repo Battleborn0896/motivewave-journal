@@ -71,5 +71,6 @@ def description(unit):
                   'Scale-ins update that entry; realised profits from partial exits are not added.',
         'ticks': 'Price excursion in points ÷ this contract’s minimum tick size. Fractional ticks are possible '
                  'with average entries or estimated bars.',
-        'r': 'That dollar move ÷ the risk to your stop. No stop means unavailable, not zero.',
+        'r': 'The dollar MAE or MFE (the move of the contracts held, times their size and point value) ÷ the risk '
+             'to your stop. No stop means unavailable, not zero.',
     }[unit]

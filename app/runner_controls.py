@@ -99,8 +99,8 @@ def edge_panel(journal, rows):
     with st.form(common.key(journal, 'runner-edge'), border=False):
         minutes = st.selectbox('Runner comparison horizon', HORIZONS, format_func=lambda n: f'{n} minutes',
                                key=common.key(journal, 'runner-edge-horizon'),
-                               help='The same time after exit for every trade. Ticks, candle estimates and simulated '
-                                    'replay are grouped separately; incomplete windows are left out, not counted as zero.')
+                               help='The same time after exit for every trade, from recorded ticks; incomplete windows are '
+                                    'left out, not counted as zero.')
         stop_mode = st.selectbox('Runner comparison stop', list(STOPS), format_func=STOPS.get,
                                  key=common.key(journal, 'runner-edge-stop'))
         winners = st.checkbox('Only winning trades', key=common.key(journal, 'runner-winners'))

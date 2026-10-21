@@ -741,7 +741,7 @@ def chart_panel(journal, trade, annotation: dict, zone) -> None:
                                         'Status': e.state.title(), 'Price': e.price} for e in events]),
                          hide_index=True, width='stretch')
         else:
-            st.caption('No linked stop order was captured. Type your stop under Notes; orders are never guessed.')
+            st.caption('No stop order was recorded for this trade. Type your stop under Notes.')
         st.dataframe(pd.DataFrame([{'Time': common.moment(f['ts'], zone), 'Role': f['role'].title(),
                                     'Side': f['side'].title(), 'Qty': f['qty'], 'Price': f['price']}
                                    for f in trade.fills]),
