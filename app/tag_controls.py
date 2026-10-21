@@ -236,7 +236,7 @@ def playbook_panel(journal, trade, library, chosen):
             rules = {}
             for id in tagging.ids(library, required):
                 rules.setdefault(library['tags'][id]['group'], []).append(id)
-            rows = [r for r in common.rows_for(journal) if r['id'] != trade.id and r['status'] == 'closed'
+            rows = [r for r in common.rows(journal) if r['id'] != trade.id and r['status'] == 'closed'
                     and r['closed'] <= trade.opened and r['currency'] == trade.currency
                     and (set(required) <= set(r['tags']) if interpretation == 'All selected tags'
                          else tagging.matches(library, r['tag_ids'], {'rules': rules}))]

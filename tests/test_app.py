@@ -453,6 +453,39 @@ def test_rollover_filters_group_markets_but_keep_micro_contracts_separate(home):
     assert widget(app.selectbox, 'Compare by').options[:2] == ['Market', 'Exact contract']
 
 
+def test_trade_rows_are_built_again_only_when_something_they_show_changed(home, monkeypatch):
+    journal = seed_preview(home)
+    built = []
+    original = common.rows_for
+    monkeypatch.setattr(common, 'rows_for', lambda journal: built.append(1) or original(journal))
+    app = open_app()
+    assert built and 'breakout' in widget(app.multiselect, 'Tags').options
+
+    def clicks(*actions):
+        """How many times the rows were built during these clicks."""
+        before = len(built)
+        for action in actions:
+            action()
+            assert not app.exception
+        return len(built) - before
+
+    trade = journal.trades()[0]
+    # Clicks that change nothing reuse the rows: a rerun, the open trade's row, another tab, Stats and back.
+    assert clicks(app.run, lambda: pick(app, trade.id), lambda: open_tab(app, 'Notes'),
+                  lambda: show(app, 'Edge'), lambda: show(app, 'Trades')) == 0
+    # A tag, a note, a fill and a measurement each build them once, with the change in them.
+    assert clicks(lambda: widget(app.pills, 'Other tags').set_value(['PAPER FIXTURE']).run()) == 1
+    assert 'breakout' not in widget(app.multiselect, 'Tags').options
+    assert clicks(lambda: widget(app.text_area, 'Review notes').set_value('Waited for the retest.').run()) == 1
+    assert clicks(app.run) == 0
+    journal.ingest([(Execution('motivewave', 'paper', 'ESZ6', 'buy', 1, 5010, '2026-10-08T14:00:00Z',
+                               execution_id='later'), {})])
+    assert clicks(app.run) == 1 and len(listed(app)) == 2
+    later = next(t for t in journal.trades() if t.id != trade.id)
+    journal.record_metric(later, {'source': 'motivewave-bars:1m', 'precision': 'pending', 'path': [], 'notes': []})
+    assert clicks(app.run, app.run) == 1
+
+
 def test_simple_navigation_and_optional_controls_do_not_remove_reviews(home):
     seed_preview(home)
     app = open_app(review=False)
