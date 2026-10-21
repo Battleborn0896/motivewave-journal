@@ -16,6 +16,7 @@ from .matching import match
 from .metrics import carry_on, measurements
 from .model import (NATIVE, Execution, PriceSample, ProtectionEvent, digest, finite, heartbeat_report, instant,
                     product, timestamp, trade_prices)
+from .risk import stop_for_risk
 from .scope import event_mode, allows_source
 from .workspace import Workspace, read as read_workspace
 
@@ -106,6 +107,33 @@ def _upgrade(db) -> dict:
     return {'executions_rewritten': rewritten, 'alarms_cleared': cleared}
 
 
+def _stops_from_risks(db) -> int:
+    """Once per journal, when it is first opened by 0.4.7. R now comes from a trade's stop (risk.py), no
+    longer from a dollar risk typed under Notes. A review that saved such a risk and no stop is given the
+    stop that puts exactly that risk on the position held when the stop settled, so its R stays what it
+    was, and clearing that stop later returns to the captured stop order. Nothing is removed: the dollar
+    figure stays stored beside it, no longer used, so this needs no backup. A review whose trade cannot say its
+    position (missing fills or multiplier, or a trade no longer there) is left as it was."""
+    legacy = {}
+    for row in db.execute('SELECT trade_id, payload FROM annotations').fetchall():
+        review = json.loads(row['payload'])
+        if review.get('initial_risk') and review.get('planned_stop') is None:
+            legacy[row['trade_id']] = review
+    converted = 0
+    if legacy:
+        instruments = {r['symbol']: r['point_value'] for r in db.execute('SELECT * FROM instruments')}
+        fills = [Execution(**json.loads(r['payload'])) for r in db.execute('SELECT payload FROM executions ORDER BY rowid')]
+        trades = {t.id: t for t in match(fills, instruments)}
+        for trade_id, review in legacy.items():
+            stop = stop_for_risk(trades[trade_id], review['initial_risk']) if trade_id in trades else None
+            if stop is not None:
+                db.execute('UPDATE annotations SET payload=? WHERE trade_id=?',
+                           (encode({**review, 'planned_stop': stop}), trade_id))
+                converted += 1
+    db.execute("INSERT OR REPLACE INTO journal_meta VALUES('stops_from_risks',?)", (str(converted),))
+    return converted
+
+
 class ImportConflict(ValueError):
     pass
 
@@ -155,6 +183,8 @@ class Journal(Workspace):
                             'at': dt.datetime.now(dt.timezone.utc).isoformat()}
                     db.execute("INSERT OR REPLACE INTO journal_meta VALUES('schema_upgrade',?)", (encode(note),))
                 db.execute('PRAGMA user_version = %d' % SCHEMA_VERSION)
+            if not db.execute("SELECT 1 FROM journal_meta WHERE key='stops_from_risks'").fetchone():
+                _stops_from_risks(db)
         if os.name != 'nt':
             try:
                 self.path.chmod(0o600)
@@ -345,6 +375,8 @@ class Journal(Workspace):
     def annotate(self, trade_id: str, data: dict):
         tags = sorted({str(t).strip() for t in data.get('tags', []) if str(t).strip()})
         data = {**data, 'tags': tags}
+        # R reads only planned_stop (risk.py). initial_risk and planned_target are what older versions saved:
+        # kept and still checked, never used (_stops_from_risks turned each initial_risk into a stop once).
         risk = data.get('initial_risk')
         if risk is not None:
             data['initial_risk'] = finite(risk, 'Initial risk', True)
@@ -868,13 +900,33 @@ class Journal(Workspace):
             return count
 
     def protection_events(self, trade) -> list[ProtectionEvent]:
+        return self.protection_by_trade([trade])[trade.id]
+
+    def protection_by_trade(self, trades) -> dict[str, list[ProtectionEvent]]:
+        """Each trade's linked protective orders in time order: those naming the trade, or naming a fill
+        that opened or added to it. One read per account and contract, however many trades it has."""
+        result, scopes = {t.id: [] for t in trades}, {}
+        for trade in trades:
+            scopes.setdefault((trade.provider, trade.account, trade.symbol), []).append(trade)
         with self.connect() as db:
-            events = [ProtectionEvent(**json.loads(r['payload'])) for r in db.execute(
-                'SELECT payload FROM protection WHERE provider=? AND account=? AND symbol=? ORDER BY ts,rowid',
-                (trade.provider, trade.account, trade.symbol))]
-        entry_ids = {f['execution_id'] for f in trade.fills if f['role'] == 'entry' and f['execution_id']}
-        return [e for e in events if e.trade_id == trade.id or
-                (not e.trade_id and e.entry_execution_id in entry_ids)]
+            for scope, group in scopes.items():
+                ids, entries = {t.id for t in group}, {}
+                for trade in group:
+                    for fill in trade.fills:
+                        if fill['role'] == 'entry' and fill['execution_id']:
+                            entries.setdefault(fill['execution_id'], set()).add(trade.id)
+                for row in db.execute('SELECT payload FROM protection WHERE provider=? AND account=? AND symbol=? '
+                                      'ORDER BY ts,rowid', scope):
+                    # Another trade's order is skipped before it is built into an event (which checks it all
+                    # again), so reading one trade's orders stays quick in a journal of thousands.
+                    data = json.loads(row['payload'])
+                    linked = data.get('trade_id')
+                    owners = ({linked} & ids) if linked else entries.get(data.get('entry_execution_id'), ())
+                    if owners:
+                        event = ProtectionEvent(**data)
+                        for owner in owners:
+                            result[owner].append(event)
+        return result
 
     def ingest_gaps(self, events: list[dict], *, db=None) -> int:
         with self._write(db) as db:

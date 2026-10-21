@@ -323,9 +323,9 @@ function drawOverlay() {
   for (const level of spec.tradeOverlays.levels || []) {
     const x1 = xAt(level.from), x2 = xAt(level.to), y = entry.api.priceToCoordinate(level.price);
     if (x1 == null || x2 == null || y == null) continue;
-    line(x1,y,x2,y,level.color,level.style === 'dotted' ? '2 4' : '7 4');
+    line(x1,y,x2,y,level.color,{dotted: '2 4', dashed: '7 4'}[level.style]);   // anything else is solid
     const labelX = Math.max(6, Math.min(plotWidth - 220, x2 - 220));
-    const labelY = Math.max(spec.title ? 64 : 28, y - 6); // keep SL/TP labels below the title and OHLC legend
+    const labelY = Math.max(spec.title ? 64 : 28, y - 6); // keep stop labels below the title and OHLC legend
     element('text',{x:labelX,y:labelY,fill:level.color,'font-size':10,'font-family':spec.theme.font},layer,
       level.label + ' @ ' + formatter(spec.format)(level.price));
   }

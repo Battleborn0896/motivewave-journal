@@ -156,7 +156,7 @@ def render(journal, trade):
                                          format_func=lambda t: f'{common.moment(t.opened, zone, seconds=False)} · {t.symbol} · '
                                                                f'{len(saved[t.id]["tags"])} tags',
                                          key=common.key(journal, 'tag-donor-' + trade.id),
-                                         help='Adds that trade’s tags to this one. Tags, notes and risk already here stay.')
+                                         help='Adds that trade’s tags to this one. Tags, notes and stop already here stay.')
                     if st.button('Apply Copied Tags', key=common.key(journal, 'tag-copy-' + trade.id)):
                         try:
                             journal.update_annotation(trade.id, {}, add_tags=saved[donor.id]['tags'])

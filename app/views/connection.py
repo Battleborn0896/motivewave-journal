@@ -70,7 +70,7 @@ def install_study(jar: Path = JAR, destination: Path | None = None) -> tuple[Pat
 
 LIMITS = ('The study is read-only: it never places, changes or cancels an order. Fills are read from MotiveWave '
           'internals that are not part of its supported SDK, so a MotiveWave update can stop fill capture; the '
-          'status above then shows the study\'s own message, and prices keep recording either way. A stop or target '
+          'status above then shows the study\'s own message, and prices keep recording either way. A stop order '
           'is captured only when MotiveWave links it to the position; standalone orders are never guessed from '
           'price. Fees can be the platform\'s estimates; such trades are flagged. Prices are recorded per chart: put '
           'the study on the chart you trade, contract or continuous; prices go with trades of the same product, '

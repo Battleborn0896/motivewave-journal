@@ -7,7 +7,7 @@ from pathlib import Path
 
 import pytest
 
-from mwjournal import Journal
+from mwjournal import Journal, risk
 from mwjournal.chart import trade_chart
 from mwjournal.importers import preview_bridge
 from mwjournal.model import instant
@@ -77,9 +77,17 @@ def test_java_bridge_to_journal_trade_chart_and_excursions(
     else:
         assert not any(s.startswith('motivewave-replay:') for s in sources)
     source = 'motivewave-bars:1m' if dataset == 'live' else sources[0]
-    payload = trade_chart(trade, journal.prices('ESZ6', source), source, events=protection)
-    assert len(payload['overlays']['fills']) == 3
-    assert payload['overlays']['levels'] and payload['series']['data']
+    plan = risk.plan(trade, {}, protection)
+    payload = trade_chart(trade, journal.prices('ESZ6', source), source, plan.stop, protection)
+    assert len(payload['overlays']['fills']) == 3 and payload['series']['data']
+    levels = [(level['price'], level['style']) for level in payload['overlays']['levels']]
+    if dataset == 'live':
+        # The stop placed with the entry is the one R uses; raising it 55 seconds later managed the trade.
+        assert (plan.stop, plan.source, plan.risk) == (4996, 'order', 200)
+        assert levels == [(4996, 'solid'), (4999, 'dashed')]
+    else:
+        # The replay trade had only a take profit: no stop, so no R, and nothing is drawn for it.
+        assert plan.stop is None and plan.risk is None and levels == []
     assert journal.get('sync_status')['study']['heartbeat']['connector'] == 'motivewave-journal-study'
     # App restart, then rewinding the stored read position: neither may double-count a fill.
     SyncWorker(Journal(journal.path, dataset=dataset)).poll()

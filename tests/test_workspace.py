@@ -78,7 +78,7 @@ def test_numeric_filters_exclude_missing_values_and_reject_reversed_bounds(home)
     journal.save_filter('Positive R', {'r_min': 1, 'net_min': 0, 'duration_max': 10})
     assert len(filter_sample(common.rows_for(journal), journal.workspace()['filters']['Positive R'])) == 1
     assert not filter_sample(common.rows_for(journal), {'mfe_min': 0})  # tick-only: no valid prices, not zero
-    journal.update_annotation(journal.trades()[0].id, {'initial_risk': None})
+    journal.update_annotation(journal.trades()[0].id, {'planned_stop': None})      # and no stop order: no R
     assert not filter_sample(common.rows_for(journal), {'r_min': 0})
     with pytest.raises(ValueError):
         journal.save_filter('Invalid', {'net_min': 100, 'net_max': 0})
@@ -294,14 +294,14 @@ def test_scoped_draft_attaches_once_and_never_changes_raw_fills_or_existing_revi
     journal = Journal()
     id = journal.save_draft('Plan', provider='motivewave', account='paper', symbol='ESZ6',
                             start='2026-10-07T14:00:00Z', end='2026-10-07T14:05:00Z', tags=['Patient'],
-                            notes='Draft note', risk=999)
+                            notes='Draft note', stop=4990)
     journal = seed_preview(home)
     trade = journal.trades()[0]
     before = journal.executions()
     journal.reconcile_drafts()
     assert journal.workspace()['drafts'][id]['state'] == 'attached'
     assert 'Patient' in journal.annotations()[trade.id]['tags']
-    assert journal.annotations()[trade.id]['initial_risk'] == 200
+    assert journal.annotations()[trade.id]['planned_stop'] == 4998          # the stop already saved wins
     assert journal.annotations()[trade.id]['notes'] == 'Synthetic fixture, not an actual account trade.'
     journal.update_annotation(trade.id, {}, remove_tags=['Patient'])
     Journal().reconcile_drafts()

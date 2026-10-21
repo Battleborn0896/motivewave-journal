@@ -44,6 +44,7 @@ platform's own position id and its entry flag), `price_known`, `currency_assumed
 `provider`, `account`, `symbol`, `order_id`, `ts`, `role` (`stop`/`target`), `state`
 (`working`/`cancelled`/`filled`/`rejected`), `price` (required while working), and a link:
 `entry_execution_id` or `trade_id`. Orders that are not linked are never guessed from price.
+The app reads only stops, for R (`mwjournal/risk.py`); it keeps target orders but does not show or use them.
 
 **metric**: excursions reported by the platform instead of computed from prices.
 
@@ -51,8 +52,8 @@ The UI unit preference does not change this bridge contract: platform reports st
 currency position-equity measurements. The local price engine additionally stores `mae_points`,
 `mfe_points`, `point_definition: "held-average-entry"`, and `point_precision`. Point-path bounds
 are `point_low` / `point_high`; compacting a chart preserves their extrema. Ticks are converted
-using a confirmed instrument tick size; R uses the saved initial total risk. Neither is guessed
-from an unknown multiplier or missing risk. Older currency-only reports need matching price
+using a confirmed instrument tick size; R uses the risk to the trade's stop. Neither is guessed
+from an unknown multiplier or a missing stop. Older currency-only reports need matching price
 history or a separate valid price measurement before points/ticks can be shown.
 `provider`, `units: "currency"`, `definition: "position-equity"`, `mae`, `mfe` (both >= 0), `basis`
 (`last`/`liquidation`), `observations`, and `trade_id` or `account` + `symbol` + `entry_execution_id`.

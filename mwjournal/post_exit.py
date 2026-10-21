@@ -9,6 +9,7 @@ from __future__ import annotations
 import datetime as dt
 from collections import defaultdict
 
+from . import risk
 from .model import finite, instant, trade_prices
 from .scope import allows_source, is_simulated, provenance
 
@@ -38,8 +39,8 @@ def post_exit(trade, samples, source, *, minutes=15, now=None, initial_risk=None
     quantity, exit_price = exit_fill['qty'], exit_fill['price']
     result.update(exit_qty=quantity, exit_price=exit_price)
     if require_stop and stop_price is None:
-        result['notes'] = ['No original/linked stop is available. Save your planned stop or select an explicit '
-                           'breakeven hypothesis; a stop must not be guessed from MAE or price proximity.']
+        result['notes'] = ['No stop is available. Type your stop under Notes or select an explicit breakeven '
+                           'hypothesis; a stop must not be guessed from MAE or price proximity.']
         return result
     if stop_price is not None:
         stop_price = finite(stop_price, 'Runner stop')
@@ -129,16 +130,16 @@ def post_exit(trade, samples, source, *, minutes=15, now=None, initial_risk=None
 
 
 def resolve_stop(journal, trade, mode='original'):
-    annotation = journal.annotations().get(trade.id, {})
     if mode == 'breakeven':
         return trade.entry_price, 'Entry average · gross breakeven hypothesis, excludes fees'
-    if mode == 'original' and annotation.get('planned_stop') is not None:
-        return annotation['planned_stop'], 'Saved original planned stop · not a confirmed order'
+    if mode == 'original':
+        # The stop the trade's R uses, by the one rule in risk.py.
+        plan = risk.plan_for(journal, trade)
+        labels = {'saved': 'Your saved stop · the one R uses',
+                  'order': f'Your stop order {risk.STOP_SETTLES} seconds after entry · the one R uses'}
+        return plan.stop, labels.get(plan.source, '')
     events = [p for p in journal.protection_events(trade) if p.role == 'stop'
               and instant(p.ts) <= instant(trade.closed)]
-    if mode == 'original':
-        working = [p for p in events if p.state == 'working' and p.price is not None]
-        return (working[0].price, 'First recorded linked stop · may not be the original entry stop') if working else (None, '')
     if mode == 'at-exit':
         last = {}
         for event in events:
@@ -193,5 +194,5 @@ def runner_groups(rows, field='tags'):
                        'avg_adverse_after_exit': sum(r['extra_mae'] for r in values) / len(values),
                        'avg_extra_peak_R': sum(r['extra_mfe_r'] for r in risk) / len(risk) if risk else None,
                        'additional_1R_reached_pct': sum(r['extra_mfe_r'] >= 1 for r in risk) / len(risk) * 100 if risk else None,
-                       'trades_with_planned_risk': len(risk)})
+                       'trades_with_r': len(risk)})
     return result

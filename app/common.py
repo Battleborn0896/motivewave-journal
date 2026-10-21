@@ -18,7 +18,7 @@ from mwjournal import Journal, paths
 from mwjournal.metrics import measurements
 from mwjournal.model import Trade, instant, instrument_market, point_value
 from mwjournal.scope import replay_run
-from mwjournal import humanize, units, tagging
+from mwjournal import humanize, risk, units, tagging
 from mwjournal.sync import DEFAULT_CONNECTION
 
 VIEWS = ('Trades', 'Edge', 'Import', 'Connection', 'Daily review', 'Export')
@@ -360,7 +360,7 @@ def display_excursion_rows(journal, rows):
 def excursion_help(journal, trade, metric, risk):
     unit = excursion_unit(journal)
     if unit == 'r' and not units.positive(risk):
-        st.info('R needs your initial total risk. Set it once under Notes → Initial planned risk.')
+        st.info('R needs a stop: the stop order you place with the trade counts, or type your stop under Notes → Stop.')
     if unit == 'ticks' and units.tick_size(trade.symbol, journal.display_settings()['tick_sizes']) is None:
         with st.popover('Set Tick Size for ' + trade.symbol):
             with st.form(key(journal, 'tick-size-' + trade.id)):
@@ -389,13 +389,17 @@ def rows_for(journal) -> list[dict]:
     import json
     zone = display_zone(journal)
     rows = []
-    for trade in journal.trades():
+    trades = journal.trades()
+    plans = risk.plans(journal, trades, annotations)
+    for trade in trades:
         a = annotations.get(trade.id, {})
         m = best_display_metric(journal, trade)
         tag_ids = tagging.effective(library, a, sessions.get(tagging.session_key(library, trade.opened), {}))
-        risk = a.get('initial_risk')
+        # The risk to the trade's stop (risk.py): every R the app shows divides by it.
+        at_risk = plans[trade.id].risk
         # setup is always present: a captured trade nobody has reviewed yet still has to chart and group.
-        rows.append({**trade.row(), 'setup': '', **a, 'market': instrument_market(trade.symbol),
+        rows.append({**trade.row(), 'setup': '', **a, 'initial_risk': at_risk, 'stop': plans[trade.id].stop,
+                     'market': instrument_market(trade.symbol),
                      'merge_leg_ids': getattr(trade, 'merge_leg_ids', []),
                      'merge_overlapping': getattr(trade, 'merge_overlapping', False),
                      'account_label': aliases.get(json.dumps([trade.provider, trade.account], sort_keys=True), trade.account),
@@ -408,9 +412,9 @@ def rows_for(journal) -> list[dict]:
                      'ratings': {id: rating(library, tag_ids, definition) for id, definition in workspace['ratings'].items()},
                      'mae': m.get('mae'), 'mfe': m.get('mfe'),
                      'precision': PRECISION.get(m.get('precision'), 'Waiting for data'),
-                     'r': trade.net / risk if trade.net is not None and risk else None,
-                     'mae_r': m['mae'] / risk if m.get('mae') is not None and risk else None,
-                     'mfe_r': m['mfe'] / risk if m.get('mfe') is not None and risk else None,
+                     'r': trade.net / at_risk if trade.net is not None and at_risk else None,
+                     'mae_r': m['mae'] / at_risk if m.get('mae') is not None and at_risk else None,
+                     'mfe_r': m['mfe'] / at_risk if m.get('mfe') is not None and at_risk else None,
                      # The calendar day of entry in the display time zone: what date filters compare.
                      'entry_day': local_day(trade.opened, zone).isoformat()})
     return rows
@@ -499,7 +503,7 @@ def filter_rule(journal, rows: list[dict]) -> dict:
                                  key=key(journal, 'filter-numbers' + fresh),
                                  help='Each one adds a minimum and a maximum; an empty box is no limit. MAE and MFE are '
                                       'in account currency under your accuracy setting, not the display unit. A trade '
-                                      'without a value never passes a limit; R needs a saved planned risk.')
+                                      'without a value never passes a limit; R needs a stop.')
         limits = {}
         for name in numbers:
             low, high = st.columns(2)

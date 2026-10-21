@@ -100,7 +100,7 @@ def test_ticks_aggregate_in_time_order_without_inventing_missing_minutes():
 def test_fill_overlays_use_actual_prices_and_utc_fractional_seconds(tmp_path):
     journal = Journal(tmp_path / 'journal.sqlite3')
     trade = round_trip(journal)
-    payload = trade_chart(trade, [bar(0), bar(1), bar(3)], 'motivewave-bars:1m', {'planned_stop': 4998})
+    payload = trade_chart(trade, [bar(0), bar(1), bar(3)], 'motivewave-bars:1m', 4998)
     fills = payload['overlays']['fills']
     assert [f['price'] for f in fills] == [5000, 5002, 5003]
     assert [f['label'] for f in fills] == ['Entry · 2 @ 5000', 'Exit · 1 @ 5002', 'Exit · 1 @ 5003']
@@ -108,7 +108,8 @@ def test_fill_overlays_use_actual_prices_and_utc_fractional_seconds(tmp_path):
     assert fills[0]['time'] % 60 == 23.25
     data = payload['series']['data']
     assert len(data) == 4 and data[2] == {'time': data[1]['time'] + 60}
-    assert payload['overlays']['levels'][0]['label'] == 'SL · saved plan'
+    assert payload['overlays']['levels'] == [{'from': instant(trade.opened).timestamp(), 'to': instant(trade.closed).timestamp(),
+                                              'price': 4998, 'label': 'Stop · R', 'color': '#F05B70', 'style': 'solid'}]
 
 
 def test_dst_repeated_clock_hour_stays_two_distinct_utc_minutes():
@@ -132,10 +133,15 @@ def test_protection_order_changes_cancellations_and_strict_trade_link(tmp_path):
     assert journal.ingest_protection(events) == 0
     linked = journal.protection_events(trade)
     assert linked == events
-    segments = protection_segments(trade, linked, {})
-    assert [s['price'] for s in segments] == [4998, 5000]
-    assert segments[0]['from'] == instant(trade.opened).timestamp()
+    # Without a stop for R, each stop order is drawn dashed from the moment the stop settled, ten seconds in.
+    segments = protection_segments(trade, linked)
+    assert [(s['price'], s['style']) for s in segments] == [(4998, 'dashed'), (5000, 'dashed')]
+    assert segments[0]['from'] == instant(trade.opened).timestamp() + 10
     assert segments[-1]['to'] == instant('2026-10-07T14:02:00Z').timestamp()
+    # The stop R uses is solid across the trade; the order at that price is not drawn twice.
+    segments = protection_segments(trade, linked, 4998)
+    assert [(s['price'], s['style']) for s in segments] == [(4998, 'solid'), (5000, 'dashed')]
+    assert segments[0]['from'] == instant(trade.opened).timestamp()
 
 
 def test_unlinked_protective_order_is_an_import_error():

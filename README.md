@@ -7,6 +7,18 @@ Live/paper and replay have separate databases. No routine CSV export/import is r
 MotiveWave Journal is an independent open-source project. It is not affiliated with, endorsed by or
 supported by MotiveWave Software.
 
+## What's new in 0.4.7: R from your stop, automatically
+
+- **R comes from your stop.** You no longer type a dollar risk: R is your result divided by what your
+  stop order risked on the position, wherever you exited.
+- **Your stop counts as it stood 10 seconds after your first fill,** so dragging an OCO stop to the
+  structure a second or two after entry is still placing it, and moving it later leaves R alone.
+- **Notes has one Stop box,** filled in from your stop order, with where the price came from and the risk
+  it gives. Type another price to use it; clear the box to go back to the order. A pre-trade draft takes a
+  stop price too, and a dollar risk you saved before keeps its R.
+- **Take profit is no longer shown.** The chart draws the stop R uses as a solid line, dashed where you
+  moved your stop order later.
+
 ## What's new in 0.4.6: open trades follow the market everywhere, and a filter saves with a name and Enter
 
 - **Long trades update every second.** An open trade's MAE and MFE are carried on from where they stopped
@@ -189,8 +201,8 @@ measurement alternatives; summary excursions/CSV follow the accuracy policy in a
 - Ticks: those points divided by the contract's confirmed minimum price increment. Outright
   ES/MES/NQ/MNQ are detected automatically; other symbols need a one-time size in MAE/MFE or
   Setup → Data → Connection. Unknown sizes stay unavailable, not guessed. Average entries can produce fractional ticks.
-- R: whole-position currency excursion divided by saved **initial total planned risk**. Missing
-  risk stays unavailable, not zero.
+- R: whole-position currency excursion divided by the **risk to the trade's stop**. No stop means
+  unavailable, not zero.
 
 Price extrema use all available observations and confirmed fill prices, before chart compaction.
 Existing stored price measurements can supply points on demand; a platform-only currency report
@@ -228,7 +240,7 @@ These are not spread/option specifications; contract-specific overrides are stor
 
 Use the in-place **Notes** and **Checklist** tabs and the **More** tab (MAE / MFE, Executions, Runner)
 instead of scrolling through a long stacked page. Setup/notes autosave when leaving the field;
-planned risk/SL/TP use **Save Plan**. **Prev / Next** reviews adjacent trades while
+the Stop and Followed my plan use **Save Plan**. **Prev / Next** reviews adjacent trades while
 the list remains visible. A tag edit that removes the current trade from your filters keeps it
 open until you change the filter/selection, rather than interrupting the review. Existing flat tags
 remain under **Other tags**. **+ Category** creates first-class groups such as Orderflow or Psychology,
@@ -286,7 +298,7 @@ persisted or restarted automatically, and there are no background notifications 
 Pre-trade drafts (the **Drafts** menu) are not fake executions. An armed draft needs a precise provider/account/exact
 contract and a market-clock window, at most 24 hours. Only newly captured trades qualify. Ambiguous
 matches attach nothing; cancellation preserves the draft record. Existing reviewed groups, notes
-and risk take precedence. Reconciliation runs after bridge polling, not during a read-only render.
+and a stop already saved take precedence. Reconciliation runs after bridge polling, not during a read-only render.
 
 Custom-statistics scripts require an explicit **Run Local Script** click for each changed code or
 trade sample. Code runs in a two-second Web Worker inheriting a restrictive CSP, with no DOM,
@@ -330,8 +342,8 @@ In Trades, open **More → Runner** and expand **Could I Have Let This Trade Run
 **Runners** and expand **Which Tags Have Room for Runners?**. Choose a fixed 5/15/30/60/120-minute horizon. Analysis reports extra peak gross profit,
 adverse movement, the observed fixed-horizon result, and approximate time to the peak. The
 hypothesis retains only the final exit fill's quantity; earlier partial exits remain unchanged.
-Planned total initial risk is required for R statistics. Compare winners or exits near 1R by tag/setup.
-Choose an explicit frozen stop: saved original plan/first recorded linked stop, recorded working
+R statistics need the trade's stop. Compare winners or exits near 1R by tag/setup.
+Choose an explicit frozen stop: your stop (the one R uses), recorded working
 stop at exit, or entry-average gross breakeven. Missing/ambiguous stop levels stay unavailable.
 Tracking ends at the FIRST observed stop touch or the pre-selected horizon. Peaks after a stop
 touch are never credited. If no stop is touched by the cutoff, the result is labelled still running
@@ -348,7 +360,7 @@ Do not add hindsight peaks to expectancy; validate a fixed runner rule on unseen
 Prices use the public SDK. Manual-account fill capture uses an allow-listed, read-only adapter to
 MotiveWave internals, **not its supported SDK**; a platform update can break it. Connection status
 shows errors, missing files and stale heartbeats. The observer only sees retained executions, not
-a guaranteed full broker archive. Linked SL/TP updates are polled and very fast changes can be missed.
+a guaranteed full broker archive. Linked stop order updates are polled and very fast changes can be missed.
 
 ## Start the app
 
@@ -474,8 +486,8 @@ copy the live bridge path shown in Data → Connection into the study's File set
 Currency MAE/MFE are non-negative magnitudes of **gross realised plus open-position P&L** across
 the holding window, including scale-ins/outs. Fees are excluded from excursions; recorded fees
 reduce net trade P&L. Fees are whatever MotiveWave reports for each fill: set commission rates in MotiveWave, and a
-fill MotiveWave reports with no commission counts as $0. Stops/targets require an explicit
-order/position link; a saved planned level is labelled separately from a captured order.
+fill MotiveWave reports with no commission counts as $0. A stop order needs an explicit
+order/position link; a stop you type under Notes replaces it for R, and the chart shows both.
 
 ## Verify
 
@@ -497,7 +509,7 @@ price extrema. Repeat in replay, pause immediately after a short round trip, and
 Never count a fixture chart as proof of that integration.
 
 Stats separates gross/net closed-trade curves and recorded fee drag, including fees in R
-when initial planned risk was saved. Fees are not slippage and a closed-trade curve is not marked
+for trades with a stop. Fees are not slippage and a closed-trade curve is not marked
 account equity. The app also offers optional CSV/BYOD imports, daily reviews and JSON/CSV/SQLite backup.
 
 ## Design and future work

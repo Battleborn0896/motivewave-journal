@@ -43,7 +43,7 @@ def cost_summary(rows: list[dict]) -> dict:
     """Gross-to-net attribution for one currency. Recorded fees, never inferred slippage.
 
     Missing/estimated fees may be present numerically; preserve the trade's uncertainty flag.
-    A rebate is a negative cost, not clipped to zero. R costs require planned initial risk.
+    A rebate is a negative cost, not clipped to zero. R costs need the risk to the trade's stop.
     """
     closed = [row for row in rows if row['status'] == 'closed'
               and row.get('gross') is not None and row.get('net') is not None]

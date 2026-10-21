@@ -36,7 +36,7 @@ def test_merged_pnl_qty_tags_and_split_preserve_raw_fills_reviews_and_risk(home)
     assert len(view.trades()) == 1 and trade.net == sum(t.net for t in original_trades)
     assert trade.max_qty == 2 and trade.entry_qty == 3
     rows = common.rows_for(view)
-    assert rows[0]['r'] is None  # initial total risk not invented from separate legs
+    assert rows[0]['r'] is None  # one of the two trades has no stop, so their risk together is unknown
     assert 'PAPER FIXTURE' in rows[0]['tags']
     view.update_annotation(trade.id, {'notes': 'Merged-only note', 'initial_risk': 100})
     merging.split(journal, trade.id)

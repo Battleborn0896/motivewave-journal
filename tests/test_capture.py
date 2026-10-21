@@ -145,7 +145,7 @@ def test_open_replay_uses_its_recorded_clock_not_wall_time(tmp_path):
     metric = excursions(trade, journal.prices('ESZ6', 'motivewave-replay:run-a:ticks'),
                         'motivewave-replay:run-a:ticks', now=clock)
     assert metric['through'].startswith('2022-01-03') and metric['mfe'] == 50
-    chart = trade_chart(trade, [], 'motivewave-replay:run-a:ticks', {'planned_stop': 4998}, now=clock)
+    chart = trade_chart(trade, [], 'motivewave-replay:run-a:ticks', 4998, now=clock)
     assert chart['overlays']['levels'][0]['to'] == clock.timestamp()
 
 

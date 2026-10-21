@@ -13,6 +13,7 @@ import uuid
 
 from . import tagging
 from .model import finite, instant, timestamp
+from .risk import stop_for_risk
 
 WIDGETS = ('Summary', 'Equity', 'Drawdown', 'Calendar', 'Compare', 'Distribution',
            'MAE / MFE', 'Tag score', 'Rating', 'Radar', 'Trades', 'Script')
@@ -393,7 +394,9 @@ class Workspace:
             state['preferences'].update(changes)
         return self._workspace_edit(save)
 
-    def save_draft(self, name, *, provider, account, symbol, start, end, tags=(), notes='', risk=None):
+    def save_draft(self, name, *, provider, account, symbol, start, end, tags=(), notes='', stop=None):
+        """A plan for the next trade on one account and contract inside a time window: its tags, a note and the
+        stop price R will use (risk.py). Drafts saved before 0.4.7 carry a dollar 'risk' instead."""
         start, end = timestamp(start), timestamp(end)
         if instant(end) <= instant(start) or (instant(end) - instant(start)).total_seconds() > 86400:
             raise ValueError('A draft window must be positive and at most 24 hours, on the platform clock.')
@@ -408,7 +411,7 @@ class Workspace:
             key = identifier()
             state['drafts'][key] = {'id': key, 'name': label(name), 'provider': label(provider), 'account': label(account),
                                     'symbol': label(symbol).upper(), 'start': start, 'end': end, 'tag_ids': sorted(choices),
-                                    'notes': str(notes)[:20000], 'risk': finite(risk, 'Initial risk', True) if risk else None,
+                                    'notes': str(notes)[:20000], 'stop': None if stop is None else finite(stop, 'Stop'),
                                     'state': 'armed', 'trade_id': None, 'existing_trades': existing}
             return key
         return self._workspace_edit(save)
@@ -459,8 +462,11 @@ class Workspace:
                         review = tagging.set_group(library, review, group, choice, session)
                 if not review.get('notes') and draft['notes']:
                     review['notes'] = draft['notes']
-                if not review.get('initial_risk') and draft['risk']:
-                    review['initial_risk'] = draft['risk']
+                if review.get('planned_stop') is None:
+                    # A draft saved before 0.4.7 holds a dollar risk instead: it becomes the stop giving that risk.
+                    stop = draft['stop'] if draft.get('stop') is not None else stop_for_risk(trade, draft.get('risk'))
+                    if stop is not None:
+                        review['planned_stop'] = stop
                 review['draft_id'] = draft['id']
                 db.execute('INSERT OR REPLACE INTO annotations VALUES(?,?)', (trade.id, json.dumps(review, allow_nan=False)))
                 draft.update(state='attached', trade_id=trade.id)
