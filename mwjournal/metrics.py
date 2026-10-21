@@ -56,32 +56,12 @@ def price_boundaries(trade):
     return values
 
 
-def excursions(trade: Trade, samples: list[PriceSample], source: str, *, basis: str = 'last', now=None,
-               max_path_points: int | None = 1000) -> dict:
-    if max_path_points is not None and (type(max_path_points) is not int or max_path_points <= 0):
-        raise ValueError('Path point limit must be positive, or None for the full recorded path.')
-    end = instant(trade.closed) if trade.closed else (now or dt.datetime.now(dt.timezone.utc))
-    start = instant(trade.opened)
-    common = {'source': source, 'basis': basis, 'precision': 'pending', 'mae': None, 'mfe': None,
-              'mae_points': None, 'mfe_points': None, 'point_definition': POINT_DEFINITION,
-              'observations': 0, 'notes': [], 'path': [], 'through': end.isoformat(),
-              'provenance': provenance(source)}
-    if not trade.complete:
-        # Part of this position is not in the fills, so how far price went against or for it is not known.
-        common['notes'] = ['Excursions are unknown for this trade: ' + ', '.join(trade.incomplete) + '.']
-        return common
-    if not allows_source(trade, source):
-        common['notes'] = ['These prices belong to a different replay run.']
-        return common
-    # Price excursions remain calculable without a cash multiplier. Temporary scale 1 is internal
-    # only: all currency fields stay None until that multiplier is known.
+def walk(trade, samples, states, start, end, basis, values, point_values, path, used, covered):
+    """Each price's marks in the holding states it falls in, added to the lists given: the one loop
+    excursions and carry_on both measure with."""
     multiplier = trade.point_value if trade.point_value is not None else 1.
     sign = 1 if trade.direction == 'long' else -1
-    states, boundaries = holding_states(trade, end)
-    values = [v * multiplier for v in boundaries]
-    point_values = price_boundaries(trade)
-    path, used, covered = [], [], []
-    for sample in trade_prices(samples, trade.symbol, source):
+    for sample in samples:
         stamp = instant(sample.ts)
         stop = stamp + dt.timedelta(seconds=sample.resolution_seconds)
         if stop < start or stamp > end:
@@ -112,6 +92,60 @@ def excursions(trade: Trade, samples: list[PriceSample], source: str, *, basis: 
                          'resolution_seconds': sample.resolution_seconds})
             covered.append((max(a, stamp), min(b, stop)))
         used.append(sample)
+
+
+def compact(trade, path, max_path_points):
+    """At most max_path_points entries, each bucket keeping its extremes: the chart only. Metric values use
+    every observation."""
+    size = (len(path) + max_path_points - 1) // max_path_points
+    return [{'ts': path[i]['ts'], 'low': min(p['low'] for p in path[i:i + size]) if trade.point_value is not None else None,
+             'high': max(p['high'] for p in path[i:i + size]) if trade.point_value is not None else None,
+             'point_low': min(p['point_low'] for p in path[i:i + size]),
+             'point_high': max(p['point_high'] for p in path[i:i + size])} for i in range(0, len(path), size)]
+
+
+PATH_POINTS = 1000            # a stored measurement's path, for the chart; the values use every price
+COMPACTED = ('Chart path is compacted for display; original prices remain stored. '
+             'Use the full recorded path view/export for every observation.')
+
+
+def newest(trade, used) -> dict:
+    """The newest price measured, which an open trade's result is shown at (Trade.net_at): of prints sharing
+    the newest time, the last in tape order, as the chart's close is. last_count is how many share that time,
+    and contract whether every price measured was recorded under the traded contract's own symbol: what
+    carry_on needs to go on exactly where this stopped."""
+    last = max(reversed(used), key=lambda s: s.ts)
+    exact = str(trade.symbol).strip().upper()
+    return {'last_price': last.last, 'last_ts': last.ts, 'last_count': sum(s.ts == last.ts for s in used),
+            'contract': all(s.symbol == exact for s in used)}
+
+
+def excursions(trade: Trade, samples: list[PriceSample], source: str, *, basis: str = 'last', now=None,
+               max_path_points: int | None = PATH_POINTS) -> dict:
+    if max_path_points is not None and (type(max_path_points) is not int or max_path_points <= 0):
+        raise ValueError('Path point limit must be positive, or None for the full recorded path.')
+    end = instant(trade.closed) if trade.closed else (now or dt.datetime.now(dt.timezone.utc))
+    start = instant(trade.opened)
+    common = {'source': source, 'basis': basis, 'precision': 'pending', 'mae': None, 'mfe': None,
+              'mae_points': None, 'mfe_points': None, 'point_definition': POINT_DEFINITION,
+              'observations': 0, 'notes': [], 'path': [], 'through': end.isoformat(),
+              'provenance': provenance(source)}
+    if not trade.complete:
+        # Part of this position is not in the fills, so how far price went against or for it is not known.
+        common['notes'] = ['Excursions are unknown for this trade: ' + ', '.join(trade.incomplete) + '.']
+        return common
+    if not allows_source(trade, source):
+        common['notes'] = ['These prices belong to a different replay run.']
+        return common
+    # Price excursions remain calculable without a cash multiplier. Temporary scale 1 is internal
+    # only: all currency fields stay None until that multiplier is known.
+    multiplier = trade.point_value if trade.point_value is not None else 1.
+    states, boundaries = holding_states(trade, end)
+    values = [v * multiplier for v in boundaries]
+    point_values = price_boundaries(trade)
+    path, used, covered = [], [], []
+    walk(trade, trade_prices(samples, trade.symbol, source), states, start, end, basis,
+         values, point_values, path, used, covered)
     if not used:
         common['notes'] = ['No matching prices inside the holding interval. Capture or import ticks/bars for this period.']
         return common
@@ -148,21 +182,79 @@ def excursions(trade: Trade, samples: list[PriceSample], source: str, *, basis: 
         notes.append('Currency/R excursions are unavailable until the instrument currency-per-point multiplier is set. '
                      'Price-based points remain available.')
     if max_path_points is not None and len(path) > max_path_points:
-        # Compact the chart only, preserving each bucket's extrema. Metric values use every observation.
-        size = (len(path) + max_path_points - 1) // max_path_points
-        path = [{'ts': path[i]['ts'], 'low': min(p['low'] for p in path[i:i + size]) if trade.point_value is not None else None,
-                 'high': max(p['high'] for p in path[i:i + size]) if trade.point_value is not None else None,
-                 'point_low': min(p['point_low'] for p in path[i:i + size]),
-                 'point_high': max(p['point_high'] for p in path[i:i + size])} for i in range(0, len(path), size)]
-        notes.append('Chart path is compacted for display; original prices remain stored. '
-                     'Use the full recorded path view/export for every observation.')
-    # The newest price measured, which an open trade's result is shown at (Trade.net_at): of prints sharing
-    # the newest time, the last in tape order, as the chart's close is.
-    newest = max(reversed(used), key=lambda s: s.ts)
-    common.update(last_price=newest.last, last_ts=newest.ts)
+        path = compact(trade, path, max_path_points)
+        notes.append(COMPACTED)
+    common.update(newest(trade, used))
     common.update(precision=precision, mae=max(0., -min(values)) if trade.point_value is not None else None,
                   mfe=max(0., max(values)) if trade.point_value is not None else None,
                   mae_points=max(0., -min(point_values)), mfe_points=max(0., max(point_values)),
                   point_precision=precision,
                   observations=len(used), notes=notes, path=path)
     return common
+
+
+TICKS = ('observed-ticks', 'replay-simulated')     # precisions measured from prints alone
+
+
+def carry_on(trade: Trade, previous: list[dict], samples: list[PriceSample], *, now=None) -> list[dict] | None:
+    """An open trade's measurements from one source (`previous`, every basis of it) carried on with the prices
+    stored since: the same as measuring again from entry (measurements), without reading the tape again. MAE
+    and MFE are extremes, so new prices only need comparing with them. `samples` are the source's prices from
+    the earliest previous last_ts on, as Journal.prices chooses them for that window.
+
+    None when that would not be exactly the same, and the caller measures from entry: a closed or incomplete
+    trade, a measurement that is not from prints or has none yet, candles or proxy prices among the new ones,
+    new prices before the last fill or under another kind of label than before (model.trade_prices prefers
+    the contract's own), or quotes arriving for a trade that had no quote-based measurement yet."""
+    if trade.closed or not trade.complete or not previous:
+        return None
+    end = now or dt.datetime.now(dt.timezone.utc)
+    states, _ = holding_states(trade, end)
+    if not states:
+        return None
+    last_fill = instant(trade.fills[-1]['ts'])
+    exact = str(trade.symbol).strip().upper()
+    bases = {m.get('basis', 'last') for m in previous}
+    result = []
+    sign = 1 if trade.direction == 'long' else -1
+    for metric in previous:
+        if metric.get('precision') not in TICKS or not metric.get('last_ts') or instant(metric['last_ts']) < last_fill:
+            return None
+        basis = metric.get('basis', 'last')
+        # The prints already measured: everything before last_ts, and the first last_count at it of those this
+        # basis measures (a quote-based measurement skips prints without the quote).
+        skip, fresh = metric.get('last_count', 1), []
+        for sample in samples:
+            if sample.ts < metric['last_ts']:
+                continue
+            if sample.ts == metric['last_ts'] and skip and (
+                    basis != 'liquidation' or (sample.bid if sign > 0 else sample.ask) is not None):
+                skip -= 1
+                continue
+            fresh.append(sample)
+        if any(s.resolution_seconds or s.proxy or (s.symbol == exact) != metric.get('contract') for s in fresh):
+            return None
+        if 'liquidation' not in bases and any((s.bid if sign > 0 else s.ask) is not None for s in fresh):
+            return None
+        values, point_values, path, used = [], [], [], []
+        walk(trade, fresh, states[-1:], last_fill, end, basis, values, point_values, path, used, [])
+        carried = {**metric, 'through': end.isoformat()}
+        if used:
+            if trade.point_value is not None:
+                carried['mae'] = max(metric['mae'], -min(values))
+                carried['mfe'] = max(metric['mfe'], max(values))
+            carried['mae_points'] = max(metric['mae_points'], -min(point_values))
+            carried['mfe_points'] = max(metric['mfe_points'], max(point_values))
+            carried['observations'] = metric['observations'] + len(used)
+            path = metric['path'] + path
+            if len(path) > PATH_POINTS:
+                path = compact(trade, path, PATH_POINTS)
+                carried['notes'] = list(dict.fromkeys([*metric['notes'], COMPACTED]))
+            carried['path'] = path
+            mark = newest(trade, used)
+            if mark['last_ts'] == metric['last_ts']:
+                mark['last_count'] += metric.get('last_count', 1)
+            carried.update(mark, contract=metric.get('contract'))
+        result.append(carried)
+    return result
+

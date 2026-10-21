@@ -6,7 +6,7 @@ import sqlite3
 
 import pytest
 
-from mwjournal import Execution, Journal, PriceSample, sync
+from mwjournal import Execution, Journal, PriceSample, store, sync
 from mwjournal.analytics import grouped, summary
 from mwjournal.importers import Preview, apply_preview, csv_rows, preview_bridge, preview_csv
 from mwjournal.matching import match
@@ -429,8 +429,8 @@ def test_watcher_recalculates_late_fills_and_only_price_windows_affected(tmp_pat
     worker.poll()
     assert journal.best_metric(journal.trades()[0])['mae'] == 100
     called = []
-    original = sync.measurements
-    monkeypatch.setattr(sync, 'measurements', lambda *args: called.append(args[0].id) or original(*args))
+    original = store.measurements
+    monkeypatch.setattr(store, 'measurements', lambda *args, **kw: called.append(args[0].id) or original(*args, **kw))
     bridge.write_text(newline='', data=json.dumps(event) + '\n' + json.dumps({**event, 'ts': tick(10, 999).ts, 'price': 999}) + '\n')
     worker.poll()
     assert not called                      # current ticks must not rebuild historical closed trades

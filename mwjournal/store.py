@@ -13,6 +13,7 @@ from pathlib import Path
 
 from . import paths
 from .matching import match
+from .metrics import carry_on, measurements
 from .model import (NATIVE, Execution, PriceSample, ProtectionEvent, digest, finite, heartbeat_report, instant,
                     product, timestamp, trade_prices)
 from .scope import event_mode, allows_source
@@ -658,6 +659,26 @@ class Journal(Workspace):
             db.execute('INSERT OR REPLACE INTO metrics VALUES(?,?,?,?)',
                        (trade.id, trade.basis, encode([metric['source'], basis]), encode(metric)))
 
+    def measure(self, trade, source: str, *, since=None):
+        """Measure a trade from one source and record it. `since` is the earliest time among the prices stored
+        since it was last measured: when they all come at or after where an open trade's measurement from
+        prints stopped, it is carried on from there (metrics.carry_on), the same result without reading the
+        tape from entry again. Otherwise, or when it cannot be carried on exactly, it is measured from entry."""
+        clock = self.trade_clock(trade)
+        options = {'now': clock} if clock else {}
+        if since is not None and not trade.closed:
+            previous = [m for m in self.metric_options(trade) if m['source'] == source]
+            stops = [m.get('last_ts') for m in previous]
+            if previous and all(stops) and since >= instant(max(stops)):
+                carried = carry_on(trade, previous, self.prices(trade.symbol, source, start=min(stops)), **options)
+                if carried is not None:
+                    for metric in carried:
+                        self.record_metric(trade, metric)
+                    return
+        samples = self.prices(trade.symbol, source, start=trade.opened, end=trade.closed)
+        for metric in measurements(trade, samples, source, **options):
+            self.record_metric(trade, metric)
+
     def metric_options(self, trade) -> list[dict]:
         if not trade.complete:
             return []
@@ -726,14 +747,17 @@ class Journal(Workspace):
             if end:
                 filters.append('ts<=?')
                 args.append(timestamp(end))
-            query = 'SELECT symbol,payload,ts FROM prices WHERE ' + ' AND '.join(filters)
+            query = 'SELECT rowid AS stored,symbol,payload,ts FROM prices WHERE ' + ' AND '.join(filters)
             if start:
-                query += (' UNION ALL SELECT symbol,payload,ts FROM prices INDEXED BY prices_bars WHERE ' + within +
+                query += (' UNION ALL SELECT rowid AS stored,symbol,payload,ts FROM prices INDEXED BY prices_bars WHERE ' + within +
                           " AND json_extract(payload, '$.resolution_seconds') > 0 AND ts>=? AND ts<? "
                           "AND julianday(ts) + json_extract(payload, '$.resolution_seconds') / 86400.0 > julianday(?)")
                 args.extend([*labels, source, (instant(start) - dt.timedelta(days=1)).isoformat(),
                              timestamp(start), timestamp(start)])
-            rows = db.execute(query + ' ORDER BY ts, symbol', args).fetchall()
+            # Prices sharing a time stay in the order they were stored, the tape's, whatever their label:
+            # the last of them is a candle's close and an open trade's last price, and metrics.carry_on
+            # counts on it.
+            rows = db.execute(query + ' ORDER BY ts, stored', args).fetchall()
         if any(row['symbol'] == exact for row in rows):
             rows = [row for row in rows if row['symbol'] == exact]   # trade_prices' choice, before any payload is read
         return trade_prices([PriceSample.stored(json.loads(row['payload'])) for row in rows], exact, source)

@@ -22,7 +22,6 @@ from pathlib import Path
 
 from . import paths
 from .importers import apply_preview, preview_bridge, preview_csv, preview_prices_csv
-from .metrics import measurements
 from .model import heartbeat_report, instant, product
 from .store import Journal
 from .scope import allows_source
@@ -228,11 +227,9 @@ class SyncWorker:
                            if market == product(trade.symbol) and allows_source(trade, source) and window[1] >= instant(trade.opened)
                            and window[0] < (instant(trade.closed) if trade.closed else now)]
             for source in sources:
-                prices = self.journal.prices(trade.symbol, source, start=trade.opened, end=trade.closed)
-                replay_clock = self.journal.trade_clock(trade)
-                options = {'now': replay_clock} if replay_clock else {}
-                for metric in measurements(trade, prices, source, **options):
-                    self.journal.record_metric(trade, metric)
+                # New prices alone: from where the trade's measurement stopped, when they all come after it.
+                window = None if fills_changed else self.dirty_prices.get((product(trade.symbol), source))
+                self.journal.measure(trade, source, since=window[0] if window else None)
         if self.rebuild:
             self.journal.recalculation_done()
             self.rebuild = False
