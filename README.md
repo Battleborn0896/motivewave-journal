@@ -7,7 +7,7 @@ Live/paper and replay have separate databases. No routine CSV export/import is r
 MotiveWave Journal is an independent open-source project. It is not affiliated with, endorsed by or
 supported by MotiveWave Software.
 
-## What's new in 0.4.7: R from your stop, automatically
+## What's new in 0.4.7: R from your stop, nothing typed is lost, and a faster journal
 
 - **R comes from your stop.** You no longer type a dollar risk: R is your result divided by what your
   stop order risked on the position, wherever you exited.
@@ -18,6 +18,17 @@ supported by MotiveWave Software.
   stop price too, and a dollar risk you saved before keeps its R.
 - **Take profit is no longer shown.** The chart draws the stop R uses as a solid line, dashed where you
   moved your stop order later.
+- **Every review box saves by itself,** on the trade and on the Daily Report Card: there are no Save buttons,
+  and moving to another trade or day never loses what you typed.
+- **An open trade shows one P&L.** Its row in the list and its header show the same Open P&L, live; a closed
+  trade's is its Net P&L.
+- **Missing MAE / MFE says why,** in one line: for example "No prices were recorded for MNQ during this
+  trade. Keep the study on an MNQ chart while you trade it."
+- **Plain words.** Accounts by their names ("SIM"), the orders under the chart as Time, Stop, Status and
+  Price, the runner analysis without codes, and no trade or fill ids on screen.
+- **Faster, most of all in a big journal.** A new fill measures only its own trade; the trade list is built
+  once per change rather than at every click; Stats works out only the tab you open, and compares runners
+  when you press Compare Runners; Export & Backup builds a file only when you ask for it.
 
 ## What's new in 0.4.6: open trades follow the market everywhere, and a filter saves with a name and Enter
 
