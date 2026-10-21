@@ -145,6 +145,35 @@ def test_an_open_trades_row_shows_the_same_open_pnl_as_its_header(home):
     assert '+&#36;48.00' in row                                            # the open row, whatever is selected
 
 
+def test_an_open_trade_whose_prices_do_not_count_says_why_and_never_that_it_is_waiting(home):
+    journal = Journal()
+    journal.ingest([fill('o-in', 'buy', 5000, '2026-10-07T14:00:00Z')])
+    trade = journal.trades()[0]
+    measure(journal, trade, [('2026-10-07T14:00:30Z', 5001), ('2026-10-07T14:00:40Z', 5002)], now='2026-10-07T14:01:00Z')
+    journal.ingest_gaps([{'type': 'gap', 'provider': TICKS, 'symbol': 'ESZ6', 'ts': '2026-10-07T14:00:35Z', 'dropped': 4}])
+    app = open_app()
+    result = widget(app.metric, 'Open P&L')
+    # Prices were recorded, with a gap: no Open P&L at them, as for MAE / MFE, and the line under the numbers
+    # gives the reason. Nothing claims the trade is still waiting for its first price.
+    assert result.value == '—' and result.help == 'Realised so far: -$2.00.'
+    assert said(app.main.caption, "Some of this trade's ticks were not recorded, so MAE / MFE are not measured.")
+    assert not said(app.main.caption, 'Waiting for the first')
+    assert "title='Open P&amp;L'>—<" in rows_html(app)[0]
+
+
+def test_a_dashboard_lists_an_open_trade_without_its_fees_as_its_net_pnl(home):
+    journal = Journal()
+    journal.ingest([fill('o-in', 'buy', 5000, '2026-10-07T14:00:00Z'),
+                    fill('c-in', 'buy', 5000, '2026-10-07T13:00:00Z', symbol='MESZ6'),
+                    fill('c-out', 'sell', 5001, '2026-10-07T13:05:00Z', symbol='MESZ6')])
+    page = journal.save_dashboard('Recent', [{'kind': 'Trades', 'title': 'Recent trades'}])
+    app = open_app('Dashboard')
+    widget(app.selectbox, 'Dashboard page').set_value(page).run()
+    table = next(d.value for d in app.dataframe if 'Contract' in d.value.columns).set_index('Contract')
+    assert table.loc['MESZ6', 'Net P&L'] == 1                              # +$5 less $4 of fees: closed
+    assert table['Net P&L'].isna()['ESZ6']                                 # open: '—', never the -$2 entry fee
+
+
 # ---------------------------------------------------------------- why MAE / MFE are missing
 
 def causes(app):

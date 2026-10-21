@@ -443,13 +443,13 @@ def numbers(journal, trade, annotation: dict, zone) -> None:
     if trade.status == 'open':
         # At the newest price the MAE and MFE beside it were measured with, so the three always agree.
         result, label = common.open_pnl(trade, metric), 'Open P&L'
-        mark = metric.get('last_price') if result is not None else None
-        if mark is not None:
-            why = (f'If the {trade.open_qty:g} still held were closed at {humanize.price(mark)}, the last recorded '
-                   f'price ({common.moment(metric["last_ts"], zone)}). Realised so far: '
+        if result is not None:
+            why = (f'If the {trade.open_qty:g} still held were closed at {humanize.price(metric["last_price"])}, the '
+                   f'last recorded price ({common.moment(metric["last_ts"], zone)}). Realised so far: '
                    f"{money(trade.net, trade.currency)}. The exit's fees are not included.")
         elif trade.net is not None:
-            shown, why = '—', f'Waiting for the first price. Realised so far: {money(trade.net, trade.currency)}.'
+            # No measured price: the line under these numbers says why (common.no_excursions).
+            shown, why = '—', f'Realised so far: {money(trade.net, trade.currency)}.'
     outcome = 'positive' if result is not None and result > 0 else 'negative' if result is not None and result < 0 else 'neutral'
     with cols[0].container(key='trade-result-' + outcome):
         st.metric(label, money(result, trade.currency) if result is not None else shown, help=why)
@@ -458,9 +458,7 @@ def numbers(journal, trade, annotation: dict, zone) -> None:
     cols[1].metric('MAE', common.excursion_amount(mae, unit, trade.currency), help=explain)
     cols[2].metric('MFE', common.excursion_amount(mfe, unit, trade.currency), help=explain)
     cols[3].metric('Peak size', f'{trade.max_qty:g}', help='The most contracts held at once.')
-    if common.replay_ticks_pending(journal, trade):
-        st.caption(common.REPLAY_TICKS_LATER)
-    elif not common.measured(metric):
+    if not common.measured(metric) or common.replay_ticks_pending(journal, trade):
         st.caption(common.no_excursions(journal, trade))
 
 

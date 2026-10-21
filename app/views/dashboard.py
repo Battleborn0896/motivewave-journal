@@ -209,8 +209,10 @@ def draw(journal, rows, widget, page_id):
         return
     if kind == 'Trades':
         if rows:
+            # Net P&L is a closed trade's: an open one's would be its fees so far, so it reads '—'.
             st.dataframe(common.money_table([{'Entry': common.moment(r['opened'], zone, seconds=False), 'Contract': r['symbol'],
-                                              'Side': r['direction'].title(), 'Net P&L': r['net'], 'Tags': r['tags']}
+                                              'Side': r['direction'].title(),
+                                              'Net P&L': r['net'] if r['status'] == 'closed' else None, 'Tags': r['tags']}
                                              for r in rows], currency, results=['Net P&L']), hide_index=True, height=280)
         else:
             st.info('No trades in this sample.')
