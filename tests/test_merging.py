@@ -110,7 +110,7 @@ def test_merge_ui_compound_tagging_checklists_and_json_retain_originals(home):
     app = open_app()
     widget(app.multiselect, 'Original trades to merge').set_value([t.id for t in journal.trades()])
     press(app, 'Merge Selected')
-    assert widget(app.metric, 'Recorded P&L').value == '+$292.00'
+    assert widget(app.metric, 'Net P&L').value == '+$292.00'
     widget(app.toggle, 'Show starter examples').set_value(True).run()
     widget(app.pills, 'Mindset').set_value(['Patient']).run()
     view = merging.ReviewJournal(journal)

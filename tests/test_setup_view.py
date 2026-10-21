@@ -289,7 +289,7 @@ LANDMARKS = {
     'Ratings': lambda app: any(s.label == 'Rating system' for s in app.selectbox),
     'Checklists': lambda app: any(s.label == 'Checklist' for s in app.selectbox),
     'Dashboard': lambda app: any(s.label == 'Dashboard page' for s in app.selectbox),
-    'Daily review': lambda app: any(b.label == 'Save Daily Review' for b in app.button),
+    'Daily review': lambda app: any(t.label.startswith('What I learned') for t in app.text_area),
     'Live session': lambda app: (any(b.key == 'session-timer-live-play' for b in app.button)
                                  and [p.proto.popover.label for p in app.main.get('popover')][:3]
                                  == ['Check-Ins', 'Drafts', 'Checklist']),

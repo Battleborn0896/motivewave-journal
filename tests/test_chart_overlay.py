@@ -99,7 +99,7 @@ def test_long_and_short_arrows_are_anchored_to_exact_fills_without_visible_label
     assert not any(n['tag'] == 'title' for n in nodes)
     details = [n['attrs']['data-detail'] for n in nodes if 'data-detail' in n['attrs']]
     assert len(details) == 2
-    assert 'Entry · 1 @ 100' in details[0] and 'Execution: paper-0' in details[0]
+    assert 'Entry · 1 @ 100' in details[0] and 'paper-0' not in details[0]      # no fill id on screen
     assert 'UTC 1970-01-01T00:00:23.250Z' in details[0]
     assert any(n['attrs'].get('role') == 'img' and n['attrs'].get('aria-label') == details[0] for n in nodes)
 

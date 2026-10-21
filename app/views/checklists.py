@@ -77,7 +77,11 @@ def render(journal, rows):
                     'session from the Checklist menu above the trade list.')
         else:
             zone = common.display_zone(journal)
-            st.dataframe([{'Checklist': r['name'], 'Started': common.moment(r['started'], zone), 'Trade': r['trade_id'],
+            # Every trade a run belongs to, also one a saved filter hides from this page.
+            wanted = {r['trade_id'] for r in history}
+            names = {t.id: common.trade_name(t.row(), zone) for t in journal.trades() if t.id in wanted}
+            st.dataframe([{'Checklist': r['name'], 'Started': common.moment(r['started'], zone),
+                           'Trade': names.get(r['trade_id'], 'A trade no longer listed') if r['trade_id'] else 'Session',
                            'Answers': len(r['answers']), 'Complete': r['complete']} for r in history], hide_index=True)
 
 

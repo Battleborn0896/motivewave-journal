@@ -1,4 +1,5 @@
-"""The Daily Report Card: one saved grade and note per trading day and time zone, beside that day's result.
+"""The Daily Report Card: one grade and note per trading day and time zone, beside that day's result. Every box
+saves when it changes.
 
 It opens on Trades, in place of a trade, from a day's header in the trade list or a day in a dashboard
 calendar. Its own date box picks any other day."""
@@ -57,14 +58,20 @@ def render(journal, rows) -> None:
         st.caption(f'Day tags follow calendar days in {tag_zone}, the day-tag time zone.',
                    help='Set under Setup → Tags, Playbooks & Checklists → Categories. A trade opened late in the '
                         'evening can fall on another date there than in the session time zone above.')
-    with st.form(common.key(journal, 'day-report-' + saved)):
-        planned = st.checkbox('I had a plan before entry', value=old.get('planned', False))
-        risk = st.checkbox('I respected my risk limits', value=old.get('risk_limits', False))
-        stops = st.checkbox('I respected my invalidation/stop', value=old.get('stops', False))
-        rating = st.slider('Session process score', 1, 5, old.get('rating', 3))
-        notes = st.text_area('What I learned / next session adjustment', old.get('notes', ''))
-        if st.form_submit_button('Save Daily Review', type='primary'):
-            journal.update_session(saved, {'planned': planned, 'risk_limits': risk, 'stops': stops,
-                                           'rating': rating, 'notes': notes, 'timezone': timezone,
-                                           'date': date.isoformat()})
-            st.success('Saved daily review.')
+    # Each box saves when it changes, as a trade's notes do: nothing typed is lost by clicking a trade or
+    # another day. The keys carry the day and zone, so each day shows its own review.
+    def save(field, widget):
+        value = st.session_state.get(widget)
+        journal.update_session(saved, {field: value.strip() if isinstance(value, str) else value,
+                                       'timezone': timezone, 'date': date.isoformat()})
+
+    def box(field):
+        widget = common.key(journal, f'day-{field}-{saved}')
+        return {'key': widget, 'on_change': save, 'args': (field, widget)}
+
+    st.checkbox('I had a plan before entry', value=old.get('planned', False), **box('planned'))
+    st.checkbox('I respected my risk limits', value=old.get('risk_limits', False), **box('risk_limits'))
+    st.checkbox('I respected my invalidation/stop', value=old.get('stops', False), **box('stops'))
+    st.slider('Session process score', 1, 5, old.get('rating', 3), **box('rating'))
+    st.text_area('What I learned / next session adjustment', old.get('notes', ''), help='Saves when you leave the box.',
+                 **box('notes'))

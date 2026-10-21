@@ -16,7 +16,8 @@ import streamlit as st
 
 from mwjournal import Journal, paths
 from mwjournal.metrics import measurements
-from mwjournal.model import Trade, instant, instrument_market, point_value
+from mwjournal.model import (ENTRY_MISSING, EXIT_MISSING, NO_FILL_PRICE, Trade, instant, instrument_market,
+                             point_value)
 from mwjournal.scope import replay_run
 from mwjournal import humanize, risk, units, tagging
 from mwjournal.sync import DEFAULT_CONNECTION
@@ -323,6 +324,70 @@ def replay_ticks_pending(journal, trade) -> bool:
     return not any(m.get('precision') == 'observed-ticks' for m in journal.metric_options(trade))
 
 
+def measured(metric) -> bool:
+    """Whether a measurement has MAE and MFE: a stored one can still be waiting for its first price."""
+    return bool(metric) and metric.get('precision') != 'pending'
+
+
+# Why a trade has no result, as the line under its numbers says it.
+UNKNOWN = {ENTRY_MISSING: "Unknown: the entry fill is no longer in MotiveWave's history.",
+           EXIT_MISSING: "Unknown: the exit fill is not in MotiveWave's history.",
+           NO_FILL_PRICE: 'Unknown: MotiveWave stored no price for one of the fills.'}
+
+
+def no_excursions(journal, trade) -> str:
+    """Why a trade shows no MAE / MFE, in one line: what happened to its prices, never a setting to change.
+    The causes, first to last: fills missing, a replay trade's ticks still to come, prices that do not
+    measure it (a gap in the ticks, only candles or other estimates), an open trade with no price yet, no
+    prices at all."""
+    if trade.incomplete:
+        return UNKNOWN[trade.incomplete[0]]
+    if replay_ticks_pending(journal, trade):
+        return REPLAY_TICKS_LATER
+    kinds = {m.get('precision') for m in journal.metric_options(trade)} - {'pending', None}
+    market = instrument_market(trade.symbol)
+    if 'observed-ticks' in kinds:
+        return 'Some of this trade\'s ticks were not recorded, so MAE / MFE are not measured.'
+    if 'estimated-bars' in kinds:
+        return 'Only 1-minute candles were recorded, so MAE / MFE are not measured.'
+    if kinds:
+        return 'Only estimated prices were recorded, so MAE / MFE are not measured.'
+    if trade.status == 'open':
+        return f'Waiting for the first {market} price.'
+    # 'an MNQ chart', 'a CL chart': the article goes by how the first letter is said.
+    article = 'an' if market[:1] in 'AEFHILMNORSX' else 'a'
+    return (f'No prices were recorded for {market} during this trade. Keep the study on {article} {market} chart '
+            'while you trade it.')
+
+
+def open_pnl(trade, metric):
+    """An open trade's P&L at the newest price its MAE and MFE were measured with, so the three agree: the
+    header's and the trade list's. None until a price has been measured."""
+    return trade.net_at(metric.get('last_price')) if trade.status == 'open' and metric else None
+
+
+def row_trade(row) -> Trade:
+    """The Trade a trade-list row was made from (rows_for)."""
+    trade = Trade(**{f.name: row[f.name] for f in fields(Trade)})
+    if row.get('merge_leg_ids'):
+        trade.merge_leg_ids = row['merge_leg_ids']
+        trade.merge_overlapping = row.get('merge_overlapping', False)
+    return trade
+
+
+def trade_name(row, zone: str) -> str:
+    """A trade as a trader recognises it, in place of its id: 'Oct 20, 5:05 PM · NQZ6 Short 2'."""
+    return (f"{moment(row['opened'], zone, seconds=False)} · {row['symbol']} {row['direction'].title()} "
+            f"{row['max_qty']:g}")
+
+
+def account_name(journal, provider, account) -> str:
+    """An account as the trader knows it: the name given to it under Journals & Accounts, else the platform's
+    own ('SIM'). Never the provider code it is stored under."""
+    from mwjournal import journals
+    return journals.alias(getattr(journal, 'capture_journal', journal), (provider, account))
+
+
 def metric_options(journal, trade):
     options = journal.metric_options(trade)
     if journal.display_settings()['excursion_policy'] != 'ticks-only':
@@ -340,14 +405,10 @@ def excursion_values(journal, trade, metric, risk=None):
 
 def display_excursion_rows(journal, rows):
     result = []
-    keys = [f.name for f in fields(Trade)]
     unit = excursion_unit(journal)
     sizes = journal.display_settings()['tick_sizes']
     for row in rows:
-        trade = Trade(**{k: row[k] for k in keys})
-        if row.get('merge_leg_ids'):
-            trade.merge_leg_ids = row['merge_leg_ids']
-            trade.merge_overlapping = row.get('merge_overlapping', False)
+        trade = row_trade(row)
         metric = best_display_metric(journal, trade)
         mae, mfe = (units.value(metric, name, unit, risk=row.get('initial_risk'), tick=units.tick_size(trade.symbol, sizes))
                     for name in ('mae', 'mfe'))
@@ -481,7 +542,9 @@ def filter_rule(journal, rows: list[dict]) -> dict:
                            help=f'Calendar days in your display time zone, {zone}.')
     with st.expander('More Filters'):
         c1, c2, c3 = st.columns(3)
-        accounts = c1.multiselect('Accounts', sorted({r['account'] for r in rows}), key=key(journal, 'filter-accounts' + fresh))
+        names = {r['account']: r['account_label'] for r in rows}         # by the name given under Journals & Accounts
+        accounts = c1.multiselect('Accounts', sorted(names), format_func=lambda a: names.get(a, a),
+                                  key=key(journal, 'filter-accounts' + fresh))
         symbols = c2.multiselect('Exact Contracts', sorted({r['symbol'] for r in rows}), key=key(journal, 'filter-symbols' + fresh))
         available_tags = {t for r in rows for t in r['tags']}
         # A removed tag can still be an active filter; do not silently broaden the list on return.

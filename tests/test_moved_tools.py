@@ -35,7 +35,7 @@ def two_days(home):
 
 
 def report_open(app):
-    return any(b.label == 'Save Daily Review' for b in app.button)
+    return any(t.label.startswith('What I learned') for t in app.text_area)
 
 
 def day_header(app, day):
@@ -60,14 +60,15 @@ def test_a_days_header_opens_its_report_card_in_place_of_the_trade_and_back_retu
     assert len(listed(app)) == 2                                              # the list stays beside it
     headers = [m.value for m in app.main.markdown if "class='mwj-day" in m.value]
     assert "mwj-day sel'" in headers[1] and "mwj-day sel'" not in headers[0]  # Oct 7 is the open day
-    # Grade the day, write the note, tag the day: the card is the whole Daily Report Card.
+    # Grade the day, write the note, tag the day: the card is the whole Daily Report Card. There is no Save:
+    # going straight back to the trade after typing keeps what was typed.
+    assert not any(b.label == 'Save Daily Review' for b in app.button)
     widget(app.checkbox, 'I had a plan').check()
     widget(app.text_area, 'What I learned').set_value('Waited for the open.')
-    press(app, 'Save Daily Review')
-    saved = journal.get('sessions')['2026-10-07:' + NY]
-    assert saved['planned'] and saved['notes'] == 'Waited for the open.'
     assert any(p.label == 'Mindset' for p in app.pills) or said(app.caption, 'No day tags yet')
     press(app, '← Back to Trades')
+    saved = journal.get('sessions')['2026-10-07:' + NY]
+    assert saved['planned'] and saved['notes'] == 'Waited for the open.'
     assert not report_open(app) and app.session_state['selected-trade-live'] == selected
     assert any(m.label == 'MAE' for m in app.metric)
 

@@ -221,7 +221,7 @@ def test_money_and_time_are_human_on_the_trades_page_and_in_exports(home):
     from views import export
     journal = seed_preview(home)
     app = open_app()
-    assert widget(app.metric, 'Recorded P&L').value == '+$242.00'
+    assert widget(app.metric, 'Net P&L').value == '+$242.00'
     journal.set_excursion_policy('best-available')
     app.run()
     assert widget(app.metric, 'MAE').value.startswith('$') and widget(app.metric, 'MFE').value.startswith('$')

@@ -53,8 +53,9 @@ study: click **Install MotiveWave Study**, then quit MotiveWave completely and o
 - **Prints recorded as they trade are never marked proxy.** Only the history a continuous chart loads
   when it opens is, because it can be back-adjusted after a roll.
 - **An open trade is live.** While a trade is open, its chart, **Open P&L** (at the newest price its
-  MAE and MFE were measured with; the exit's fees are not in yet), MAE and MFE are drawn again every
-  second, in a named journal too. The minute in progress is drawn from the study's prints until
+  MAE and MFE were measured with; the exit's fees are not in yet; the same number in its row of the list, '—'
+  until the first price), MAE and MFE are drawn again every second, in a named journal too. A closed trade's
+  result is its **Net P&L**. The minute in progress is drawn from the study's prints until
   MotiveWave's own candle for it arrives. A chart you zoomed or panned keeps your view, and while it
   shows the newest candle it moves along with new ones. The study writes to disk four times a second, the app reads it every second and the
   page redraws every second, so it runs one to three seconds behind MotiveWave. The **More → MAE / MFE**
@@ -239,8 +240,9 @@ and [MNQ specifications](https://www.cmegroup.com/markets/equities/nasdaq/micro-
 These are not spread/option specifications; contract-specific overrides are stored separately.
 
 Use the in-place **Notes** and **Checklist** tabs and the **More** tab (MAE / MFE, Executions, Runner)
-instead of scrolling through a long stacked page. Setup/notes autosave when leaving the field;
-the Stop and Followed my plan use **Save Plan**. **Prev / Next** reviews adjacent trades while
+instead of scrolling through a long stacked page. Every review box (setup, notes, Stop, Followed my plan, and
+each box of the Daily Report Card) saves when it changes or you leave it; there is no Save button, and clicking
+another trade or day keeps what was typed. **Prev / Next** reviews adjacent trades while
 the list remains visible. A tag edit that removes the current trade from your filters keeps it
 open until you change the filter/selection, rather than interrupting the review. Existing flat tags
 remain under **Other tags**. **+ Category** creates first-class groups such as Orderflow or Psychology,
@@ -295,9 +297,10 @@ place, modify or block an order. This editor is not pixel/shortcut/format compat
 and stop; the minutes between check-ins and the groups are chosen under **Check-Ins**). When it runs out, one click
 on a tag is the check-in, logged to the session or an explicitly selected open position. Timer state is not
 persisted or restarted automatically, and there are no background notifications or sounds.
-Pre-trade drafts (the **Drafts** menu) are not fake executions. An armed draft needs a precise provider/account/exact
-contract and a market-clock window, at most 24 hours. Only newly captured trades qualify. Ambiguous
-matches attach nothing; cancellation preserves the draft record. Existing reviewed groups, notes
+Pre-trade drafts (the **Drafts** menu) are not fake executions. A draft (Waiting until its trade comes) needs an
+account and exact contract and a market-clock window, at most 24 hours. Only newly captured trades qualify. When
+more than one trade or draft could match, nothing attaches and the draft says Needs review; a draft that attached
+says Used, and cancelling (Cancelled) preserves the draft record. Existing reviewed groups, notes
 and a stop already saved take precedence. Reconciliation runs after bridge polling, not during a read-only render.
 
 Custom-statistics scripts require an explicit **Run Local Script** click for each changed code or

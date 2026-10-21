@@ -16,7 +16,7 @@ def render(journal, rows):
     with st.form(common.key(capture, 'new-named-journal')):
         name = st.text_input('New journal name', max_chars=80)
         scopes = st.multiselect('Capture accounts · empty mirrors all', known_scopes,
-                                 format_func=lambda scope: journals.alias(capture, scope) + ' · ' + scope[0])
+                                 format_func=lambda scope: journals.alias(capture, scope))
         if st.form_submit_button('Create Journal', type='primary'):
             try:
                 id = journals.create(capture, name, scopes)
@@ -52,7 +52,7 @@ def render(journal, rows):
                         st.error(str(exc))
     if known_scopes:
         theme.section('Account Names')
-        scope = st.selectbox('Account to rename', known_scopes, format_func=lambda s: ' · '.join(s))
+        scope = st.selectbox('Account to rename', known_scopes, format_func=lambda s: journals.alias(capture, s))
         with st.form(common.key(capture, 'account-alias-form')):
             name = st.text_input('Display name', journals.alias(capture, scope), max_chars=80,
                                  help='A label only. Provider and account IDs in fills and order links stay unchanged.')
