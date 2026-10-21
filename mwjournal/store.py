@@ -719,6 +719,12 @@ class Journal(Workspace):
         for metric in measured:
             self.record_metric(trade, metric)
 
+    def measured(self) -> set[tuple[str, str, str]]:
+        """(trade id, basis, source) of every stored measurement, read from the table's key alone."""
+        with self.connect() as db:
+            return {(row[0], row[1], json.loads(row[2])[0])
+                    for row in db.execute('SELECT trade_id, basis, source FROM metrics')}
+
     def metric_options(self, trade) -> list[dict]:
         if not trade.complete:
             return []

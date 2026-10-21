@@ -107,6 +107,40 @@ def test_the_watcher_builds_its_trades_again_only_when_fills_or_multipliers_chan
     assert len(built) == 4
 
 
+def test_a_new_fill_measures_only_the_trade_whose_fills_it_changed(tmp_path, monkeypatch):
+    journal, bridge = watched(tmp_path)
+    write(bridge, [fill('buy', 'a-in', 20000, '2026-10-07T14:00:00Z'), tick(19990, '2026-10-07T14:00:01Z'),
+                   fill('sell', 'a-out', 20010, '2026-10-07T14:00:02Z'),
+                   fill('buy', 'b-in', 20010, '2026-10-07T14:01:00Z'), tick(20020, '2026-10-07T14:01:01Z')])
+    worker = SyncWorker(journal)
+    worker.poll()
+    closed, opened = journal.trades()
+    before = journal.metric_options(closed)
+    measured = []
+    original = Journal.measure
+    monkeypatch.setattr(Journal, 'measure', lambda self, trade, source, **options: (
+        measured.append(trade.id), original(self, trade, source, **options))[1])
+    # A second contract into the open trade, in the same account and contract as the closed one: only the open
+    # trade is measured, from entry, as its fills now are.
+    write(bridge, [fill('buy', 'b-add', 20020, '2026-10-07T14:01:02Z')])
+    worker.poll()
+    assert measured == [opened.id]
+    _, scaled = journal.trades()
+    assert scaled.basis != opened.basis and journal.best_metric(scaled)['observations'] == 1
+    assert journal.metric_options(closed) == before
+    # The fill that closes it: the same, and the closed trade's measurement is still the one stored at first.
+    measured.clear()
+    write(bridge, [fill('sell', 'b-out', 20030, '2026-10-07T14:01:03Z'), fill('sell', 'b-out2', 20030, '2026-10-07T14:01:03Z')])
+    worker.poll()
+    assert measured == [opened.id] and journal.trades()[1].closed
+    assert journal.metric_options(closed) == before
+    # After an upgrade every trade is measured again, once.
+    measured.clear()
+    worker.rebuild = True
+    worker.poll()
+    assert sorted(measured) == sorted([closed.id, opened.id]) and not worker.rebuild
+
+
 def test_the_result_of_an_open_trade_at_a_price():
     long, = match([Execution('t', 'a', 'NQZ6', 'buy', 2, 20000, '2026-10-07T14:00:00Z', commission=4,
                              execution_id='l')], {'NQZ6': 20})
