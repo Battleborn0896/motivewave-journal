@@ -225,9 +225,10 @@ sent yet (new) are skipped. A stop is linked by one rule, with no parent order o
   goes to the one that ended, and a working stop, stamped then as a bracket's stop is when its entry fills,
   to the one that began;
 - that choice is kept for the order id for as long as the study runs, so a stop that is moved, filled or
-  cancelled stays with its position. The rule gives the same answer whenever the study first sees a stop, so
-  after a restart a stop left working after its position was closed by hand stays with that position, and a
-  cancelled stop never goes to a later one.
+  cancelled stays with its position. After a restart a stop left working, and not moved, after its position
+  was closed by hand stays with that position, and a cancelled stop never goes to a later one. MotiveWave
+  stamps a bracket's stop up to about 0.1 s before its entry fill, so a stop of a re-entry on the same side
+  within that time of an exit would go to the position that exited.
 
 Positions, for this rule, are the trades the app makes of the fills the study has written (`mwjournal/matching.py`),
 per account, contract and replay run: fills with MotiveWave's position id are netted inside that position,

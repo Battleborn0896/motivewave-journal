@@ -311,8 +311,8 @@ Sizes:
 
 **Link** (one rule, no parentId or positionId):
 - the order must be on the same mode, account and contract as a position, and on its closing side (a sell stop for a long, a buy stop for a short);
-- the first time this study run sees an order id: if a position on that book is open, it goes to that position;
-- otherwise it goes to the position whose [first fill, last fill] contains the order's `getLastModified()` time;
+- the first time this study run sees an order id, it goes to the position whose [first fill, last fill] (to now while open) contains the order's `getLastModified()` time;
+- a working stop that no position held then (a bracket's stop stamped a moment before its entry fills) goes to the open position;
 - the choice is remembered per order id for the run.
 
 **Event.** `protection`, role `stop`, `entry_execution_id` = that position's first fill, provider = that fill's provider. The same order with a changed price or state is a new line, as today.

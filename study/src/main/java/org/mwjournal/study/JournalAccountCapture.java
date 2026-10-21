@@ -544,9 +544,8 @@ final class JournalAccountCapture {
   /** The stop link rule, for a stop on the same mode, account and contract (and replay run) as these positions
    * and on their closing side (a sell stop for a long, a buy stop for a short): the position held at the order's
    * last-modified time, from its first fill to its last (to now while open); a working stop no position held
-   * then (a bracket's stop placed a moment before its entry fills) goes to the open position. The same answer
-   * whenever the study first sees the stop, so a stop left working after a position closed by hand stays with
-   * that position across a restart. At the instant one position ends and the next begins, a stop that ended
+   * then (a bracket's stop placed a moment before its entry fills) goes to the open position. So a stop left
+   * working, and not moved, after a position closed by hand stays with that position across a restart. At the instant one position ends and the next begins, a stop that ended
    * then (filled, cancelled or rejected) ended with the first, and a working one was placed for the next. Null
    * when there is none. The order's parent and position ids play no part: prop accounts fill with no position
    * id and no entry flag. */
