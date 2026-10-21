@@ -40,7 +40,8 @@ def files(journal, rows=None) -> list[tuple[str, str, object, str]]:
                                      **{t.id: journal.metric_options(t) for t in journal.trades()}},
                     'sessions': journal.get('sessions'),
                     'linked_protection': list({json.dumps(e.__dict__, sort_keys=True): e.__dict__
-                                               for t in original.trades() for e in original.protection_events(t)}.values())}
+                                               for events in original.protection_by_trade(original.trades()).values()
+                                               for e in events}.values())}
         return json.dumps(exported, indent=2, allow_nan=False)
 
     def table():

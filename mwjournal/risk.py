@@ -36,9 +36,13 @@ class Plan:
 def settles_at(trade) -> dt.datetime:
     """The moment a trade's stop counts: its first fill plus STOP_SETTLES, or just before its first
     exit when that comes sooner, so a trade stopped out in five seconds has the stop that took it out."""
-    moment = instant(trade.fills[0]['ts']) + dt.timedelta(seconds=STOP_SETTLES)
+    first = instant(trade.fills[0]['ts'])
+    moment = first + dt.timedelta(seconds=STOP_SETTLES)
     exit = next((instant(f['ts']) for f in trade.fills if f['role'] == 'exit'), None)
-    return moment if exit is None or exit > moment else exit - dt.timedelta(microseconds=1)
+    if exit is None or exit > moment:
+        return moment
+    # Never before the first fill: a trade in and out within one millisecond holds its entry at that moment.
+    return max(first, exit - dt.timedelta(microseconds=1))
 
 
 def position(trade) -> tuple[float, float] | None:
@@ -102,7 +106,7 @@ def plan(trade, annotation: dict, events) -> Plan:
     if risk is None:
         held = position(trade)
         if trade.incomplete:
-            why = 'Unknown: ' + ', '.join(trade.incomplete) + '.'
+            why = ''                      # the line under the trade's numbers says why its result is unknown
         elif trade.point_value is None:
             why = 'R needs this contract\'s multiplier.'
         elif stop is None and len(prices) > 1:

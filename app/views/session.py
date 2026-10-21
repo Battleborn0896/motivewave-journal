@@ -235,7 +235,7 @@ def draft_panel(journal, rows):
             if st.form_submit_button('Arm Draft', type='primary'):
                 try:
                     journal.save_draft(name, provider=scope[0], account=scope[1], symbol=scope[2], start=start, end=end,
-                                        tags=tags, notes=notes, stop=stop.strip() or None)
+                                        tags=tags, notes=notes, stop=stop.replace(',', '').strip() or None)
                     st.rerun()
                 except ValueError as exc:
                     st.error(str(exc))

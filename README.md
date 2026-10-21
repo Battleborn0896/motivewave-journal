@@ -59,6 +59,9 @@ This release comes with study **0.3.5**.
 - **Faster, most of all in a big journal.** A new fill measures only its own trade; the trade list is built
   once per change rather than at every click; Stats works out only the tab you open, and compares runners
   when you press Compare Runners; Export & Backup builds a file only when you ask for it.
+- **A review stays with its trade.** When an update groups your fills into trades differently, a review
+  and its pictures move to the trade that now holds the fill they were saved on (unless that trade already
+  has a review of its own). Reviews an earlier update had left out of sight come back the same way.
 
 ## What's new in 0.4.6: open trades follow the market everywhere, and a filter saves with a name and Enter
 

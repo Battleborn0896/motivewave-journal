@@ -371,6 +371,33 @@ class Journal(Workspace):
             found[name] = sorted(item['trade_id'] for item in state[kind].values() if item.get('trade_id'))
         return {name: [id for id in dict.fromkeys(ids) if id not in known] for name, ids in found.items()}
 
+    def reattach_reviews(self, trades) -> int:
+        """Keep reviews with their trades when fills are regrouped. A trade is named after its first fill
+        (matching.start), so an upgrade or a fill described again can leave a review under a name no trade has.
+        Its pictures move to the trade that now holds the fill it was named after, and so does its review when
+        that trade has none of its own; otherwise the review stays stored where it was (detached_reviews).
+        Returns how many reviews moved. `trades` are this journal's trades as just built."""
+        known = {trade.id for trade in trades}
+        with self.connect() as db:
+            detached = {row[0] for row in db.execute('SELECT trade_id FROM annotations UNION SELECT trade_id FROM media')}
+        detached -= known
+        if not detached:
+            return 0
+        holder = {fill['key']: trade.id for trade in trades for fill in trade.fills}
+        moves = {}
+        for fill in self.executions():
+            name = digest([(fill.provider, fill.account, fill.symbol, fill.currency), fill.key, fill.side])[:24]
+            if name in detached and fill.key in holder:
+                moves[name] = holder[fill.key]
+        moved = 0
+        with self.connect() as db:
+            db.execute('BEGIN IMMEDIATE')
+            for old, new in moves.items():
+                db.execute('UPDATE media SET trade_id=? WHERE trade_id=?', (new, old))
+                moved += db.execute('UPDATE annotations SET trade_id=? WHERE trade_id=? AND NOT EXISTS '
+                                    '(SELECT 1 FROM annotations WHERE trade_id=?)', (new, old, new)).rowcount
+        return moved
+
     def set_instrument(self, symbol: str, point_value: float):
         with self.connect() as db:
             db.execute('INSERT OR REPLACE INTO instruments VALUES(?,?)',

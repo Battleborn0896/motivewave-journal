@@ -285,8 +285,12 @@ def mirror(capture, target, scopes):
             db.execute('BEGIN')
             db.execute('CREATE TEMP TABLE selected_trades (id TEXT PRIMARY KEY)')
             db.executemany('INSERT INTO selected_trades VALUES(?)', [(id,) for id in ids])
-            db.execute('INSERT OR REPLACE INTO main.metrics SELECT incoming.* FROM capture.metrics incoming '
-                       'JOIN selected_trades selected ON incoming.trade_id=selected.id')
+            # Only rows that changed: an unchanged row keeps its rowid, which common.rows reads to know whether the
+            # trade list must be built again.
+            db.execute('INSERT INTO main.metrics SELECT incoming.* FROM capture.metrics incoming '
+                       'JOIN selected_trades selected ON incoming.trade_id=selected.id WHERE true '
+                       'ON CONFLICT(trade_id, basis, source) DO UPDATE SET payload=excluded.payload '
+                       'WHERE main.metrics.payload != excluded.payload')
             # The path stays a reference to original local captures. allowed_media_roots is set by
             # open_named, not trusted from the copied payload. Manual named-journal captures stay local.
             db.execute('INSERT OR IGNORE INTO main.media SELECT incoming.* FROM capture.media incoming '

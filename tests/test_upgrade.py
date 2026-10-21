@@ -306,3 +306,36 @@ def test_fills_that_never_had_position_fields_are_left_byte_for_byte(tmp_path):
     assert upgraded.upgrade_note()['executions_rewritten'] == 0
     assert upgraded.recalculation_due()          # nothing regrouped, but measured under older rules: once more
     assert [(t.id, t.net, t.basis) for t in upgraded.trades()] == trades
+
+
+def test_the_watcher_moves_a_review_left_behind_to_the_trade_that_now_holds_its_fill(tmp_path):
+    path, _ = journal_0_3_0(tmp_path / 'home')
+    false_short, swallowed = match(fills(unlabelled(history())))[:2]
+    holder = next(t for t in Journal(path).trades() if 'a2' in [f['execution_id'] for f in t.fills])
+    assert holder.id != swallowed.id
+    db = sqlite3.connect(path)
+    with db:
+        db.execute('INSERT INTO annotations VALUES(?,?)', (swallowed.id, json.dumps({'notes': 'adrift', 'tags': []})))
+        db.execute('INSERT INTO media VALUES(?,?,?)', ('m2', swallowed.id, json.dumps({'kind': 'screenshot'})))
+    db.close()
+    journal = Journal(path)
+    SyncWorker(journal).trades()
+    assert journal.annotations()[holder.id]['notes'] == 'adrift' and len(journal.trade_media(holder.id)) == 1
+    assert swallowed.id not in journal.annotations()
+    assert not any(journal.detached_reviews().values())
+
+
+def test_a_review_left_behind_never_replaces_the_review_its_fill_now_has(tmp_path):
+    path, _ = journal_0_3_0(tmp_path / 'home')
+    false_short, swallowed = match(fills(unlabelled(history())))[:2]
+    holder = next(t for t in Journal(path).trades() if 'a2' in [f['execution_id'] for f in t.fills])
+    db = sqlite3.connect(path)
+    with db:
+        db.execute('INSERT INTO annotations VALUES(?,?)', (holder.id, json.dumps({'notes': 'its own', 'tags': []})))
+        db.execute('INSERT INTO annotations VALUES(?,?)', (swallowed.id, json.dumps({'notes': 'adrift', 'tags': []})))
+        db.execute('INSERT INTO media VALUES(?,?,?)', ('m2', swallowed.id, json.dumps({'kind': 'screenshot'})))
+    db.close()
+    journal = Journal(path)
+    SyncWorker(journal).trades()
+    assert journal.annotations()[holder.id]['notes'] == 'its own' and len(journal.trade_media(holder.id)) == 1
+    assert journal.detached_reviews()['annotations'] == [swallowed.id]       # still stored, still reported

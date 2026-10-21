@@ -154,3 +154,18 @@ def test_named_journal_creation_and_archive_ui_do_not_remove_files(home):
     press(app, 'Archive Journal')
     assert file.is_file()
     assert app.session_state[common.key(capture, 'named-journal')] is None
+
+
+def test_mirroring_again_leaves_unchanged_measurements_in_place(home):
+    capture = seed_preview(home)
+    id = journals.create(capture, 'Paper', [('motivewave', 'paper')])
+    target = journals.open_named(capture, id)
+
+    def stored():
+        with sqlite3.connect(target.path) as db:
+            return db.execute('SELECT rowid, trade_id, basis, source, payload FROM metrics ORDER BY rowid').fetchall()
+
+    before = stored()
+    assert before                                    # the trade was measured from its bars
+    journals.open_named(capture, id)
+    assert stored() == before                        # same rows, same rowids: the trade list is not rebuilt
