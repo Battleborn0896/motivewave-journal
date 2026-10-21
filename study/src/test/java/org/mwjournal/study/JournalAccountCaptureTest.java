@@ -1,8 +1,15 @@
 package org.mwjournal.study;
 
 import java.nio.file.Files;
+import java.nio.file.Path;
+import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.concurrent.atomic.AtomicReference;
+import org.mwjournal.study.JournalNativeAccess.Fill;
+import org.mwjournal.study.JournalNativeAccess.ProtectiveOrder;
+import org.mwjournal.study.JournalNativeAccess.Snapshot;
 
 /** Read-only fixtures: never starts MotiveWave, logs in, or touches a broker. */
 public final class JournalAccountCaptureTest {
@@ -14,8 +21,9 @@ public final class JournalAccountCaptureTest {
     var a = fill("a", false, true, 1, 5000, TIME, "parent", "position");
     var b = fill("b", false, false, 1, 5002, TIME + 120000, "exit", "position");
     var r = fill("r", true, true, 2, 5000, TIME, "replay-parent", "replay-position");
-    var stop = order("sl", "parent", "position", "stop", "working", 4998, TIME, false);
-    var unlinked = order("unlinked", "", "", "target", "working", 5005, TIME, false);
+    var stop = order("sl", "parent", "position", "working", 4998, TIME, false);
+    // A buy stop beside a long is on the position's own side: never linked, never written.
+    var unlinked = order("unlinked", "", "", true, "working", 5005, TIME, false);
     var snapshot = new AtomicReference<>(new JournalNativeAccess.Snapshot("workspace", List.of(a, b, r), List.of(stop, unlinked)));
     var capture = JournalAccountCapture.fixture(file, snapshot::get);
     String originalRun = capture.replayRun("ESZ6", TIME);
@@ -23,7 +31,7 @@ public final class JournalAccountCaptureTest {
     capture.poll(); capture.poll();
     assert capture.failure == null;
     snapshot.set(new JournalNativeAccess.Snapshot("workspace", List.of(a, b, r),
-        List.of(order("sl", "parent", "position", "stop", "working", 4999, TIME + 30000, false))));
+        List.of(order("sl", "parent", "position", "working", 4999, TIME + 30000, false))));
     capture.poll();
     String nextRun = capture.replayRun("ESZ6", TIME - 1000);
     assert !nextRun.equals(originalRun) : "A rewind gets a distinct price run";
@@ -51,7 +59,7 @@ public final class JournalAccountCaptureTest {
       var beats = lines.stream().filter(s -> s.contains("\"type\":\"heartbeat\"")).toList();
       assert !beats.isEmpty() : "Each environment gets its own heartbeat";
       assert beats.stream().allMatch(s -> s.contains("\"connector\":\"motivewave-journal-study\"")
-          && s.contains("\"connector_version\":\"0.3.4\"") && s.contains("\"provider\":\"motivewave-native\"")
+          && s.contains("\"connector_version\":\"0.3.5\"") && s.contains("\"provider\":\"motivewave-native\"")
           && s.endsWith("}")) : "Heartbeats name the writer and its version";
     }
 
@@ -108,6 +116,12 @@ public final class JournalAccountCaptureTest {
     waiting.close();
     assert Files.readAllLines(JournalAccountCapture.replayFile(waitingFile)).stream()
         .filter(s -> s.contains("\"type\":\"execution\"")).count() == 1;
+    unchangedFillsBuildNothing(folder);
+    replayClock(folder);
+    positions();
+    propStops(folder);
+    stopsThatMoveAndFill(folder);
+    restartedStops(folder);
     if (Boolean.getBoolean("mwj.checkNativeContract")) {
       // Resolve only public method contracts; NEVER invoke the reader outside MotiveWave.
       assert JournalNativeAccess.connect(JournalAccountCaptureTest.class.getClassLoader()) != null;
@@ -117,16 +131,208 @@ public final class JournalAccountCaptureTest {
     try (var left = Files.walk(folder)) {
       for (var path : left.sorted(java.util.Comparator.reverseOrder()).toList()) Files.delete(path);
     }
-    System.out.println("Journal account capture passed: separate environments, manual fills, linked SL/TP, rewinds, restart identities, conflicts and visible failures.");
+    System.out.println("Journal account capture passed: separate environments, manual fills, linked stops (prop "
+        + "fills with no position id, the stop's own side, a moved and a filled stop, a restart), no event built for "
+        + "an unchanged fill, the replay clock saved on a rewind or every 10 s, rewinds, restart identities, "
+        + "conflicts and visible failures.");
+  }
+
+  /** A fill that comes back as it was is not built into an event again; one that changed is. */
+  private static void unchangedFillsBuildNothing(Path folder) throws Exception {
+    var a = fill("a", false, true, 1, 5000, TIME, "parent", "position");
+    var b = fill("b", false, false, 1, 5002, TIME + 120000, "exit", "position");
+    var snapshot = new AtomicReference<>(new Snapshot("workspace", List.of(a, b), List.of()));
+    var capture = JournalAccountCapture.fixture(folder.resolve("unchanged.ndjson"), snapshot::get);
+    capture.poll();
+    assert capture.eventsBuilt == 2 : capture.eventsBuilt;
+    for (int i = 0; i < 5; i++) capture.poll();
+    assert capture.eventsBuilt == 2 : "Unchanged fills build no event: " + capture.eventsBuilt;
+    // MotiveWave changing a fill after it was written: built once to tell, a conflict, then passed over again.
+    snapshot.set(new Snapshot("workspace", List.of(a, fill("b", false, false, 2, 5002, TIME + 120000, "exit", "position")),
+        List.of()));
+    capture.poll(); capture.poll();
+    assert capture.eventsBuilt == 3 && capture.warnings.equals("1 fill record changed after capture (not duplicated)")
+        : capture.eventsBuilt + " " + capture.warnings;
+    capture.close();
+    var executions = Files.readAllLines(folder.resolve("unchanged.ndjson")).stream()
+        .filter(line -> line.contains("\"type\":\"execution\"")).count();
+    assert executions == 2 : executions;
+  }
+
+  /** The replay clock is saved at once for a new run (a rewind), otherwise at most every 10 seconds, and
+   * when the study closes. */
+  private static void replayClock(Path folder) throws Exception {
+    var file = folder.resolve("clock.ndjson");
+    var capture = JournalAccountCapture.fixture(file, () -> new Snapshot("workspace", List.of(), List.of()));
+    long now = System.nanoTime(), second = 1_000_000_000L;
+    String first = capture.replayRun("ESZ6", TIME);
+    capture.poll(now);
+    assert clock(file).equals(Map.of("run", first, "ESZ6", TIME)) : "The first poll saves the clock";
+    capture.replayRun("ESZ6", TIME + 1000);
+    capture.poll(now + second);
+    capture.poll(now + 9 * second);
+    assert clock(file).get("ESZ6").equals(TIME) : "Not on every poll";
+    capture.poll(now + 11 * second);
+    assert clock(file).get("ESZ6").equals(TIME + 1000) : "At most every 10 s";
+    String rewound = capture.replayRun("ESZ6", TIME - 5000);
+    assert !rewound.equals(first);
+    capture.poll(now + 12 * second);
+    assert clock(file).equals(Map.of("run", rewound, "ESZ6", TIME - 5000)) : "A rewind is saved at once";
+    capture.replayRun("ESZ6", TIME - 4000);
+    capture.poll(now + 13 * second);
+    assert clock(file).get("ESZ6").equals(TIME - 5000);
+    capture.close();
+    assert clock(file).get("ESZ6").equals(TIME - 4000) : "Closing saves the last replay time";
+  }
+
+  private static Map<String, Object> clock(Path file) throws Exception {
+    var times = new HashMap<String, Long>();
+    String run = new JournalCaptureState(file).readClock(times);
+    var result = new HashMap<String, Object>(times);
+    result.put("run", run);
+    return result;
+  }
+
+  /** The positions the stop link sees: flat to flat per account and contract, a reversal splitting at the
+   * fill that crosses, and at one instant MotiveWave's entry first, as matching.py orders them. */
+  private static void positions() {
+    var fills = List.of(
+        prop("p1", false, 1, 100, TIME), prop("p2", true, 2, 99, TIME + 1000),   // short 1, then reversed long 1
+        prop("p3", false, 1, 101, TIME + 2000),                                   // flat
+        prop("p4", true, 1, 100, TIME + 3000),                                    // long again, still open
+        new Fill("other", "LFE0002", "MNQZ6", true, 1, 100, TIME, 1, 2, "USD", "o", "", false, false, true));
+    var books = JournalAccountCapture.positions(fills, fill -> "motivewave-native:workspace:live");
+    var book = books.get(new JournalAccountCapture.Book(false, "LFE0001", "MNQZ6", ""));
+    assert book.size() == 3 : book;
+    assert !book.get(0).longSide() && book.get(0).first().id().equals("p1") && !book.get(0).open()
+        && book.get(0).to() == TIME + 1000;
+    assert book.get(1).longSide() && book.get(1).first().id().equals("p2") : "The crossing fill starts the next position";
+    assert book.get(1).to() == TIME + 2000 && !book.get(1).open();
+    assert book.get(2).open() && book.get(2).first().id().equals("p4") && book.get(2).from() == TIME + 3000;
+    assert books.get(new JournalAccountCapture.Book(false, "LFE0002", "MNQZ6", "")).size() == 1 : "Accounts apart";
+    var unwritten = JournalAccountCapture.positions(fills, fill -> fill.id().equals("p1") ? null : "provider");
+    assert unwritten.get(new JournalAccountCapture.Book(false, "LFE0001", "MNQZ6", "")).getFirst().first().id().equals("p2")
+        : "A fill not written yet is left out";
+    var tied = JournalAccountCapture.positions(List.of(
+        fill("exit", false, false, 1, 5001, TIME, "x", "tie"), fill("entry", false, true, 1, 5000, TIME, "e", "tie")),
+        fill -> "provider");
+    var tie = tied.get(new JournalAccountCapture.Book(false, "paper", "ESZ6", ""));
+    assert tie.size() == 1 && tie.getFirst().longSide() && tie.getFirst().first().id().equals("entry") && !tie.getFirst().open()
+        : "At one instant the fill MotiveWave calls an entry comes first: " + tie;
+  }
+
+  /** His prop account's fills: no position id and no entry flag, an exchange order number, and a stop with no
+   * parent. The stop is linked by account, contract and closing side alone; a stop on the position's own side
+   * and one on a contract with no position are not, and after the grace the heartbeat and the log say why. */
+  private static void propStops(Path folder) throws Exception {
+    var file = folder.resolve("prop.ndjson");
+    var fills = new ArrayList<Fill>(List.of(prop("e1", false, 1, 21000, TIME)));
+    var orders = new ArrayList<ProtectiveOrder>(List.of(
+        stop("8812", "", "", true, "working", 21010, TIME + 40),           // buy stop above the short: its stop
+        stop("8813", "", "", false, "working", 20950, TIME + 50),          // sell stop below it: the same side
+        new ProtectiveOrder("8814", "LFE0001", "MESZ6", false, "", "", "working", 5900, TIME, false))); // no position
+    var capture = JournalAccountCapture.fixture(file,
+        () -> new Snapshot("workspace", List.copyOf(fills), List.copyOf(orders), Map.of(),
+            new JournalNativeAccess.OrderCounts(5, 4, 1, 0, 0), Map.of()));
+    long now = System.nanoTime();
+    capture.poll(now);
+    assert capture.warnings.equals("1 fill with an assumed currency") : "Within the grace nothing is said: " + capture.warnings;
+    capture.poll(now + JournalAccountCapture.UNLINKED_GRACE_NANOS);
+    assert capture.warnings.equals("1 fill with an assumed currency; 2 working stop orders not linked to a position: "
+        + "1 no position on that account and contract, 1 only positions on the stop's own side (orders: 5 read, 4 stop, "
+        + "1 new, 0 without instrument, 0 without state, 2 with a position, 1 on the closing side, 1 linked)")
+        : capture.warnings;
+    var logged = new ArrayList<String>();
+    capture.drainLog(logged::add);
+    var said = logged.stream().filter(line -> line.contains("is not linked")).toList();
+    assert said.size() == 2 && said.stream().anyMatch(line -> line.contains("\"8813\"")
+        && line.contains("only positions on the stop's own side") && line.contains("account \"LFE0001\"")
+        && line.contains("symbol \"MNQZ6\"") && line.contains("sell, working")
+        && line.contains("live positions open: \"LFE0001\" \"MNQZ6\" short")) : said;
+    capture.poll(now + 2 * JournalAccountCapture.UNLINKED_GRACE_NANOS);
+    logged.clear();
+    capture.drainLog(logged::add);
+    assert logged.stream().noneMatch(line -> line.contains("is not linked")) : "Once per order: " + logged;
+    // Flat: the stop is cancelled. It stays with its position.
+    fills.add(prop("x1", true, 1, 20990, TIME + 60000));
+    orders.set(0, stop("8812", "", "", true, "cancelled", 21010, TIME + 60010));
+    orders.remove(2);
+    orders.remove(1);
+    capture.poll(now + 3 * JournalAccountCapture.UNLINKED_GRACE_NANOS);
+    assert capture.warnings.equals("2 fills with an assumed currency") : "A cancelled stop is not a warning: " + capture.warnings;
+    capture.close();
+    var lines = protection(file);
+    assert lines.size() == 2 : lines;
+    assert lines.stream().allMatch(line -> line.contains("\"order_id\":\"8812\"") && line.contains("\"entry_execution_id\":\"e1\"")
+        && line.contains("\"role\":\"stop\"") && line.contains("\"provider\":\"motivewave-native:workspace:live\"")
+        && line.contains("\"account\":\"LFE0001\"") && line.contains("\"symbol\":\"MNQZ6\""));
+    assert lines.get(0).contains("\"state\":\"working\"") && lines.get(1).contains("\"state\":\"cancelled\"");
+  }
+
+  /** A stop moved twice, then filled a moment after the exit fill: every line goes to the same position, even
+   * the filled one, whose time is after the position's last fill. */
+  private static void stopsThatMoveAndFill(Path folder) throws Exception {
+    var file = folder.resolve("moved.ndjson");
+    var fills = new ArrayList<Fill>(List.of(prop("m1", true, 2, 5000, TIME)));
+    var orders = new ArrayList<ProtectiveOrder>(List.of(stop("s1", "", "", false, "working", 4990, TIME + 10)));
+    var capture = JournalAccountCapture.fixture(file, () -> new Snapshot("workspace", List.copyOf(fills), List.copyOf(orders)));
+    capture.poll();
+    orders.set(0, stop("s1", "", "", false, "working", 4995, TIME + 30000));
+    capture.poll();
+    fills.add(prop("m2", false, 2, 4995, TIME + 90000));
+    orders.set(0, stop("s1", "", "", false, "filled", 4995, TIME + 90003));
+    capture.poll();
+    capture.close();
+    var lines = protection(file);
+    assert lines.size() == 3 && lines.stream().allMatch(line -> line.contains("\"entry_execution_id\":\"m1\"")) : lines;
+    assert lines.get(2).contains("\"state\":\"filled\"") && lines.get(2).contains("\"price\":4995.0");
+  }
+
+  /** After a restart the study meets old stops for the first time. A cancelled stop goes to the position held
+   * when it was last changed, or to none, and never to a later position; a working stop goes to the open one. */
+  private static void restartedStops(Path folder) throws Exception {
+    var file = folder.resolve("restart.ndjson");
+    var fills = List.of(prop("r1", true, 1, 5000, TIME), prop("r2", false, 1, 5010, TIME + 60000),  // closed by target
+        prop("r3", true, 1, 5020, TIME + 120000));                                                   // open now
+    var orders = List.of(
+        stop("old-oco", "", "", false, "cancelled", 4990, TIME + 60005),    // cancelled by the target, after the fill
+        stop("old-moved", "", "", false, "cancelled", 4992, TIME + 30000),  // cancelled while the first was held
+        stop("new", "", "", false, "working", 5010, TIME + 120010));
+    var before = JournalAccountCapture.fixture(file, () -> new Snapshot("workspace", fills, List.of()));
+    before.poll(); before.close();
+    var after = JournalAccountCapture.fixture(file, () -> new Snapshot("workspace", fills, orders));
+    after.poll(); after.close();
+    var lines = protection(file);
+    assert lines.size() == 2 : lines;
+    assert lines.stream().noneMatch(line -> line.contains("\"old-oco\"")) : "Never linked to the later position";
+    assert lines.stream().anyMatch(line -> line.contains("\"old-moved\"") && line.contains("\"entry_execution_id\":\"r1\""));
+    assert lines.stream().anyMatch(line -> line.contains("\"new\"") && line.contains("\"entry_execution_id\":\"r3\""));
+  }
+
+  private static List<String> protection(Path file) throws Exception {
+    return Files.readAllLines(file).stream().filter(line -> line.contains("\"type\":\"protection\"")).toList();
+  }
+
+  /** A prop-account fill as MotiveWave gives it: no position id, no entry flag, the account currency assumed. */
+  private static Fill prop(String id, boolean buy, double qty, double price, long time) {
+    return new Fill(id, "LFE0001", "MNQZ6", buy, qty, price, time, 1.5, 2, "USD", "9" + id, "", false, false, true);
+  }
+
+  private static ProtectiveOrder stop(String id, String parent, String position, boolean buy, String state,
+                                      double price, long time) {
+    return new ProtectiveOrder(id, "LFE0001", "MNQZ6", buy, parent, position, state, price, time, false);
   }
   private static JournalNativeAccess.Fill fill(String id, boolean replay, boolean buy, double qty, double price,
                                                long time, String order, String position) {
     return new JournalNativeAccess.Fill(id, replay ? "REPLAY-1" : "paper", "ESZ6", buy, qty, price,
         time, 2, 50, "USD", order, position, buy, replay);
   }
-  private static JournalNativeAccess.ProtectiveOrder order(String id, String parent, String position,
-      String role, String state, double price, long time, boolean replay) {
-    return new JournalNativeAccess.ProtectiveOrder(id, replay ? "REPLAY-1" : "paper", "ESZ6", false,
-        parent, position, role, state, price, time, replay);
+  private static ProtectiveOrder order(String id, String parent, String position, String state, double price,
+                                       long time, boolean replay) {
+    return order(id, parent, position, false, state, price, time, replay);
+  }
+  private static ProtectiveOrder order(String id, String parent, String position, boolean buy, String state,
+                                       double price, long time, boolean replay) {
+    return new ProtectiveOrder(id, replay ? "REPLAY-1" : "paper", "ESZ6", buy, parent, position, state, price, time, replay);
   }
 }

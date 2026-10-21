@@ -67,7 +67,7 @@ final class JournalSettings {
                 + "instrument than the one traded. Prints recorded as they trade, live or replay, are never marked "
                 + "otherwise; the history a continuous-contract chart loads is, as it can be back-adjusted."))));
     var fills = new Group("Fills", List.of(List.of(
-        toggle(ACCOUNTS, "Capture Fills", ACCOUNTS_DEFAULT, "Reads fills and their linked stop and target orders, "
+        toggle(ACCOUNTS, "Capture Fills", ACCOUNTS_DEFAULT, "Reads fills and the stop orders that protect them, "
             + "live and replay. Read-only: it never places, changes or cancels an order. It reads MotiveWave "
             + "internals that are not part of the supported SDK, so a MotiveWave update can stop it working."))));
     var history = new Group("History", List.of(

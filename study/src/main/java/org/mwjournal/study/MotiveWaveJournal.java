@@ -33,7 +33,7 @@ import static org.mwjournal.study.JournalTicks.NEVER;
 
 /** Records what the MotiveWave Journal app needs from a chart: one-minute bars, every trade print the
  * chart receives, real ticks for the holding time of closed trades, and (through a read-only internal
- * observer) the fills and their linked stop and target orders, live and replay. Everything goes to a local
+ * observer) the fills and their linked stop orders, live and replay. Everything goes to a local
  * file; nothing is sent anywhere and no order is ever placed, changed or cancelled.
  *
  * requiresBarUpdates: MotiveWave calls onTick only for a study that receives bar updates. With
@@ -60,7 +60,7 @@ public class MotiveWaveJournal extends Study {
 
   private volatile JournalEventWriter writer;
   private JournalEventWriter replayWriter;
-  private JournalAccountCapture accounts;
+  private volatile JournalAccountCapture accounts; // read by the poller's thread in afterPoll
   private Path accountFile;
   private long accountRetry = System.nanoTime();
   private final TickGate<Held> liveGate = new TickGate<>(), replayGate = new TickGate<>();
@@ -73,7 +73,7 @@ public class MotiveWaveJournal extends Study {
   private ExecutorService history;
   private String lastRequest = "";
   private volatile boolean disposed;
-  private final Runnable backfillBeat = this::backfillDue;
+  private final Runnable afterPollBeat = this::afterPoll;
   private volatile Capture liveChart; // the chart as last seen in live mode; null in replay and before the first callback
   private volatile Capture replayChart; // the same in replay mode; null live and before the first callback
   private volatile long replayNow; // the replay's current time as this chart last saw it; 0 before any
@@ -121,6 +121,7 @@ public class MotiveWaveJournal extends Study {
     observeMode(ctx.isReplayMode());
     try {
       JournalAccountCapture observer = getAccounts();
+      if (observer != null) observer.chart(this, ctx.getInstrument(), ctx.isReplayMode());
       if (ctx.isReplayMode()) {
         Capture capture = capture(ctx);
         if (observer != null) observer.replayRun(capture.symbol(), ctx.getCurrentTime());
@@ -160,6 +161,10 @@ public class MotiveWaveJournal extends Study {
     try {
       JournalAccountCapture observer = getAccounts();
       Capture capture = capture(ctx);
+      if (observer != null) {
+        observer.chart(this, capture.instrument(), isReplay);
+        observer.ticked(this, isReplay);
+      }
       String record = getSettings().getString(RECORD, RECORD_DEFAULT);
       var print = JournalPriceEvents.Print.of(tick);
       if (isReplay) {
@@ -230,7 +235,7 @@ public class MotiveWaveJournal extends Study {
       try {
         accounts = JournalAccountCapture.acquire(file);
         accounts.watch(liveGate, replayGate);
-        accounts.watch(backfillBeat);
+        accounts.watch(afterPollBeat);
         accountFile = file;
       } catch (IOException | ReflectiveOperationException | RuntimeException | LinkageError exc) {
         accountRetry = System.nanoTime() + ACCOUNT_RETRY_NANOS; // Not on every tick: a failed lookup is slow.
@@ -278,6 +283,14 @@ public class MotiveWaveJournal extends Study {
       Thread thread = new Thread(task, "mwj-history"); thread.setDaemon(true); return thread;
     }, new ThreadPoolExecutor.DiscardOldestPolicy());
     return history;
+  }
+
+  /** After each poll of the account capture, on its thread: the lines it has for MotiveWave's log (the stop
+   * diagnostic and the probes; whichever chart asks first writes them, each once), then the backfill. */
+  private void afterPoll() {
+    JournalAccountCapture observer = accounts;
+    if (observer != null && !disposed) observer.drainLog(this::info);
+    backfillDue();
   }
 
   /** Whether a backfill pass is due. Called by the account poller after each poll, twice a second and
@@ -449,6 +462,7 @@ public class MotiveWaveJournal extends Study {
   }
 
   @Override public synchronized void onSettingsUpdated(DataContext ctx) {
+    if (accounts != null) accounts.forget(this);
     stopHistory();
     closeWriter();
     super.onSettingsUpdated(ctx);
@@ -474,8 +488,9 @@ public class MotiveWaveJournal extends Study {
 
   private void closeAccounts() {
     if (accounts != null) {
+      accounts.forget(this);
       accounts.unwatch(liveGate, replayGate);
-      accounts.unwatch(backfillBeat);
+      accounts.unwatch(afterPollBeat);
       accounts.release(accountFile);
     }
     accounts = null;

@@ -12,10 +12,14 @@ import java.util.Map;
 import java.util.Set;
 import java.util.TreeMap;
 import java.util.UUID;
+import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
+import java.util.function.Consumer;
+import java.util.function.Function;
+import com.motivewave.platform.sdk.common.Instrument;
 import static org.mwjournal.study.JournalPriceEvents.quote;
 
 /** One bounded polling observer per bridge path, shared across chart instances. Never trades. */
@@ -26,6 +30,17 @@ final class JournalAccountCapture {
   private final ScheduledExecutorService timer;
   private final JournalCaptureState state;
   private final Map<String,String> seen = new HashMap<>(), ordersSeen = new HashMap<>();
+  /** Each fill as it was the last time its event was built, and whether that event was a conflict. A fill
+   * that comes back equal is passed over without building its event again. Poll thread only. */
+  private record Sent(JournalNativeAccess.Fill fill, boolean conflict) {}
+  private final Map<String, Sent> sent = new HashMap<>();
+  /** How many fill events were built from a snapshot fill; the tests read it. Poll thread only. */
+  long eventsBuilt;
+  // The stop link (link()): the position each order id was linked to in this run of the study, and since when
+  // a working stop has gone unlinked. Poll thread only.
+  private final Map<String, Position> links = new HashMap<>();
+  private final Map<String, Long> unlinkedSince = new HashMap<>();
+  private final Set<String> unlinkedLogged = new HashSet<>();
   private final Map<String,String> fillProviders = new HashMap<>();
   // What was added to the plain label when a fill was first written: 'c' for an assumed currency,
   // 'p' for no price. No entry means the plain label. A fill is always re-sent as it was first written.
@@ -40,13 +55,14 @@ final class JournalAccountCapture {
   private ReplayClock lastClock;
   private boolean replayReady; // guarded by replayLock; new replay fills wait for the active chart clock
   private record ReplayClock(String run, Map<String,Long> times) {}
+  private long clockSaved; // when the replay clock was last saved, on the poll's clock
   /** What one complete snapshot says about positions, live and replay apart. Immutable: the poller
    * publishes a new one and the tick thread only ever reads. */
   private record Holdings(Side live, Side replay, long nanos) {}
   /** Instruments with an open position, and instruments where a fill was first seen moments ago. */
   private record Side(Set<String> open, Set<String> traded, Map<String,Long> lastFill) {}
-  /** run is the replay run a replay fill belongs to, and empty for a live fill. */
-  private record Book(boolean replay, String account, String symbol, String run) {}
+  /** run is the provider a replay fill is filed under, which names its replay run, and empty for a live fill. */
+  record Book(boolean replay, String account, String symbol, String run) {}
   private static final class Tally { double net; int fills; long latest; }
   // A snapshot this old means the poller has stalled; it is younger than the tick pre-roll on purpose,
   // so the prints around an entry are still buffered when the gate falls back to recording.
@@ -57,6 +73,14 @@ final class JournalAccountCapture {
   // A fill without a price is held back this long the first time it is seen, in case MotiveWave is still
   // writing the record: once sent, a fill cannot be corrected.
   static final long UNPRICED_GRACE_NANOS = 5_000_000_000L;
+  // A working stop that no position takes this long is reported. A stop often appears a poll before the fill
+  // that opens its position, and is linked then without anything to report.
+  static final long UNLINKED_GRACE_NANOS = 5_000_000_000L;
+  // The replay clock is saved when the run changes, and otherwise at most this often (and when the study closes).
+  static final long CLOCK_EVERY_NANOS = 10_000_000_000L;
+  static final String NO_POSITION = "no position on that account and contract",
+      OWN_SIDE = "only positions on the stop's own side", NOT_DURING = "no position at the stop's time";
+  private static final int LOG_CAP = 500;
   static final String QUALITY = "MotiveWave internal capture; fees may be estimated";
   static final String CURRENCY_ASSUMED = "account currency assumed from the instrument";
   static final String NO_PRICE = "platform reported no fill price";
@@ -73,6 +97,9 @@ final class JournalAccountCapture {
   // The replay fills written so far, each with the run it was filed under; null until a snapshot has been read.
   private volatile List<JournalBackfill.ReplayFill> replayFills;
   private String lastBeat = "";
+  /** Lines for MotiveWave's log: the stop diagnostic and the probes. A chart's study writes them (drainLog). */
+  private final ConcurrentLinkedQueue<String> log = new ConcurrentLinkedQueue<>();
+  final JournalProbes probes;
   /** Set while fills cannot be read at all. Null means capture is working, whatever warnings says. */
   volatile String failure;
   /** One sentence about what was skipped or assumed while capture is working; null when nothing was. */
@@ -86,6 +113,7 @@ final class JournalAccountCapture {
     if (clockRun != null) savedRun = clockRun;
     if (savedRun != null) run = UUID.fromString(savedRun).toString();
     stateDirty = savedRun == null;
+    probes = new JournalProbes(this::log, System.nanoTime());
     live = JournalEventWriter.acquire(file);
     JournalEventWriter other;
     try { other = JournalEventWriter.acquire(replayFile(file)); }
@@ -141,6 +169,21 @@ final class JournalAccountCapture {
   /** afterPoll runs on the poller's thread after every poll, twice a second, market open or not. */
   void watch(Runnable afterPoll) { listeners.add(afterPoll); }
   void unwatch(Runnable afterPoll) { listeners.remove(afterPoll); }
+
+  /** A chart's callback, for the probes: which instrument it shows, live or replay. Cheap enough for onTick. */
+  void chart(Object owner, Instrument instrument, boolean replay) { probes.chart(owner, instrument, replay); }
+  /** One print reached that chart's onTick. */
+  void ticked(Object owner, boolean replay) { probes.tick(owner, replay); }
+  /** The chart is gone or its settings changed. */
+  void forget(Object owner) { probes.forget(owner); }
+
+  /** Hands the waiting log lines to one chart's study, each line once, whichever chart asks first. */
+  void drainLog(Consumer<String> writer) {
+    for (String line; (line = log.poll()) != null; ) writer.accept(line);
+  }
+  void log(String line) {
+    if (log.size() < LOG_CAP) log.add(line); // nobody drains while no chart has the study: never grow for ever
+  }
 
   /** Every fill of the last snapshot that could be read, live and replay; null before the first one. */
   List<JournalNativeAccess.Fill> fills() { return fills; }
@@ -290,6 +333,11 @@ final class JournalAccountCapture {
         boolean written = fillProviders.containsKey(key);
         if (fill.currencyAssumed()) assumed++;
         if (!fill.priced()) unpriced++;
+        Sent before = sent.get(key);
+        if (before != null && before.fill().equals(fill)) { // as it was: nothing to build or write
+          if (before.conflict()) conflicts++;
+          continue;
+        }
         if (fill.replay() && !replaySnapshotReady && !written) {
           waitingReplay++; continue; // Never assign a newly retained replay fill before knowing its session clock.
         }
@@ -306,14 +354,20 @@ final class JournalAccountCapture {
           // One record that cannot be written must not stop the others from being read.
           skipped.merge(JournalNativeAccess.INCOMPLETE, 1, Integer::sum); continue;
         }
+        eventsBuilt++;
         String old = seen.get(key);
-        if (event.equals(old)) continue;
-        if (old != null) { conflicts++; continue; } // Never invent another fill for a correction.
+        if (event.equals(old)) { sent.put(key, new Sent(fill, false)); continue; }
+        if (old != null) { // Never invent another fill for a correction.
+          conflicts++;
+          sent.put(key, new Sent(fill, true));
+          continue;
+        }
         JournalEventWriter output = fill.replay() ? replay : live;
         String wire = event.substring(0, event.length() - 1) + ",\"observed_at\":\"" + Instant.now()
             + "\",\"capture_kind\":\"" + (mediaBaseline ? "new" : "retained") + "\"}";
         if (output.offer(wire, provider, Instant.ofEpochMilli(fill.time()).toString())) {
           seen.put(key, event);
+          sent.put(key, new Sent(fill, false));
           fillProviders.put(key, provider);
           if (!label.isEmpty()) fillLabels.put(key, label);
           unpricedSince.remove(key);
@@ -327,44 +381,23 @@ final class JournalAccountCapture {
         if (run != null) filed.add(new JournalBackfill.ReplayFill(run, fill));
       }
       replayFills = List.copyOf(filed);
-      var entryOrders = new HashMap<String, JournalNativeAccess.Fill>();
-      var entryPositions = new HashMap<String, JournalNativeAccess.Fill>();
-      for (var fill : fills) if (fill.entry()) {
-        String scope = linkScope(fill.account(), fill.symbol(), fill.replay(), fill.buy());
-        if (!fill.orderId().isBlank()) entryOrders.putIfAbsent(scope + fill.orderId(), fill);
-        if (!fill.positionId().isBlank()) entryPositions.putIfAbsent(scope + fill.positionId(), fill);
-      }
-      for (var order : snapshot.orders()) {
-        String scope = linkScope(order.account(), order.symbol(), order.replay(), !order.buy());
-        var parent = order.parentId().isBlank() ? null : entryOrders.get(scope + order.parentId());
-        var position = order.positionId().isBlank() ? null : entryPositions.get(scope + order.positionId());
-        var first = parent == null ? position : position == null || parent.time() <= position.time() ? parent : position;
-        if (first == null) continue; // No price/time proximity guessing for unrelated limit orders.
-        String provider = fillProviders.get(key(snapshot.workspace(), first));
-        if (provider == null) continue;
-        String event = protection(order, first, provider);
-        String key = provider + "\0" + order.account() + "\0" + order.id();
-        if (event.equals(ordersSeen.get(key))) continue;
-        if ((order.replay() ? replay : live).offer(event, provider, Instant.ofEpochMilli(order.time()).toString()))
-          ordersSeen.put(key, event);
-      }
+      Stops stops = stops(snapshot, fills, snapshotReplayProvider, nowNanos);
       if (stateDirty) {
         String savedRun = run;
         state.save(savedRun, fillProviders, fillLabels);
         synchronized (replayLock) { stateDirty = !run.equals(savedRun); }
       }
-      ReplayClock clock;
-      synchronized (replayLock) { clock = new ReplayClock(run, Map.copyOf(replayTimes)); }
-      if (!clock.equals(lastClock)) {
-        // Small clock checkpoint only; do not rewrite every historical fill on every price tick.
-        state.saveClock(clock.run(), clock.times()); lastClock = clock;
-      }
+      saveClock(false, nowNanos);
       // Fills were read, so this is not a failure: what was skipped or assumed is said beside a
       // 'connected' status, and the fills that did arrive stay trustworthy.
-      warnings = warnings(skipped, assumed, unpriced, waitingReplay, conflicts);
+      warnings = join(warnings(skipped, assumed, unpriced, waitingReplay, conflicts), stops.warning());
       failure = null;
       polled = true;
       status(snapshot.workspace(), null, fills.size());
+      long replayClock;
+      synchronized (replayLock) { replayClock = replayTimes.values().stream().mapToLong(Long::longValue).max().orElse(0); }
+      try { probes.afterPoll(snapshot, replayClock, nowNanos); }
+      catch (RuntimeException | LinkageError ignored) { /* a probe never disturbs the capture */ }
     } catch (Exception | LinkageError exc) {
       holdings = null; // positions unknown again: record ticks rather than guess
       warnings = null;
@@ -394,12 +427,179 @@ final class JournalAccountCapture {
     return parts.isEmpty() ? null : String.join("; ", parts);
   }
   private static String count(int number, String noun) { return number + " " + noun + (number == 1 ? "" : "s"); }
+  private static String join(String first, String second) {
+    return first == null ? second : second == null ? first : first + "; " + second;
+  }
+
+  /** The replay clock checkpoint: at once when the run changed (a rewind), otherwise at most every
+   * CLOCK_EVERY_NANOS, and on close (force) whatever changed since. Never by a capture whose files another
+   * copy of the study holds: that copy keeps the clock. */
+  private void saveClock(boolean force, long nowNanos) throws IOException {
+    ReplayClock clock;
+    synchronized (replayLock) { clock = new ReplayClock(run, Map.copyOf(replayTimes)); }
+    if (clock.equals(lastClock)) return;
+    boolean rewound = lastClock == null || !clock.run().equals(lastClock.run());
+    if (!force && !rewound && nowNanos - clockSaved < CLOCK_EVERY_NANOS) return;
+    state.saveClock(clock.run(), clock.times());
+    lastClock = clock;
+    clockSaved = nowNanos;
+  }
+
+  // ---------------------------------------------------------------- stops
+
+  /** One position of one account and contract, as the stop link rule sees it: the fills of that account and
+   * contract (and replay run) netted flat to flat in time order, a reversal starting the next position with
+   * the fill that crosses, which is how the app groups fills without a position id (matching.py). first is
+   * its first fill and provider the one that fill was written under; to is its last fill's time. */
+  record Position(Book book, boolean longSide, JournalNativeAccess.Fill first, String provider, long from, long to,
+                  boolean open) {}
+
+  /** The positions of these fills, by book. providerOf names the provider a fill was written under, or null
+   * for a fill not written yet, which is left out. Live books have the run "", replay books their provider. */
+  static Map<Book, List<Position>> positions(List<JournalNativeAccess.Fill> fills,
+                                             Function<JournalNativeAccess.Fill, String> providerOf) {
+    var ordered = new ArrayList<>(fills);
+    // matching.py's order: by time, and at one instant a fill MotiveWave calls an entry of its position first.
+    ordered.sort(Comparator.comparingLong(JournalNativeAccess.Fill::time)
+        .thenComparing(f -> f.positionId().isBlank() || !f.entry()));
+    final class Open { JournalNativeAccess.Fill first; String provider; double net; long last; }
+    var result = new HashMap<Book, List<Position>>();
+    var open = new HashMap<Book, Open>();
+    for (var fill : ordered) {
+      String provider = providerOf.apply(fill);
+      if (provider == null) continue;
+      Book book = new Book(fill.replay(), fill.account(), fill.symbol(), fill.replay() ? provider : "");
+      double signed = fill.buy() ? fill.qty() : -fill.qty();
+      Open held = open.get(book);
+      double after = held == null ? signed : held.net + signed;
+      if (held != null && (Math.abs(after) <= FLAT || Math.signum(after) != Math.signum(held.net))) {
+        result.computeIfAbsent(book, b -> new ArrayList<>()).add(
+            new Position(book, held.net > 0, held.first, held.provider, held.first.time(), fill.time(), false));
+        open.remove(book);
+        held = null;
+      }
+      if (Math.abs(after) <= FLAT) continue;
+      if (held == null) { // a new position, or the rest of a fill that reversed one
+        held = new Open();
+        held.first = fill;
+        held.provider = provider;
+        open.put(book, held);
+      }
+      held.net = after;
+      held.last = fill.time();
+    }
+    open.forEach((book, held) -> result.computeIfAbsent(book, b -> new ArrayList<>()).add(
+        new Position(book, held.net > 0, held.first, held.provider, held.first.time(), held.last, true)));
+    return result;
+  }
+
+  /** The stop link rule, for a stop on the same mode, account and contract (and replay run) as these positions
+   * and on their closing side (a sell stop for a long, a buy stop for a short): a working stop goes to the open
+   * position, otherwise to the position held at the order's last-modified time. Null when there is none. The
+   * order's parent and position ids play no part: prop accounts fill with no position id and no entry flag. */
+  static Position link(List<Position> closingSide, JournalNativeAccess.ProtectiveOrder order) {
+    if (order.working()) for (var position : closingSide) if (position.open()) return position;
+    Position held = null;
+    for (var position : closingSide)
+      if (position.from() <= order.time() && (position.open() || order.time() <= position.to())) held = position;
+    return held;
+  }
+
+  /** What became of one snapshot's stop orders: MotiveWave's counts, then how many were on an account and
+   * contract with a position, how many of those on a position's closing side, and how many linked. unlinked
+   * counts by reason the working stops no position has taken for UNLINKED_GRACE_NANOS. */
+  record Stops(JournalNativeAccess.OrderCounts read, int withPosition, int closingSide, int linked,
+               Map<String,Integer> unlinked) {
+    /** The heartbeat's part about stops: only while a working stop stays unlinked. */
+    String warning() {
+      if (unlinked.isEmpty()) return null;
+      int total = 0;
+      var reasons = new ArrayList<String>();
+      for (var reason : new TreeMap<>(unlinked).entrySet()) {
+        total += reason.getValue();
+        reasons.add(unlinked.size() == 1 ? reason.getKey() : reason.getValue() + " " + reason.getKey());
+      }
+      return count(total, "working stop order") + " not linked to a position: " + String.join(", ", reasons)
+          + " (orders: " + counts() + ")";
+    }
+    String counts() {
+      return read.read() + " read, " + read.stops() + " stop, " + read.fresh() + " new, " + read.noInstrument()
+          + " without instrument, " + read.noState() + " without state, " + withPosition + " with a position, "
+          + closingSide + " on the closing side, " + linked + " linked";
+    }
+  }
+
+  /** Links each stop order and writes the ones linked (section 3.8 of docs/design/study-measures.md). The
+   * position an order id is linked to the first time is kept for this run of the study, so a stop that is
+   * moved or fills stays with its position. */
+  private Stops stops(JournalNativeAccess.Snapshot snapshot, List<JournalNativeAccess.Fill> fills,
+                      String replayProvider, long nowNanos) {
+    var unlinked = new TreeMap<String,Integer>();
+    if (snapshot.orders().isEmpty()) {
+      unlinkedSince.clear();
+      return new Stops(snapshot.orderCounts(), 0, 0, 0, unlinked);
+    }
+    var books = positions(fills, fill -> fillProviders.get(key(snapshot.workspace(), fill)));
+    int withPosition = 0, closingSide = 0, linked = 0;
+    var waiting = new HashSet<String>();
+    for (var order : snapshot.orders()) {
+      String id = (order.replay() ? "replay" : "live") + "\0" + order.account() + "\0" + order.id();
+      Position position = links.get(id);
+      String reason = null;
+      if (position != null) { withPosition++; closingSide++; }
+      else {
+        var book = books.getOrDefault(new Book(order.replay(), order.account(), order.symbol(),
+            order.replay() ? replayProvider : ""), List.of());
+        var closing = book.stream().filter(p -> p.longSide() != order.buy()).toList();
+        if (book.isEmpty()) reason = NO_POSITION;
+        else if (closing.isEmpty()) { withPosition++; reason = OWN_SIDE; }
+        else {
+          withPosition++; closingSide++;
+          position = link(closing, order);
+          if (position == null) reason = NOT_DURING;
+          else links.put(id, position);
+        }
+      }
+      if (position == null) {
+        if (!order.working()) continue; // an old stop of a position MotiveWave no longer holds: nothing to say
+        waiting.add(id);
+        long since = unlinkedSince.computeIfAbsent(id, key -> nowNanos);
+        if (nowNanos - since < UNLINKED_GRACE_NANOS) continue;
+        unlinked.merge(reason, 1, Integer::sum);
+        if (unlinkedLogged.add(id)) log("MotiveWave Journal: stop order " + quote(order.id()) + " is not linked to a "
+            + "position (" + reason + "): parent id " + quote(order.parentId()) + ", position id "
+            + quote(order.positionId()) + ", account " + quote(order.account()) + ", symbol " + quote(order.symbol())
+            + ", " + (order.buy() ? "buy" : "sell") + ", " + order.state() + ", modified "
+            + Instant.ofEpochMilli(order.time()) + "; " + (order.replay() ? "replay" : "live") + " positions open: "
+            + openPositions(books, order.replay()) + ".");
+        continue;
+      }
+      linked++;
+      String event;
+      try { event = protection(order, position.first(), position.provider()); }
+      catch (IllegalArgumentException exc) { continue; } // no id, time or price: one order must not stop the poll
+      String key = position.provider() + "\0" + order.account() + "\0" + order.id();
+      if (event.equals(ordersSeen.get(key))) continue;
+      if ((order.replay() ? replay : live).offer(event, position.provider(), Instant.ofEpochMilli(order.time()).toString()))
+        ordersSeen.put(key, event);
+    }
+    unlinkedSince.keySet().retainAll(waiting);
+    return new Stops(snapshot.orderCounts(), withPosition, closingSide, linked, unlinked);
+  }
+
+  /** The open positions of one mode as account and symbol, word for word, for the log. */
+  private static String openPositions(Map<Book, List<Position>> books, boolean replay) {
+    var open = new ArrayList<String>();
+    books.forEach((book, positions) -> {
+      for (var position : positions) if (position.open() && book.replay() == replay)
+        open.add(quote(book.account()) + " " + quote(book.symbol()) + (position.longSide() ? " long" : " short"));
+    });
+    java.util.Collections.sort(open);
+    return open.isEmpty() ? "none" : String.join(", ", open.size() > 10 ? open.subList(0, 10) : open);
+  }
 
   private String provider(String workspace, boolean isReplay) {
     return "motivewave-native:" + workspace + (isReplay ? ":replay:" + run : ":live");
-  }
-  private static String linkScope(String account, String symbol, boolean replay, boolean buy) {
-    return replay + "\0" + account + "\0" + symbol + "\0" + buy + "\0";
   }
   private static String key(String workspace, JournalNativeAccess.Fill f) {
     return java.util.Base64.getUrlEncoder().withoutPadding().encodeToString(
@@ -436,13 +636,14 @@ final class JournalAccountCapture {
         + (unpriced ? ",\"price_known\":false" : "") + (assumed ? ",\"currency_assumed\":true" : "")
         + ",\"quality\":" + quote(QUALITY + (assumed ? "; " + CURRENCY_ASSUMED : "") + (unpriced ? "; " + NO_PRICE : "")) + "}";
   }
+  /** A stop order's line. Take-profit orders are not written: R needs only the stop (the app's risk.py). */
   static String protection(JournalNativeAccess.ProtectiveOrder o, JournalNativeAccess.Fill first, String provider) {
     if (o.id().isBlank() || o.time() <= 0 || !Double.isFinite(o.price()))
       throw new IllegalArgumentException("Incomplete protective order.");
     return "{\"version\":1,\"type\":\"protection\",\"mode\":" + quote(o.replay() ? "replay" : "live")
         + ",\"provider\":" + quote(provider) + ",\"account\":" + quote(o.account())
         + ",\"symbol\":" + quote(o.symbol()) + ",\"order_id\":" + quote(o.id())
-        + ",\"entry_execution_id\":" + quote(first.id()) + ",\"role\":" + quote(o.role())
+        + ",\"entry_execution_id\":" + quote(first.id()) + ",\"role\":\"stop\""
         + ",\"state\":" + quote(o.state()) + ",\"price\":" + o.price()
         + ",\"ts\":" + quote(Instant.ofEpochMilli(o.time()).toString()) + "}";
   }
@@ -479,6 +680,15 @@ final class JournalAccountCapture {
     liveGates.clear();
     replayGates.clear();
     listeners.clear();
-    synchronized (this) { live.release(); replay.release(); }
+    probes.close();
+    synchronized (this) {
+      // The last replay time seen, so a rewind while the study is unloaded is still noticed.
+      if (polled && failure == null && live.failure == null && replay.failure == null) {
+        try { saveClock(true, System.nanoTime()); }
+        catch (IOException | RuntimeException ignored) { /* the clock saved within the last 10 s stands */ }
+      }
+      live.release();
+      replay.release();
+    }
   }
 }

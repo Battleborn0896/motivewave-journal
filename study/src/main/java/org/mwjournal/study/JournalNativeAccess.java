@@ -32,15 +32,33 @@ final class JournalNativeAccess {
              double commission, double pointValue, double pointSize, String accountCurrency,
              String instrumentCurrency, boolean stock, String orderId, String positionId, boolean entry,
              boolean replay) {}
+  /** A stop or trailing stop order. time is MotiveWave's last-modified time; state is working, filled,
+   * cancelled or rejected. Take-profit orders are not read. */
   record ProtectiveOrder(String id, String account, String symbol, boolean buy, String parentId,
-                         String positionId, String role, String state, double price, long time,
-                         boolean replay) {}
-  /** skipped: how many executions could not be described, by reason. They are in none of the lists. */
-  record Snapshot(String workspace, List<Fill> fills, List<ProtectiveOrder> orders, Map<String,Integer> skipped) {
+                         String positionId, String state, double price, long time, boolean replay) {
+    boolean working() { return "working".equals(state); }
+  }
+  /** How the orders of one snapshot were sorted before the stops reached the capture: every order read, the
+   * stop and trailing-stop orders among them, and of those the ones left out because MotiveWave had not sent
+   * them yet (new), had no instrument, or were in no state the capture records. */
+  record OrderCounts(int read, int stops, int fresh, int noInstrument, int noState) {
+    static OrderCounts of(List<ProtectiveOrder> stops) {
+      return new OrderCounts(stops.size(), stops.size(), 0, 0, 0);
+    }
+  }
+  /** skipped: how many executions could not be described, by reason. They are in none of the lists.
+   * instruments: the SDK instrument of the fills of each contract (key contract()), for the probes only. */
+  record Snapshot(String workspace, List<Fill> fills, List<ProtectiveOrder> orders, Map<String,Integer> skipped,
+                  OrderCounts orderCounts, Map<String, Instrument> instruments) {
     Snapshot(String workspace, List<Fill> fills, List<ProtectiveOrder> orders) {
       this(workspace, fills, orders, Map.of());
     }
+    Snapshot(String workspace, List<Fill> fills, List<ProtectiveOrder> orders, Map<String,Integer> skipped) {
+      this(workspace, fills, orders, skipped, OrderCounts.of(orders), Map.of());
+    }
   }
+  /** One contract in one mode: the key of Snapshot.instruments. */
+  static String contract(boolean replay, String symbol) { return (replay ? "replay " : "live ") + symbol; }
   /** Why a fill is left out, in the words the heartbeat uses. */
   static final String NO_INSTRUMENT = "instrument unavailable", NO_ACCOUNT = "account unavailable",
       NO_CURRENCY = "currency unavailable", CROSS_CURRENCY = "cross-currency",
@@ -77,8 +95,8 @@ final class JournalNativeAccess {
     Method instrumentCurrency = readMethod(nativeInstrument, "getCurrency", false);
     Method stock = readMethod(nativeInstrument, "isStock", false);
     String[] getters = {"getOrderId", "getAccountId", "getInstrument", "isBuy", "getParentId",
-        "getPosition", "isStopOrTrail", "isLimit", "isFilled", "isCancelled", "isRejected",
-        "isActive", "isNew", "isTrail", "getStopPrice", "getTrailStopPrice", "getLimitPrice",
+        "getPosition", "isStopOrTrail", "isFilled", "isCancelled", "isRejected",
+        "isActive", "isNew", "isTrail", "getStopPrice", "getTrailStopPrice",
         "getLastModified", "isReplay"};
     var methods = new java.util.HashMap<String, Method>();
     for (String name : getters) methods.put(name, readMethod(order, name, false));
@@ -87,6 +105,7 @@ final class JournalNativeAccess {
       if (!(folder instanceof File file)) throw new IllegalStateException("Native workspace directory unavailable.");
       var fills = new ArrayList<Fill>();
       var skipped = new java.util.TreeMap<String,Integer>();
+      var instruments = new java.util.HashMap<String, Instrument>();
       Object fillRows = allFills.invoke(null, new Object[]{null});
       if (!(fillRows instanceof List<?> rows)) throw new IllegalStateException("Unexpected native execution snapshot.");
       if (rows.size() > 100000) throw new IllegalStateException("Native execution snapshot exceeds safety limit.");
@@ -104,37 +123,43 @@ final class JournalNativeAccess {
             known ? string(instrumentCurrency.invoke(nativeI)) : null, known && bool(stock.invoke(nativeI)),
             string(orderId.invoke(item)), string(positionId.invoke(item)),
             bool(entry.invoke(item)), bool(replay.invoke(item))), skipped);
-        if (fill != null) fills.add(fill);
+        if (fill != null) {
+          fills.add(fill);
+          instruments.put(contract(fill.replay(), fill.symbol()), instrument);
+        }
       }
       var protection = new ArrayList<ProtectiveOrder>();
+      int read = 0, stops = 0, fresh = 0, noInstrument = 0, noState = 0;
       Object orderRows = allOrders.invoke(null);
       if (!(orderRows instanceof List<?> list)) throw new IllegalStateException("Unexpected native order snapshot.");
       if (list.size() > 100000) throw new IllegalStateException("Native order snapshot exceeds safety limit.");
       for (Object item : new ArrayList<>(list)) {
         if (!order.isInstance(item)) throw new IllegalStateException("Unexpected native order type.");
-        boolean stop = bool(invoke(methods, "isStopOrTrail", item));
-        boolean target = bool(invoke(methods, "isLimit", item));
-        if ((!stop && !target) || bool(invoke(methods, "isNew", item))) continue;
+        read++;
+        if (!bool(invoke(methods, "isStopOrTrail", item))) continue; // take profit and entries play no part
+        stops++;
+        if (bool(invoke(methods, "isNew", item))) { fresh++; continue; }
         Object i = invoke(methods, "getInstrument", item);
-        if (!(i instanceof Instrument instrument)) continue;
+        if (!(i instanceof Instrument instrument)) { noInstrument++; continue; }
         String state = bool(invoke(methods, "isFilled", item)) ? "filled"
             : bool(invoke(methods, "isCancelled", item)) ? "cancelled"
             : bool(invoke(methods, "isRejected", item)) ? "rejected"
             : bool(invoke(methods, "isActive", item)) ? "working" : "";
-        if (state.isEmpty()) continue;
+        if (state.isEmpty()) { noState++; continue; }
+        // The order's own parent and position ids are kept for the diagnostic only: the link rule does not
+        // use them (JournalAccountCapture.link), because prop accounts fill with neither.
         Object linkedPosition = invoke(methods, "getPosition", item);
         String linkedId = position.isInstance(linkedPosition) ? string(positionKey.invoke(linkedPosition)) : "";
-        String priceGetter = stop ? bool(invoke(methods, "isTrail", item)) ? "getTrailStopPrice" : "getStopPrice"
-            : "getLimitPrice";
+        String priceGetter = bool(invoke(methods, "isTrail", item)) ? "getTrailStopPrice" : "getStopPrice";
         protection.add(new ProtectiveOrder(string(invoke(methods, "getOrderId", item)),
             string(invoke(methods, "getAccountId", item)), instrument.getSymbol(),
             bool(invoke(methods, "isBuy", item)), string(invoke(methods, "getParentId", item)),
-            linkedId, stop ? "stop" : "target", state,
-            ((Number)invoke(methods, priceGetter, item)).doubleValue(),
+            linkedId, state, ((Number)invoke(methods, priceGetter, item)).doubleValue(),
             ((Number)invoke(methods, "getLastModified", item)).longValue(),
             bool(invoke(methods, "isReplay", item))));
       }
-      return new Snapshot(file.getName(), List.copyOf(fills), List.copyOf(protection), Map.copyOf(skipped));
+      return new Snapshot(file.getName(), List.copyOf(fills), List.copyOf(protection), Map.copyOf(skipped),
+          new OrderCounts(read, stops, fresh, noInstrument, noState), Map.copyOf(instruments));
     };
   }
 

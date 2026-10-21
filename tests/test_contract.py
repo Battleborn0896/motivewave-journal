@@ -2,6 +2,7 @@
 
 Run bash scripts/test.sh to build and supply them. No account, login, or trading application is used.
 """
+import json
 import os
 from pathlib import Path
 
@@ -53,8 +54,10 @@ def test_java_bridge_to_journal_trade_chart_and_excursions(
     assert not any('fees may be estimated' in flag for flag in trade.flags)
     protection = journal.protection_events(trade)
     assert [event.state for event in protection] == (
-        ['working', 'working', 'cancelled'] if dataset == 'live' else ['working', 'filled'])
-    assert all(event.order_id != 'resting-limit' for event in protection)
+        ['working', 'working', 'cancelled'] if dataset == 'live' else ['working', 'cancelled'])
+    # A buy stop beside the long is on its own side: never linked, never written. No take profit is written.
+    assert all(event.order_id != 'resting-buy-stop' for event in protection)
+    assert {e['role'] for e in map(json.loads, text.splitlines()) if e['type'] == 'protection'} == {'stop'}
     sources = journal.price_sources('ESZ6', trade)
     if dataset == 'replay':
         run = replay_run(trade.provider)
@@ -70,9 +73,8 @@ def test_java_bridge_to_journal_trade_chart_and_excursions(
         recorded = next(m for m in journal.metric_options(trade) if m['source'] == recorded_source)
         assert (recorded['mae'], recorded['mfe'], recorded['precision']) == (400, 500, 'observed-ticks')
         assert recorded['provenance'] == 'replay-ticks' and recorded['observations'] == 3
-        # Both are what the default accuracy policy, recorded ticks only, shows.
+        # Both are recorded ticks, which is what measures a trade.
         from common import metric_options
-        assert journal.display_settings()['excursion_policy'] == 'ticks-only'
         assert {m['source'] for m in metric_options(journal, trade)} == {history, recorded_source}
     else:
         assert not any(s.startswith('motivewave-replay:') for s in sources)
@@ -86,8 +88,9 @@ def test_java_bridge_to_journal_trade_chart_and_excursions(
         assert (plan.stop, plan.source, plan.risk) == (4996, 'order', 200)
         assert levels == [(4996, 'solid'), (4999, 'dashed')]
     else:
-        # The replay trade had only a take profit: no stop, so no R, and nothing is drawn for it.
-        assert plan.stop is None and plan.risk is None and levels == []
+        # The replay short's buy stop at 4806, placed with the entry: R from it on the 1 contract held then.
+        assert (plan.stop, plan.source, plan.risk) == (4806, 'order', 300)
+        assert levels == [(4806, 'solid')]
     assert journal.get('sync_status')['study']['heartbeat']['connector'] == 'motivewave-journal-study'
     # App restart, then rewinding the stored read position: neither may double-count a fill.
     SyncWorker(Journal(journal.path, dataset=dataset)).poll()

@@ -14,20 +14,22 @@ import org.mwjournal.study.JournalTicks.Held;
 import static org.mwjournal.study.JournalTicks.IN_POSITION;
 
 /** Writes a small bridge file, and the replay file beside it, with the code the study itself runs:
- * the account capture for fills, linked orders and heartbeats, the tick gate and writer for prints,
+ * the account capture for fills, linked stop orders and heartbeats, the tick gate and writer for prints,
  * the history backfill, and the bar and gap serialisers. tests/test_contract.py then reads both files
  * with the app's importer, so a change on either side of the bridge that the other cannot read fails a test.
  *
  * The live file holds three trades in account 'paper', one per instrument:
  * ESZ6, recorded as it happened: long 1 at 5000, one more at 5001, out at 5003.5, with a linked stop,
- *   live prints (motivewave-ticks) and one-minute candles.
+ *   live prints (motivewave-ticks) and one-minute candles. A buy stop on the same account and contract is on
+ *   the long's own side, so it is never linked and never written.
  * NQZ6, a past trade MotiveWave already held when the study started, an hour earlier: long 1 at 21000.25,
  *   out a minute later at 21010.5. No live prints; its five ticks come from the history backfill
  *   (motivewave-ticks:history), low 20995.5 and high 21014.
  * MNQZ6, another past trade, half an hour earlier: MotiveWave stored no price for the entry (price 0,
  *   price_known false, the 'platform reported no fill price' label); the exit is at 21020.
  * Because of that one fill every heartbeat is 'connected' with warnings '1 fill with no fill price'.
- * The replay file holds one ESZ6 trade, short 2 from 4800 and 4802 to 4797, and the same heartbeats. Its
+ * The replay file holds one ESZ6 trade, short 2 from 4800 and 4802 to 4797, with a buy stop at 4806 placed
+ *   with the entry and cancelled at the exit, and the same heartbeats. Its
  *   replay prints are real ticks, as the study labels them with its default settings
  *   (motivewave-replay:<run>:ticks). Once it is flat, the replay backfill loads five real prints of its
  *   holding window (motivewave-replay:<run>:history), low 4795.5 and high 4806, with the replay clock three
@@ -77,17 +79,18 @@ public final class ContractSample {
 
     // Live: long 1 at 5000 with a linked stop, one more at 5001, the stop raised, out at 5003.5.
     fills.add(fill("fill-1", false, true, 1, 5000, LIVE + 5_000, "entry-1", true));
-    orders.add(order("stop-1", false, false, "entry-1", "stop", "working", 4996, LIVE + 5_000));
-    orders.add(order("resting-limit", false, true, "", "target", "working", 4990, LIVE + 5_000)); // not linked: never written
-    // Replay: short 1 at 4800 with a linked target, one more at 4802, the target filled at 4797.
+    orders.add(order("stop-1", false, false, "entry-1", "working", 4996, LIVE + 5_000));
+    // A buy stop is on the long's own side: not linked, so never written.
+    orders.add(order("resting-buy-stop", false, true, "", "working", 5010, LIVE + 5_000));
+    // Replay: short 1 at 4800 with a buy stop at 4806, one more at 4802, out at 4797; the stop is then cancelled.
     fills.add(fill("replay-1", true, false, 1, 4800, REPLAY + 10_000, "replay-entry-1", true));
-    orders.add(order("target-1", true, true, "replay-entry-1", "target", "working", 4797, REPLAY + 10_000));
+    orders.add(order("stop-r", true, true, "replay-entry-1", "working", 4806, REPLAY + 10_000));
     capture.poll();
     live(gate, writer, capture, 10, 4998);
     replay(replayGate, replayWriter, capture, replaySource, 20, 4803);
 
     fills.add(fill("fill-2", false, true, 1, 5001, LIVE + 35_000, "entry-2", true));
-    orders.set(0, order("stop-1", false, false, "entry-1", "stop", "working", 4999, LIVE + 60_000));
+    orders.set(0, order("stop-1", false, false, "entry-1", "working", 4999, LIVE + 60_000));
     fills.add(fill("replay-2", true, false, 1, 4802, REPLAY + 40_000, "replay-entry-2", true));
     capture.poll();
     live(gate, writer, capture, 40, 4999);
@@ -97,9 +100,9 @@ public final class ContractSample {
     replay(replayGate, replayWriter, capture, replaySource, 80, 4796);
 
     fills.add(fill("fill-3", false, false, 2, 5003.5, LIVE + 125_000, "exit-1", false));
-    orders.set(0, order("stop-1", false, false, "entry-1", "stop", "cancelled", 4999, LIVE + 125_000));
-    fills.add(fill("replay-3", true, true, 2, 4797, REPLAY + 100_000, "target-1", false));
-    orders.set(2, order("target-1", true, true, "replay-entry-1", "target", "filled", 4797, REPLAY + 100_000));
+    orders.set(0, order("stop-1", false, false, "entry-1", "cancelled", 4999, LIVE + 125_000));
+    fills.add(fill("replay-3", true, true, 2, 4797, REPLAY + 100_000, "replay-exit", false));
+    orders.set(2, order("stop-r", true, true, "replay-entry-1", "cancelled", 4806, REPLAY + 100_000));
     capture.poll();
     // Flat again, inside the tail a fill leaves: the print right after each exit is still written.
     live(gate, writer, capture, 130, 5003.75f);
@@ -203,9 +206,9 @@ public final class ContractSample {
   }
 
   private static JournalNativeAccess.ProtectiveOrder order(String id, boolean replay, boolean buy, String parent,
-                                                           String role, String state, double price, long time) {
+                                                           String state, double price, long time) {
     return new JournalNativeAccess.ProtectiveOrder(id, replay ? "REPLAY-1" : "paper", "ESZ6", buy, parent,
-        "", role, state, price, time, replay);
+        "", state, price, time, replay);
   }
 
   private static <T> T fixture(Class<T> type, Map<String, Object> values) {
