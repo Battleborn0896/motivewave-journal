@@ -359,8 +359,9 @@ def test_full_recorded_path_and_runner_controls_render_without_claiming_missing_
     show(app, 'Edge')
     assert not any(s.label == 'Runner comparison horizon' for s in app.selectbox)    # drawn only when its tab is open
     open_tab(app, 'Runners')
-    widget(app.selectbox, 'Runner comparison horizon').set_value(120).run()
     assert not app.exception and not said(app.info, 'No comparable completed windows')   # not run until asked
+    # A form sends its choices with the click, as a browser does: a run between them drops the choice (Streamlit 1.66).
+    widget(app.selectbox, 'Runner comparison horizon').set_value(120)
     press(app, 'Compare Runners')
     assert said(app.info, 'No comparable completed windows')
     assert widget(app.selectbox, 'Compare runners by').options == [
