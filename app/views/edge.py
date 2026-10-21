@@ -295,8 +295,8 @@ def comparisons(journal, closed):
 
 
 def compare_table(grouped_rows, field, currency):
-    """The comparison as a table: money reads '+$810.02', Average R '+0.50R' or '—' without a planned
-    risk, and every number still sorts as a number."""
+    """The comparison as a table: money reads '+$810.02', Average R '+0.50R' or '—' without a stop,
+    and every number still sorts as a number."""
     columns = {'group': field.rstrip('s') if field in ('Tags', 'Setups', 'Playbooks') else field, 'count': 'Trades',
                'net': 'Net P&L', 'win_rate': 'Win %', 'expectancy': 'Average Trade',
                'avg_win': 'Average Winner', 'avg_loss': 'Average Loser', 'expectancy_r': 'Average R',

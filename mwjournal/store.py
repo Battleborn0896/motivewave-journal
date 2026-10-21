@@ -909,10 +909,15 @@ class Journal(Workspace):
                             entries.setdefault(fill['execution_id'], set()).add(trade.id)
                 for row in db.execute('SELECT payload FROM protection WHERE provider=? AND account=? AND symbol=? '
                                       'ORDER BY ts,rowid', scope):
-                    event = ProtectionEvent(**json.loads(row['payload']))
-                    owners = ({event.trade_id} & ids) if event.trade_id else entries.get(event.entry_execution_id, ())
-                    for owner in owners:
-                        result[owner].append(event)
+                    # Another trade's order is skipped before it is built into an event (which checks it all
+                    # again), so reading one trade's orders stays quick in a journal of thousands.
+                    data = json.loads(row['payload'])
+                    linked = data.get('trade_id')
+                    owners = ({linked} & ids) if linked else entries.get(data.get('entry_execution_id'), ())
+                    if owners:
+                        event = ProtectionEvent(**data)
+                        for owner in owners:
+                            result[owner].append(event)
         return result
 
     def ingest_gaps(self, events: list[dict], *, db=None) -> int:

@@ -51,14 +51,16 @@ def position(trade) -> tuple[float, float] | None:
 
 
 def working_stops(trade, events) -> set[float]:
-    """The prices of the linked stop orders working when the stop settles. Take-profit orders are ignored."""
+    """The prices of the linked stop orders standing when the stop settles: working, or filled, as the stop
+    that took the trade out (the order can be stamped filled a moment before the exit fill is). Take-profit
+    orders are ignored."""
     if not trade.fills:
         return set()
     moment, last = settles_at(trade), {}
     for event in sorted(events, key=lambda e: instant(e.ts)):
         if event.role == 'stop' and instant(event.ts) <= moment:
             last[event.order_id] = event
-    return {e.price for e in last.values() if e.state == 'working'}
+    return {e.price for e in last.values() if e.state in ('working', 'filled') and e.price is not None}
 
 
 def initial_risk(trade, stop) -> float | None:

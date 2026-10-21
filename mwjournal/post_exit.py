@@ -194,5 +194,5 @@ def runner_groups(rows, field='tags'):
                        'avg_adverse_after_exit': sum(r['extra_mae'] for r in values) / len(values),
                        'avg_extra_peak_R': sum(r['extra_mfe_r'] for r in risk) / len(risk) if risk else None,
                        'additional_1R_reached_pct': sum(r['extra_mfe_r'] >= 1 for r in risk) / len(risk) * 100 if risk else None,
-                       'trades_with_planned_risk': len(risk)})
+                       'trades_with_r': len(risk)})
     return result

@@ -9,10 +9,11 @@ import common
 import runtime
 from mwjournal import Execution, Journal, PriceSample, merging
 from mwjournal.chart import trade_chart
+from mwjournal.metrics import measurements
 from mwjournal.model import ProtectionEvent, instant
 from mwjournal.post_exit import best_post_exit, resolve_stop
 from mwjournal.risk import STOP_SETTLES, initial_risk, plan, plan_for, settles_at, stop_for_risk
-from test_app import open_app, press, said, widget
+from test_app import display_setting, open_app, press, said, widget
 from test_moved_tools import menu
 
 T0 = '2026-10-07T14:00:00+00:00'
@@ -73,11 +74,30 @@ def test_a_stop_moved_3_seconds_after_entry_counts_and_a_move_30_seconds_after_d
     assert plan(t, {}, [order(0, 4990), order(30, 4999)]).stop == 4990
 
 
+def test_the_ten_seconds_at_their_edge():
+    journal = Journal()
+    t = long_one(journal)
+    for seconds, stop in [(9.9, 4996), (STOP_SETTLES, 4996), (10.1, 4990)]:
+        assert plan(t, {}, [order(0, 4990), order(seconds, 4996)]).stop == stop, seconds
+
+
 def test_a_cancelled_stop_is_no_stop_but_one_cancelled_later_still_stood():
     journal = Journal()
     t = long_one(journal)
     assert plan(t, {}, [order(0, 4996), order(5, 4996, state='cancelled')]).stop is None
     assert plan(t, {}, [order(0, 4996), order(30, 4996, state='cancelled')]).stop == 4996
+    assert plan(t, {}, [order(0, 4996, state='rejected')]).stop is None
+
+
+def test_a_stop_cancelled_and_replaced_within_the_window_is_the_replacement():
+    journal = Journal()
+    t = long_one(journal)
+    events = [order(0, 4990), order(3, 4990, state='cancelled'), order(3, 4994, id='stop-2'),
+              order(30, 4998, id='stop-2')]
+    result = plan(t, {}, events)
+    assert (result.stop, result.risk) == (4994, 300)
+    levels = trade_chart(t, [], 'none', result.stop, events)['overlays']['levels']
+    assert [(l['price'], l['style']) for l in levels] == [(4994, 'solid'), (4998, 'dashed')]
 
 
 def test_every_fill_of_the_entry_within_the_window_counts_and_a_later_add_does_not():
@@ -106,6 +126,8 @@ def test_a_trade_stopped_out_within_the_window_keeps_the_stop_that_took_it_out()
     assert settles_at(t) < instant(at(4))
     result = plan(t, {}, [order(0, 4996), order(4, 4996, state='filled')])
     assert result.stop == 4996 and result.risk == 200 and t.net / result.risk == pytest.approx(-1.02)
+    # The order can be stamped filled a moment before the exit fill is: it is still the stop that took it out.
+    assert plan(t, {}, [order(0, 4996), order(3.8, 4996, state='filled')]).risk == 200
 
 
 def test_several_stop_orders_at_different_prices_are_not_guessed_between():
@@ -171,6 +193,36 @@ def test_a_dollar_risk_saved_before_becomes_the_stop_with_the_same_r_once(home):
     # Once: clearing the converted stop later returns to the captured stop order, and stays so.
     journal.update_annotation(two.id, {'planned_stop': None})
     assert plan_for(Journal(), two).stop == 4990
+
+
+def test_a_take_profit_saved_before_stays_stored_and_plays_no_part(home):
+    journal = Journal()
+    t = long_one(journal)
+    journal.annotate(t.id, {'planned_target': 5010})
+    with sqlite3.connect(journal.path) as db:                  # a journal 0.4.6 left: never converted
+        db.execute("DELETE FROM journal_meta WHERE key='stops_from_risks'")
+    db.close()
+    journal = Journal()
+    review = journal.annotations()[t.id]
+    assert review['planned_target'] == 5010 and 'planned_stop' not in review
+    assert common.rows_for(journal)[0]['r'] is None            # as in 0.4.6: nothing says the risk
+    journal.ingest_protection([order(0, 4996)])
+    assert common.rows_for(journal)[0]['r'] == pytest.approx(196 / 200)
+    levels = trade_chart(t, [], 'none', plan_for(journal, t).stop, journal.protection_events(t))['overlays']['levels']
+    assert [level['price'] for level in levels] == [4996]
+
+
+def test_the_trade_list_reads_linked_orders_once_for_all_its_trades(monkeypatch):
+    journal = Journal()
+    for n in range(3):
+        trade(journal, (f'in-{n}', 'buy', 1, 5000, 300 * n), (f'out-{n}', 'sell', 1, 5004, 300 * n + 60))
+        journal.ingest_protection([order(300 * n, 4996 - n, id=f'stop-{n}', entry=f'in-{n}')])
+    reads = []
+    whole = Journal.protection_by_trade
+    monkeypatch.setattr(Journal, 'protection_by_trade', lambda self, trades: reads.append(len(trades)) or whole(self, trades))
+    monkeypatch.setattr(Journal, 'protection_events', lambda self, trade: pytest.fail('read one trade at a time'))
+    rows = common.rows_for(journal)
+    assert reads == [3] and [row['initial_risk'] for row in rows] == [200, 250, 300]
 
 
 def test_a_draft_carries_a_stop_and_an_older_draft_with_a_dollar_risk_still_attaches(home):
@@ -286,3 +338,18 @@ def test_stats_average_r_comes_from_the_stop(home):
     app = open_app('Edge')
     average = widget(app.metric, 'Average R')
     assert average.value == '+0.98R' and 'Across 1 trades with a stop.' in average.proto.help
+
+
+def test_mae_and_mfe_in_r_divide_by_the_risk_to_the_stop_order(home):
+    journal = Journal()
+    t = long_one(journal)
+    journal.ingest_protection([order(0, 4996)])
+    ticks = [PriceSample('ESZ6', at(20), 'test-prices', 4998, 4998), PriceSample('ESZ6', at(40), 'test-prices', 5006, 5006)]
+    journal.ingest_prices(ticks)
+    for metric in measurements(t, ticks, 'test-prices'):
+        journal.record_metric(t, metric)
+    app = open_app()
+    display_setting(app, 'MAE / MFE Units', 'r')
+    # $100 against and $300 for the trade, over the $200 its stop order risked.
+    assert widget(app.metric, 'MAE').value == '0.50R' and widget(app.metric, 'MFE').value == '1.50R'
+    assert common.rows_for(journal)[0]['mae_r'] == pytest.approx(.5)
