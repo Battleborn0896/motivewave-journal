@@ -25,12 +25,14 @@ public final class JournalProbesTest {
     var folder = Files.createTempDirectory("mwj-probes-fixture-");
     answers(folder.resolve("probes.ndjson"));
     failures(folder.resolve("failing.ndjson"));
+    recentOverExpired(folder.resolve("expired.ndjson"));
     try (var left = Files.walk(folder)) {
       for (var path : left.sorted(java.util.Comparator.reverseOrder()).toList()) Files.delete(path);
     }
     System.out.println("Journal probes passed: chart and fill symbols, tick sizes, the largest fill delay, "
-        + "addListener against onTick for 60 s, history on a fill's instrument with no chart (live, and replay up to "
-        + "its clock), each said once; a failing probe says so and the capture goes on.");
+        + "addListener against onTick for 60 s, history on a fill's instrument with no chart (live, a recent one before "
+        + "an expired contract's, and replay up to its clock), each said once; a failing probe says so and the capture "
+        + "goes on.");
   }
 
   private static void answers(Path file) throws Exception {
@@ -40,11 +42,13 @@ public final class JournalProbesTest {
     Instrument mnq = instrument("MNQZ6", "MNQZ6", .25, listeners, asked, false);
     Instrument replayNq = instrument("NQZ6", "NQZ6", .25, listeners, asked, false);
     Instrument chart = instrument("NQ", "NQZ6", .25, listeners, asked, false);
+    Instrument expired = instrument("MESM6", "MESM6", .25, listeners, asked, false);
     long fillTime = System.currentTimeMillis() - 600_000;
+    // MESM6: a contract that expired months ago, whose fills MotiveWave still keeps; no chart shows it either.
     var fills = new ArrayList<Fill>(List.of(fill("n1", "NQZ6", fillTime, false), fill("m1", "MNQZ6", fillTime + 1000, false),
-        fill("r1", "NQZ6", TIME, true)));
+        fill("r1", "NQZ6", TIME, true), fill("old", "MESM6", fillTime - 120 * 86_400_000L, false)));
     var instruments = Map.of(JournalNativeAccess.contract(false, "NQZ6"), nq, JournalNativeAccess.contract(false, "MNQZ6"), mnq,
-        JournalNativeAccess.contract(true, "NQZ6"), replayNq);
+        JournalNativeAccess.contract(true, "NQZ6"), replayNq, JournalNativeAccess.contract(false, "MESM6"), expired);
     var capture = JournalAccountCapture.fixture(file, () -> new Snapshot("workspace", List.copyOf(fills), List.of(), Map.of(),
         JournalNativeAccess.OrderCounts.of(List.of()), instruments));
     Object liveChart = new Object(), replayChart = new Object();
@@ -54,8 +58,9 @@ public final class JournalProbesTest {
     capture.poll(now);
     var lines = drain(capture);
     assert count(lines, "getSymbol() is 'NQ' and getActiveSymbol() 'NQZ6'; 1 fills have the symbol 'NQZ6'; "
-        + "the live fills' symbols: 'MNQZ6', 'NQZ6'.") == 1 : lines;
-    assert count(lines, "getTickSize() of the fills' instruments: live MNQZ6 0.25, live NQZ6 0.25, replay NQZ6 0.25.") == 1 : lines;
+        + "the live fills' symbols: 'MESM6', 'MNQZ6', 'NQZ6'.") == 1 : lines;
+    assert count(lines, "getTickSize() of the fills' instruments: live MESM6 0.25, live MNQZ6 0.25, live NQZ6 0.25, "
+        + "replay NQZ6 0.25.") == 1 : lines;
     assert count(lines, "largest fill delay") == 0 : "The first snapshot is history: " + lines;
     assert listeners.size() == 1 : "addListener on the live fill instrument beside the NQ chart";
     for (int i = 0; i < 7; i++) capture.ticked(liveChart, false);
@@ -86,7 +91,8 @@ public final class JournalProbesTest {
     lines = drain(capture);
     assert listeners.isEmpty() && count(lines, "Instrument.addListener on the replay fill instrument 'NQZ6' heard 0 prints")
         == 1 && count(lines, "stopped early: the chart was closed or its settings changed") == 1 : lines;
-    // History, once the data connection has had its 30 s: MNQZ6 has no chart, so it is chosen over the newer NQ fill.
+    // History, once the data connection has had its 30 s: MNQZ6 has no chart, so it is chosen over the newer NQ fill,
+    // and it is recent, so over the expired MESM6.
     capture.poll(now + JournalProbes.HISTORY_AFTER_NANOS + 3 * SECOND);
     lines = waitFor(capture, "history of the replay fill instrument", 2);
     // BarSize.minute needs MotiveWave's own classes, which a test outside MotiveWave does not have: there the
@@ -105,6 +111,28 @@ public final class JournalProbesTest {
     assert count(drain(capture), "history of the") == 0 : "Once per mode";
     capture.close();
     assert capture.failure == null;
+  }
+
+  /** The only contract no chart shows expired months ago: its history is not the question, so the probe reads a
+   * recent fill's instrument, of a contract a chart shows, and says so. */
+  private static void recentOverExpired(Path file) throws Exception {
+    var listeners = new CopyOnWriteArrayList<TickOperation>();
+    var asked = new CopyOnWriteArrayList<String>();
+    Instrument nq = instrument("NQZ6", "NQZ6", .25, listeners, asked, false);
+    Instrument expired = instrument("MESM6", "MESM6", .25, listeners, asked, false);
+    long recent = System.currentTimeMillis() - 600_000;
+    var fills = List.of(fill("n1", "NQZ6", recent, false), fill("old", "MESM6", recent - 120 * 86_400_000L, false));
+    var capture = JournalAccountCapture.fixture(file, () -> new Snapshot("workspace", fills, List.of(), Map.of(),
+        JournalNativeAccess.OrderCounts.of(List.of()),
+        Map.of(JournalNativeAccess.contract(false, "NQZ6"), nq, JournalNativeAccess.contract(false, "MESM6"), expired)));
+    capture.chart(new Object(), nq, false);
+    long now = System.nanoTime();
+    capture.poll(now);
+    capture.poll(now + JournalProbes.HISTORY_AFTER_NANOS + SECOND);
+    var lines = waitFor(capture, "history of the live fill instrument", 1);
+    assert count(lines, "history of the live fill instrument 'NQZ6' (a chart of it is open)") == 1 : lines;
+    assert asked.contains("forEachTick " + (recent - JournalProbes.WINDOW_MILLIS)) : asked;
+    capture.close();
   }
 
   /** Instruments whose every answer throws: each probe says it failed, and the fills are still written. */

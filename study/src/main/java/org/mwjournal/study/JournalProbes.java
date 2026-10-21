@@ -36,6 +36,9 @@ final class JournalProbes {
   // Like the trade-tick backfill's first look: a little after the study loads, so the data connection is up.
   static final long HISTORY_AFTER_NANOS = 30_000_000_000L;
   static final long WINDOW_MILLIS = 5 * 60_000L;
+  // How far back the next version reads history for a trade with no chart (design section 3.5). MotiveWave keeps
+  // the fills of expired contracts for months, and their history is not what that question is about.
+  static final long RECENT_MILLIS = 30 * 86_400_000L;
   static final int TICK_CAP = 200_000;
   static final String PREFIX = "MotiveWave Journal probe: ";
 
@@ -213,9 +216,9 @@ final class JournalProbes {
         + (early == null ? "" : "; " + early) + removed + ".");
   }
 
-  /** forEachTick and getBars on a fill's instrument, preferring a contract no chart of this study shows:
-   * live, around the newest such fill; replay, the ten minutes up to the replay clock. Once per mode, on its
-   * own thread, since MotiveWave may have to load the history. */
+  /** forEachTick and getBars on a fill's instrument, preferring a contract no chart of this study shows, and
+   * live a fill of the last 30 days: live, around the newest such fill; replay, the ten minutes up to the replay
+   * clock. Once per mode, on its own thread, since MotiveWave may have to load the history. */
   private void history(JournalNativeAccess.Snapshot snapshot, long replayClock, long nowNanos) {
     if (nowNanos - started < HISTORY_AFTER_NANOS) return;
     for (boolean replay : new boolean[]{false, true}) {
@@ -223,13 +226,16 @@ final class JournalProbes {
       if (history[mode] || replay && replayClock <= 0) continue;
       var charted = new HashSet<String>();
       for (Chart chart : charts.values()) if (chart.replay() == replay) charted.add(chart.contract());
+      long recent = System.currentTimeMillis() - RECENT_MILLIS;
+      // Recent first, then no chart, then the newest: 3 is a recent fill of a contract no chart shows.
+      java.util.function.ToIntFunction<JournalNativeAccess.Fill> rank = fill ->
+          (replay || fill.time() >= recent ? 2 : 0) + (charted.contains(fill.symbol()) ? 0 : 1);
       JournalNativeAccess.Fill chosen = null;
       for (var fill : snapshot.fills()) {
         if (fill.replay() != replay || !snapshot.instruments().containsKey(JournalNativeAccess.contract(replay, fill.symbol())))
           continue;
-        boolean better = chosen == null || charted.contains(chosen.symbol()) && !charted.contains(fill.symbol())
-            || charted.contains(chosen.symbol()) == charted.contains(fill.symbol()) && fill.time() > chosen.time();
-        if (better) chosen = fill;
+        int compared = chosen == null ? 1 : Integer.compare(rank.applyAsInt(fill), rank.applyAsInt(chosen));
+        if (compared > 0 || compared == 0 && fill.time() > chosen.time()) chosen = fill;
       }
       if (chosen == null) continue;
       history[mode] = true;
