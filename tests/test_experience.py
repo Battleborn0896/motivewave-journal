@@ -76,7 +76,7 @@ def test_accuracy_control_is_distinct_from_units_and_propagates_to_headers_and_a
     assert widget(app.selectbox, 'MAE / MFE Accuracy').value == 'ticks-only'
     show(app, 'Trades')
     assert widget(app.metric, 'MAE').value == widget(app.metric, 'MFE').value == '—'
-    assert said(app.caption, 'candle estimates are excluded')
+    assert said(app.caption, 'Only 1-minute candles were recorded, so MAE / MFE are not measured.')
     display_setting(app, 'MAE / MFE Units', 'ticks')
     assert widget(app.metric, 'MFE').value == '—'
     display_setting(app, 'MAE / MFE Accuracy', 'best-available')
@@ -140,7 +140,7 @@ def test_day_tags_and_playbook_can_be_clicked_without_retyping_and_daily_notes_d
     app = open_app('Daily review')
     widget(app.date_input, 'Trading day').set_value(dt.date(2026, 10, 7)).run()
     widget(app.pills, 'Mindset').set_value(['Patient']).run()
-    press(app, 'Save Daily Review')
+    widget(app.text_area, 'What I learned').set_value('Calm day.').run()        # the day's note saves by itself
     assert 'Patient' in common.rows_for(journal)[0]['tags']
     show(app, 'Trades')
     press(app, 'Apply Combination')

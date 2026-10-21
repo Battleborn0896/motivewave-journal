@@ -343,7 +343,7 @@ function drawOverlay() {
   }
   for (const {fill,x,y} of placed) {
     const detail = fill.side.toUpperCase() + ' · ' + fill.label + '\n' + timeLabel(fill.time,true)
-      + '\nUTC ' + fill.ts + '\nExecution: ' + (fill.execution_id || 'not supplied');
+      + '\nUTC ' + fill.ts;
     // No SVG <title>: the browser would show it in the system's font. #fill-tip shows data-detail instead.
     const group = element('g', {'pointer-events':'visiblePainted',role:'img','aria-label':detail,
                                 'data-detail':detail},layer);

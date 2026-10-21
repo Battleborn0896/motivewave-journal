@@ -35,10 +35,12 @@ def filter_editor(journal, rows, prefix, old=None):
     library = journal.tag_library()
     key = lambda name: common.key(journal, prefix + '-' + name)
     result = {}
+    names = {r['account']: r['account_label'] for r in rows}         # accounts by the name given to them
     for field, title, column in [('markets', 'Markets', 'market'), ('accounts', 'Accounts', 'account'),
                                  ('symbols', 'Exact contracts', 'symbol')]:
         options = sorted({r[column] for r in rows} | set(old.get(field, [])))
-        result[field] = st.multiselect(title, options, default=old.get(field, []), key=key(field))
+        result[field] = st.multiselect(title, options, default=old.get(field, []), key=key(field),
+                                       format_func=(lambda a: names.get(a, a)) if field == 'accounts' else str)
     result['directions'] = st.multiselect('Directions', ['long', 'short'], default=old.get('directions', []), key=key('directions'))
     options = sorted(library['tags'], key=lambda id: library['tags'][id]['name'])
     for field, title in [('tags_all', 'Require every tag'), ('tags_any', 'Require any tag'), ('tags_none', 'Exclude tags')]:
@@ -207,8 +209,10 @@ def draw(journal, rows, widget, page_id):
         return
     if kind == 'Trades':
         if rows:
+            # Net P&L is a closed trade's: an open one's would be its fees so far, so it reads '—'.
             st.dataframe(common.money_table([{'Entry': common.moment(r['opened'], zone, seconds=False), 'Contract': r['symbol'],
-                                              'Side': r['direction'].title(), 'Net P&L': r['net'], 'Tags': r['tags']}
+                                              'Side': r['direction'].title(),
+                                              'Net P&L': r['net'] if r['status'] == 'closed' else None, 'Tags': r['tags']}
                                              for r in rows], currency, results=['Net P&L']), hide_index=True, height=280)
         else:
             st.info('No trades in this sample.')

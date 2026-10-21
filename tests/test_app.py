@@ -101,8 +101,13 @@ def open_report_card(app):
     else:
         app.session_state[common.REPORT_KEY] = True
         app.run()
-    assert not app.exception and any(b.label == 'Save Daily Review' for b in app.button)
+    assert not app.exception and report_open(app)
     return app
+
+
+def report_open(app):
+    """The Daily Report Card on screen: its note box."""
+    return any(t.label.startswith('What I learned') for t in app.text_area)
 
 
 def setup_page(app):
@@ -201,7 +206,7 @@ def landmarks(app, view, empty):
         return (any(t.label == 'Read Trades From MotiveWave' for t in app.toggle) and len(states(app.main)) == 1
                 and any(c.value == str(paths.bridge_file(Journal().dataset)) for c in app.main.code))
     if view == 'Daily review':
-        return any(b.label == 'Save Daily Review' for b in app.button)
+        return report_open(app)
     return [b.label for b in app.download_button] == ['Download Journal JSON', 'Download Trades CSV',
                                                     'Download Full Backup']
 
@@ -397,13 +402,11 @@ def test_chart_renders_and_planned_protection_persists_with_tags(home):
     assert said(app.main.caption, CREDIT)           # under the chart too, for a closed sidebar
     assert not any(w.label.startswith(('Planned take-profit', 'Initial planned risk'))
                    for w in [*app.text_input, *app.number_input])
-    widget(app.text_input, 'Stop').set_value('4997.75')
-    press(app, 'Save Plan')
+    widget(app.text_input, 'Stop').set_value('4997.75').run()                  # saves when the box is left
     annotation = journal.annotations()[journal.trades()[0].id]
     assert annotation['planned_stop'] == 4997.75 and annotation['planned_target'] == 5005   # kept, not shown
     assert annotation['tags'] == ['PAPER FIXTURE', 'breakout']
-    widget(app.text_input, 'Stop').set_value('not-a-price')
-    press(app, 'Save Plan')
+    widget(app.text_input, 'Stop').set_value('not-a-price').run()
     assert said(app.error, 'must be a number')
     assert journal.annotations()[journal.trades()[0].id]['planned_stop'] == 4997.75
     assert any(t.label == 'Executions' for t in app.tabs)      # the rest of the workspace is still drawn
@@ -586,10 +589,10 @@ def test_currencies_are_never_mixed_and_the_choice_appears_only_when_there_are_t
     open_review(app)
     choice = widget(app.sidebar.selectbox, 'Journal currency')
     assert choice.options == ['EUR', 'USD'] and choice.value == 'EUR'
-    assert widget(app.metric, 'Recorded P&L').value == '+€100.00'
+    assert widget(app.metric, 'Net P&L').value == '+€100.00'
     choice.set_value('USD').run()
     open_review(app)
-    assert not app.exception and widget(app.metric, 'Recorded P&L').value == '+$242.00'
+    assert not app.exception and widget(app.metric, 'Net P&L').value == '+$242.00'
     show(app, 'Edge')
     assert widget(app.metric, 'Net P&L').value == '+$242.00'       # not 342 of mixed money
 
@@ -604,7 +607,7 @@ def test_unknown_instrument_gets_its_multiplier_where_the_trade_is_shown():
     widget(app.number_input, 'Currency per price point').set_value(10.)
     press(app, 'Set Multiplier and Recalculate')
     assert journal.trades()[0].net == 30
-    assert widget(app.metric, 'Recorded P&L').value == '+$30.00' and not said(app.warning, 'multiplier')
+    assert widget(app.metric, 'Net P&L').value == '+$30.00' and not said(app.warning, 'multiplier')
 
 
 # ---------------------------------------------------------------- edge
@@ -718,13 +721,17 @@ def test_daily_review_opens_on_the_latest_trading_day_and_is_saved(home):
     app = open_app('Daily review')
     assert widget(app.date_input, 'Trading day').value == dt.date(2026, 10, 7)
     assert widget(app.metric, 'Trades').value == '1' and widget(app.metric, 'Net P&L').value == '+$242.00'
-    widget(app.checkbox, 'I had a plan').set_value(True)
-    widget(app.text_area, 'What I learned').set_value('Sized correctly.')
-    press(app, 'Save Daily Review')
+    widget(app.checkbox, 'I had a plan').set_value(True).run()                # each box saves when it changes
+    assert journal.get('sessions')['2026-10-07:America/New_York']['planned']
+    widget(app.text_area, 'What I learned').set_value('Sized correctly.').run()
     saved = journal.get('sessions')['2026-10-07:America/New_York']
     assert saved['planned'] and saved['notes'] == 'Sized correctly.' and saved['date'] == '2026-10-07'
+    assert 'rating' not in saved                                               # untouched: nothing is made up
+    widget(app.slider, 'Session process score').set_value(4).run()
+    assert journal.get('sessions')['2026-10-07:America/New_York']['rating'] == 4
     app.run()
     assert widget(app.text_area, 'What I learned').value == 'Sized correctly.'
+    assert not any(b.label == 'Save Daily Review' for b in app.button)
 
 
 def test_export_files_carry_the_whole_journal_and_are_named_after_the_environment(home):
@@ -818,7 +825,7 @@ def test_trades_the_study_writes_show_up_without_any_setup():
     app.run()
     open_review(app)
     assert not app.exception
-    assert widget(app.metric, 'Recorded P&L').value == '+$96.00'
+    assert widget(app.metric, 'Net P&L').value == '+$96.00'
     assert widget(app.selectbox, 'Chart price source').value == 'motivewave-bars:1m'
     assert widget(app.metric, 'Maximum adverse excursion').value == '$50.00'      # a magnitude: no sign
     assert len(Journal().executions()) == 2 and len(Journal(dataset='replay').executions()) == 1

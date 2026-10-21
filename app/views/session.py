@@ -21,6 +21,10 @@ from mwjournal import tagging
 
 TIMER = 'session-timer'
 DEFAULT_MINUTES = 5
+# A draft's state as the Drafts menu says it: waiting for its trade, used by one, cancelled, or not attached
+# because more than one trade or draft matched (ambiguous) or its tags changed since (needs review).
+DRAFT_STATES = {'armed': 'Waiting', 'attached': 'Used', 'cancelled': 'Cancelled', 'ambiguous': 'Needs review',
+                'needs review': 'Needs review'}
 
 
 def clock_fields(journal, prefix, title, default=None):
@@ -135,7 +139,7 @@ def check_in(journal, open_rows, running, interval) -> None:
 
     if open_rows:
         st.selectbox('Attach Check-In To', [None, *[r['id'] for r in open_rows]],
-                     format_func=lambda id: next(f"{r['account']} · {r['symbol']}" for r in open_rows if r['id'] == id)
+                     format_func=lambda id: next(f"{r['account_label']} · {r['symbol']}" for r in open_rows if r['id'] == id)
                      if id else 'Session only', key=target_key,
                      help='Check-ins belong to the session unless you attach them to a position that is open now.')
     for group in due:
@@ -163,7 +167,7 @@ MENUS = {'Check-Ins': 'Which tag groups ask how you are doing when the timer run
 def menus(journal, rows) -> None:
     """Check-Ins, Pre-Trade Drafts and the session Checklist, as small menus in the current row. Each is drawn
     only while it is open: the trade beside it has tag groups, a checklist and forms of its own."""
-    panels = {'Check-Ins': lambda: checkins_panel(journal), 'Drafts': lambda: draft_panel(journal, rows),
+    panels = {'Check-Ins': lambda: checkins_panel(journal, rows), 'Drafts': lambda: draft_panel(journal, rows),
               'Checklist': lambda: checklists.run_panel(journal, prefix='session')}
     for label, explained in MENUS.items():
         menu = st.popover(label, help=explained, key=common.key(journal, 'session-menu-' + label.lower()),
@@ -173,7 +177,7 @@ def menus(journal, rows) -> None:
                 panels[label]()
 
 
-def checkins_panel(journal) -> None:
+def checkins_panel(journal, rows) -> None:
     # How long the timer counts down: a setting, kept here with the groups that ask, so the timer row holds
     # only the count and its buttons.
     widget = common.key(journal, 'timer-minutes')
@@ -191,19 +195,27 @@ def checkins_panel(journal) -> None:
         st.caption('No check-ins yet.')
         return
     zone = common.display_zone(journal)
+    names = {r['id']: common.trade_name(r, zone) for r in rows}
     st.dataframe([{'Time': common.moment(e['at'], zone), 'Group': e['group'],
                    'Tags': ', '.join(tagging.names(journal.tag_library(), e['tag_ids'])),
-                   'Trade': e['trade_id'] or 'Session'} for e in events], hide_index=True, height=230)
+                   'Trade': names.get(e['trade_id'], 'A trade no longer listed') if e['trade_id'] else 'Session'}
+                  for e in events], hide_index=True, height=230)
 
 
 def draft_panel(journal, rows):
-    scopes = sorted({(r['provider'], r['account'], r['symbol']) for r in rows})
+    # Each account and contract once, by the account's name ('SIM · NQZ6'), the most recently traded first: a
+    # replay run or another workspace is the same account to the trader, and the latest is where the next trade is.
+    scopes = {}
+    for r in sorted(rows, key=lambda r: r['opened'], reverse=True):
+        scopes.setdefault(f"{r['account_label']} · {r['symbol']}", (r['provider'], r['account'], r['symbol']))
+    labels = {scope: label for label, scope in scopes.items()}
     if scopes:
-        scope = st.selectbox('Next-trade source', scopes, format_func=lambda x: ' · '.join(x), key=common.key(journal, 'draft-scope'),
+        scope = st.selectbox('Next-trade source', list(scopes.values()), format_func=labels.get,
+                             key=common.key(journal, 'draft-scope'),
                              help='A draft is a plan, not a fill. It attaches its tags, note and stop to the next trade '
-                                  'captured on this exact provider, account and contract inside the time window. Only '
-                                  'trades captured after arming qualify; an ambiguous match attaches nothing; anything '
-                                  'already reviewed on the trade wins.')
+                                  'on this account and contract inside the time window. Only trades after arming '
+                                  'qualify; when more than one could, it attaches to none and says Needs review. '
+                                  'Anything already reviewed on the trade wins.')
         latest = max(instant for instant in (pd.Timestamp(r['opened']).to_pydatetime() for r in rows))
         with st.form(common.key(journal, 'draft-form')):
             name = st.text_input('Draft name', 'Next setup', max_chars=80)
@@ -228,14 +240,17 @@ def draft_panel(journal, rows):
                 except ValueError as exc:
                     st.error(str(exc))
     else:
-        st.info('Capture a trade first so the app knows your exact provider, account and contract. No source is guessed.')
+        st.info('Capture a trade first so the app knows your account and contract. No account is guessed.')
     drafts = journal.workspace()['drafts']
     if drafts:
         zone = common.display_zone(journal)
-        st.dataframe([{'Plan': d['name'], 'Account': d['account'], 'Contract': d['symbol'],
-                       'From': common.moment(d['start'], zone, seconds=False), 'Until': common.moment(d['end'], zone, seconds=False),
-                       'Stop': d.get('stop'), 'State': d['state'], 'Trade': d['trade_id']} for d in drafts.values()],
-                     hide_index=True)
+        names = {r['id']: common.trade_name(r, zone) for r in rows}
+        st.dataframe([{'Plan': d['name'], 'Account': common.account_name(journal, d['provider'], d['account']),
+                       'Contract': d['symbol'], 'From': common.moment(d['start'], zone, seconds=False),
+                       'Until': common.moment(d['end'], zone, seconds=False), 'Stop': d.get('stop'),
+                       'Status': DRAFT_STATES.get(d['state'], d['state'].title()),
+                       'Trade': names.get(d['trade_id'], 'A trade no longer listed') if d['trade_id'] else ''}
+                      for d in drafts.values()], hide_index=True)
         active = [id for id, d in drafts.items() if d['state'] in ('armed', 'ambiguous', 'needs review')]
         if active:
             id = st.selectbox('Cancel draft', active, format_func=lambda id: drafts[id]['name'])

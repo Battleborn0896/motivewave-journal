@@ -135,7 +135,9 @@ def result_html(row) -> tuple[str, str]:
                 "<span class='x'><span class='mwj-badge bad' title='Set this contract’s dollars per point to see its P&amp;L'>"
                 'Unpriced</span></span>')
     if row['status'] == 'open':
-        return (f"<span class='p mwj-flat' title='Realised so far'>{_money(row['net'], row['currency'])}</span>",
+        # The header's Open P&L (open_row puts it in the row), '—' until a price has been measured.
+        shown = _money(row['open_net'], row['currency']) if row.get('open_net') is not None else '—'
+        return (f"<span class='p mwj-flat' title='Open P&amp;L'>{shown}</span>",
                 "<span class='x'><span class='mwj-badge open'>Open</span></span>")
     tone = 'mwj-win' if row['net'] > 0 else 'mwj-loss' if row['net'] < 0 else 'mwj-flat'
     return (f"<span class='p {tone}'>{_money(row['net'], row['currency'])}</span>",
@@ -159,11 +161,12 @@ def row_html(row, zone, selected) -> str:
 
 def row_label(row, zone) -> str:
     """What a screen reader says for the row's button."""
-    result = 'P&L unknown' if row.get('net') is None or row['status'] == 'incomplete' else money(row['net'], row['currency'])
+    result = ('P&L unknown' if row.get('net') is None or row['status'] == 'incomplete' else
+              '' if row['status'] == 'open' else money(row['net'], row['currency']))
     state = {'open': 'Open', 'incomplete': 'Incomplete'}.get(row['status']) or (
         'Unpriced' if row.get('net') is None else humanize.duration(humanize.held(row['opened'], row['closed'])))
-    return common.md(f"{common.clock(row['opened'], zone)} {row['symbol']} {row['direction'].title()} "
-                     f"{row['max_qty']:g} {result} {state}")
+    return common.md(' '.join(part for part in (common.clock(row['opened'], zone), row['symbol'], row['direction'].title(),
+                                                f"{row['max_qty']:g}", result, state) if part))
 
 
 def day_html(day, rows, zone, selected=False) -> str:
@@ -305,14 +308,26 @@ def trade_list(journal, shown, zone) -> None:
                           width='stretch')
             for row in day_rows:
                 with st.container(key='trade-row-' + hashlib.sha256(row['id'].encode()).hexdigest()[:16]):
-                    st.markdown(row_html(row, zone, not reporting and row['id'] == st.session_state.get(selected)),
-                                unsafe_allow_html=True)
+                    chosen = not reporting and row['id'] == st.session_state.get(selected)
+                    if row['status'] == 'open':
+                        live_row(journal, row, zone, chosen)
+                    else:
+                        st.markdown(row_html(row, zone, chosen), unsafe_allow_html=True)
                     st.button(row_label(row, zone), key=common.key(journal, 'pick-' + row['id']),
                               on_click=pick, args=(row['id'],), width='stretch')
                 drawn += 1
         if drawn < len(shown):
             st.button('Show Earlier Trades', key=common.key(journal, 'trade-list-more'), width='stretch',
                       on_click=lambda: st.session_state.update({limit_key: limit + LIST_LIMIT}))
+
+
+def open_row(journal, row, zone, selected) -> None:
+    """An open trade's row, showing the same Open P&L as the header: at the newest price measured, drawn again
+    every LIVE as the header is (a named journal's copy of the trade brought up to date first, as there)."""
+    trade = common.row_trade(row)
+    journals.follow(journal, trade)
+    open_net = common.open_pnl(trade, common.best_display_metric(journal, trade))
+    st.markdown(row_html({**row, 'open_net': open_net}, zone, selected), unsafe_allow_html=True)
 
 
 def options_menu(journal, rows, trade) -> None:
@@ -413,8 +428,8 @@ def numbers(journal, trade, annotation: dict, zone) -> None:
     unit = common.excursion_unit(journal)
     metric = common.best_display_metric(journal, trade)
     precision = metric.get('point_precision') if unit in ('points', 'ticks') else metric.get('precision')
-    measured = PRECISION.get(precision, 'Waiting for prices') if metric else ''
-    if metric and metric.get('provenance') in ('history-backfill', 'replay-history'):
+    measured = PRECISION.get(precision, 'Waiting for prices') if common.measured(metric) else ''
+    if measured and metric.get('provenance') in ('history-backfill', 'replay-history'):
         measured += ' · ' + PROVENANCE[metric['provenance']]      # real prints, loaded after the trade
     st.caption(' · '.join(part for part in (common.span(trade.opened, trade.closed, zone), measured) if part))
     if getattr(trade, 'merge_leg_ids', None):
@@ -422,38 +437,36 @@ def numbers(journal, trade, annotation: dict, zone) -> None:
                    help='Overlapping positions: points and ticks are unavailable because the original trades had '
                         'different average entries. Currency and R remain.' if getattr(trade, 'merge_overlapping', False) else None)
     cols = st.columns([1.25, 1, 1, .75])
-    result, label = trade.net, 'Recorded P&L' if trade.closed else 'Realised P&L · still open'
+    result, label, shown = trade.net, 'Net P&L', 'Unknown'
     why = (' '.join(WHY_INCOMPLETE[reason] for reason in trade.incomplete) if trade.incomplete
-           else 'This contract has no dollars per point yet.' if trade.net is None else None)
-    mark = metric.get('last_price') if not trade.closed and trade.net is not None else None
-    if mark is not None:
-        # The newest price the MAE and MFE beside it were measured with, so the three always agree.
-        result, label = trade.net_at(mark), 'Open P&L'
-        why = (f'If the {trade.open_qty:g} still held were closed at {humanize.price(mark)}, the last recorded price '
-               f'({common.moment(metric["last_ts"], zone)}). Realised so far: {money(trade.net, trade.currency)}. '
-               "The exit's fees are not included.")
+           else 'This contract has no dollars per point yet.' if trade.net is None else 'After recorded fees.')
+    if trade.status == 'open':
+        # At the newest price the MAE and MFE beside it were measured with, so the three always agree.
+        result, label = common.open_pnl(trade, metric), 'Open P&L'
+        if result is not None:
+            why = (f'If the {trade.open_qty:g} still held were closed at {humanize.price(metric["last_price"])}, the '
+                   f'last recorded price ({common.moment(metric["last_ts"], zone)}). Realised so far: '
+                   f"{money(trade.net, trade.currency)}. The exit's fees are not included.")
+        elif trade.net is not None:
+            # No measured price: the line under these numbers says why (common.no_excursions).
+            shown, why = '—', f'Realised so far: {money(trade.net, trade.currency)}.'
     outcome = 'positive' if result is not None and result > 0 else 'negative' if result is not None and result < 0 else 'neutral'
     with cols[0].container(key='trade-result-' + outcome):
-        st.metric(label, money(result, trade.currency) if result is not None else 'Unknown', help=why)
+        st.metric(label, money(result, trade.currency) if result is not None else shown, help=why)
     mae, mfe = common.excursion_values(journal, trade, metric, risk.plan_for(journal, trade).risk)
     explain = units.description(unit) + (f' Measured from: {measured}.' if measured else '')
     cols[1].metric('MAE', common.excursion_amount(mae, unit, trade.currency), help=explain)
     cols[2].metric('MFE', common.excursion_amount(mfe, unit, trade.currency), help=explain)
     cols[3].metric('Peak size', f'{trade.max_qty:g}', help='The most contracts held at once.')
-    if common.replay_ticks_pending(journal, trade):
-        st.caption(common.REPLAY_TICKS_LATER)
-    elif not metric and journal.display_settings()['excursion_policy'] == 'ticks-only':
-        st.caption('MAE / MFE need recorded ticks · candle estimates are excluded',
-                   help='To show candle-based values, choose Allow labelled estimates under Setup → Advanced → '
-                        'MAE / MFE Accuracy.')
+    if not common.measured(metric) or common.replay_ticks_pending(journal, trade):
+        st.caption(common.no_excursions(journal, trade))
 
 
 def executions_panel(journal, trade, zone) -> None:
     if trade.flags:
         st.warning('Data quality: ' + ' · '.join(trade.flags))
     st.dataframe(pd.DataFrame([{'Time': common.moment(f['ts'], zone), 'Role': f['role'].title(), 'Side': f['side'].title(),
-                                'Qty': f['qty'], 'Price': f['price'], 'Fee': f['commission'], 'Order': f['order_id'],
-                                'Execution': f['execution_id']} for f in trade.fills]),
+                                'Qty': f['qty'], 'Price': f['price'], 'Fee': f['commission']} for f in trade.fills]),
                  hide_index=True, width='stretch', column_config={'Fee': common.money_column('Fee', trade.currency)})
     if getattr(trade, 'merge_leg_ids', None):
         original = getattr(journal, 'original', journal)
@@ -503,29 +516,43 @@ def review_form(journal, trade, a: dict) -> None:
                  args=(journal, trade.id, 'notes', notes_key), help='Saves when you leave the box.')
     theme.section('Trade Plan')
     plan = risk.plan_for(journal, trade)
-    with st.form(common.key(journal, 'review-' + trade.id)):
-        c1, c2 = st.columns(2)
+    c1, c2 = st.columns(2)
+    if plan.source != 'merged':
         shown = stop_text(plan.stop)
-        if plan.source != 'merged':
-            typed = c1.text_input('Stop', shown, placeholder='Your stop price',
-                                  help=f'The price R is measured from. Blank uses your stop order as it stood '
-                                       f'{risk.STOP_SETTLES} seconds after entry; moving it later is managing the '
-                                       'trade and leaves R alone.')
-        c1.caption(common.md(stop_caption(plan, trade.currency)))
-        adherence = c2.selectbox('Followed my plan', ADHERENCE,
-                                 index=ADHERENCE.index(a.get('adherence', 'Unreviewed')))
-        if not st.form_submit_button('Save Plan', type='primary'):
-            return
-        changes = {'adherence': adherence}
-        # Only a stop that was edited is saved: the one shown may be the stop order, which stays the order's.
-        if plan.source != 'merged' and typed.strip() != shown:
-            try:
-                changes['planned_stop'] = finite(typed, 'Stop') if typed.strip() else None
-            except ValueError as exc:
-                st.error(str(exc))
-                return
-        journal.update_annotation(trade.id, changes)
-        st.rerun()
+        # The key carries what the box was filled with, so a stop saved here, or a stop order that arrives
+        # after the box was drawn, fills it again.
+        stop_key = common.key(journal, f'stop-{trade.id}-{shown}')
+        typed = c1.text_input('Stop', shown, placeholder='Your stop price', key=stop_key, on_change=save_stop,
+                              args=(journal, trade.id, stop_key, shown),
+                              help=f'The price R is measured from. Blank uses your stop order as it stood '
+                                   f'{risk.STOP_SETTLES} seconds after entry; moving it later is managing the trade '
+                                   'and leaves R alone. Saves when you leave the box.')
+        if error := stop_error(typed, shown):
+            c1.error(error)
+    c1.caption(common.md(stop_caption(plan, trade.currency)))
+    adherence_key = common.key(journal, 'adherence-' + trade.id)
+    c2.selectbox('Followed my plan', ADHERENCE, index=ADHERENCE.index(a.get('adherence', 'Unreviewed')),
+                 key=adherence_key, on_change=tag_controls.save_field,
+                 args=(journal, trade.id, 'adherence', adherence_key))
+
+
+def stop_error(typed, shown) -> str:
+    """Why a typed stop cannot be saved, or '' when it can."""
+    try:
+        if typed.strip() and typed.strip() != shown:
+            finite(typed, 'Stop')
+    except ValueError as exc:
+        return str(exc)
+    return ''
+
+
+def save_stop(journal, trade_id, widget_key, shown) -> None:
+    """Saves the Stop box when it changes, as the notes box saves. Only a stop that was edited becomes the
+    trader's own: the box may hold the stop order's price, which stays the order's. Blank returns to the order."""
+    typed = str(st.session_state.get(widget_key) or '').strip()
+    if typed == shown or stop_error(typed, shown):
+        return
+    journal.update_annotation(trade_id, {'planned_stop': finite(typed, 'Stop') if typed else None})
 
 
 def stop_text(price) -> str:
@@ -550,15 +577,8 @@ def excursions_panel(journal, trade, a: dict, zone) -> None:
     at_risk = risk.plan_for(journal, trade).risk
     tick = units.tick_size(trade.symbol, journal.display_settings()['tick_sizes'])
     options = [common.display_metric(journal, trade, m) for m in common.metric_options(journal, trade)]
-    if not options and common.replay_ticks_pending(journal, trade):
-        st.info(common.REPLAY_TICKS_LATER)
-    elif not options:
-        st.info('Unavailable under the selected accuracy policy. Recorded ticks are required in tick-only mode; '
-                'OHLC, synthetic replay and recorded capture gaps do not qualify. '
-                'The one-minute chart can still be displayed independently.')
-        if journal.metric_options(trade):
-            st.caption('Other measurements are kept. Allow labelled estimates under Setup → Advanced → MAE / MFE '
-                       'Accuracy to see them.')
+    if not any(common.measured(m) for m in options):
+        st.info(common.no_excursions(journal, trade))
     else:
         best = common.best_display_metric(journal, trade)
         index = next((i for i, m in enumerate(options) if m['source'] == best.get('source')
@@ -718,14 +738,16 @@ def chart_panel(journal, trade, annotation: dict, zone) -> None:
         for note in payload['notes']:
             st.caption(note)
         if events:
-            st.dataframe(pd.DataFrame([{'Time': common.moment(e.ts, zone), 'Stop order': e.order_id,
-                                        'State': e.state.title(), 'Price': e.price} for e in events]),
+            # Each stop order by its number, 1 for the first placed, so its moves read as one order's.
+            number = {id: n for n, id in enumerate(dict.fromkeys(e.order_id for e in events), 1)}
+            st.dataframe(pd.DataFrame([{'Time': common.moment(e.ts, zone), 'Stop': number[e.order_id],
+                                        'Status': e.state.title(), 'Price': e.price} for e in events]),
                          hide_index=True, width='stretch')
         else:
             st.caption('No linked stop order was captured. Type your stop under Notes; orders are never guessed.')
         st.dataframe(pd.DataFrame([{'Time': common.moment(f['ts'], zone), 'Role': f['role'].title(),
-                                    'Side': f['side'].title(), 'Qty': f['qty'], 'Price': f['price'],
-                                    'Execution': f['execution_id']} for f in trade.fills]),
+                                    'Side': f['side'].title(), 'Qty': f['qty'], 'Price': f['price']}
+                                   for f in trade.fills]),
                      hide_index=True, width='stretch')
 
 
@@ -741,3 +763,4 @@ def following(journal, trade, annotation: dict, zone) -> None:
 live_numbers = st.fragment(run_every=LIVE)(following)
 live_chart = st.fragment(run_every=LIVE)(chart_panel)
 live_excursions = st.fragment(run_every=LIVE)(excursions_panel)
+live_row = st.fragment(run_every=LIVE)(open_row)
