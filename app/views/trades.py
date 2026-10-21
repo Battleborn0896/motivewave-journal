@@ -105,11 +105,11 @@ CSS = f"""
 .st-key-session-timer {{ gap:6px !important; }}
 .st-key-session-timer .stButton button {{ min-height:32px; height:32px; width:34px; padding:0; }}
 .st-key-session-timer [data-testid="stNumberInputContainer"] {{ height:32px; }}
+.st-key-session-bar [data-testid="stPopover"] button {{ padding-left:8px; padding-right:8px; }}
 .mwj-timer {{ font-family:{theme.FONT}; font-size:26px; font-weight:600; line-height:32px; color:{theme.INK};
     font-variant-numeric:tabular-nums; letter-spacing:.01em; min-width:3.1em; }}
 .mwj-timer.off, .mwj-timer.paused {{ color:{theme.MUTED}; }}
 .mwj-timer.due {{ color:{theme.ACCENT}; }}
-.mwj-timer-unit {{ color:{theme.MUTED}; font-size:12.5px; margin-left:-2px; }}
 [class*="st-key-session-check-in-"] [data-testid="stWidgetLabel"] p {{ color:{theme.ACCENT} !important;
     font-weight:650; }}
 </style>
@@ -240,10 +240,12 @@ def render(journal, rows, *, every=None) -> None:
 def top_row(journal, every, open_rows, rows=None):
     """The session tools, then Filters and Options: one row above the list. Returns the trades the filters
     keep and the Options menu, which is filled in once the selected trade is known."""
-    timer_col, menu_col = st.columns([1, 1.25], vertical_alignment='top')
-    with timer_col:
+    # The timer takes the width it needs and the menus the rest; on a narrow window the menus move below it
+    # together rather than one by one.
+    bar = st.container(horizontal=True, vertical_alignment='top', gap='small', key='session-bar')
+    with bar.container(width='content'):
         session.timer(journal, open_rows)
-    with menu_col.container(horizontal=True, horizontal_alignment='right', vertical_alignment='center', gap='small'):
+    with bar.container(horizontal=True, horizontal_alignment='right', vertical_alignment='center', gap='small'):
         session.menus(journal, every)
         if rows is None:
             return [], None
@@ -372,11 +374,8 @@ def detail(journal, trade, ids, zone) -> None:
                     f"<span class='when'>{common.moment(trade.opened, zone)}</span></div>", unsafe_allow_html=True)
         st.caption(f'{position + 1} of {len(ids)}', width='content')
     annotation = journal.annotations().get(trade.id, {})
-    live = journals.live(journal, trade)   # an open trade follows the market: see live_numbers at the end
-    if live:
-        live_numbers(live, trade, annotation, zone)
-    else:
-        numbers(journal, trade, annotation, zone)
+    live = trade.status == 'open'          # an open trade follows the market: see live_numbers at the end
+    (live_numbers if live else numbers)(journal, trade, annotation, zone)
     if trade.point_value is None:
         st.warning(f'{trade.symbol} has no dollars-per-point multiplier yet, so its P&L cannot be calculated. Set it here.')
         common.multiplier_form(journal, 'trade-multiplier', trade.symbol)
@@ -385,10 +384,7 @@ def detail(journal, trade, ids, zone) -> None:
     with overview:
         chart_col, tag_col = st.columns([1.35, 1], gap='small')
         with chart_col:
-            if live:
-                live_chart(live, trade, annotation, zone)
-            else:
-                chart_panel(journal, trade, annotation, zone)
+            (live_chart if live else chart_panel)(journal, trade, annotation, zone)
         with tag_col:
             tag_controls.render(journal, trade)
     with notes:
@@ -401,7 +397,7 @@ def detail(journal, trade, ids, zone) -> None:
         with executions:
             executions_panel(journal, trade, zone)
         with metrics:
-            excursions_panel(journal, trade, annotation, zone)
+            (live_excursions if live else excursions_panel)(journal, trade, annotation, zone)
         with runner:
             if getattr(trade, 'merge_leg_ids', None):
                 st.info('Runner analysis stays per original trade: a merged trade can have different stops. '
@@ -536,10 +532,6 @@ def review_form(journal, trade, a: dict) -> None:
 
 def excursions_panel(journal, trade, a: dict, zone) -> None:
     theme.section('MAE / MFE')
-    if trade.status == 'open':
-        # Drawn once: the path and the full-path export are too much to read again every second.
-        st.caption('Still open: this tab shows the trade as it was when the page was drawn. The MAE and MFE '
-                   'above the tabs follow the market.')
     unit = common.excursion_unit(journal)
     tick = units.tick_size(trade.symbol, journal.display_settings()['tick_sizes'])
     options = [common.display_metric(journal, trade, m) for m in common.metric_options(journal, trade)]
@@ -574,7 +566,11 @@ def excursions_panel(journal, trade, a: dict, zone) -> None:
         for note in dict.fromkeys([*m.get('notes', []), *(m.get('point_notes', []) if unit in ('points', 'ticks') else [])]):
             st.caption(note)
         if m.get('path'):
-            full = st.checkbox('Show/export full recorded trade path', key=common.key(journal, 'full-path-' + trade.id))
+            # Every recorded price is read for it: once the trade is closed, not again every second.
+            full = trade.closed is not None and st.checkbox('Show/export full recorded trade path',
+                                                            key=common.key(journal, 'full-path-' + trade.id))
+            if trade.closed is None:
+                st.caption('The full recorded path can be shown and exported once the trade is closed.')
             if full:
                 samples = journal.prices(trade.symbol, m['source'], start=trade.opened, end=trade.closed)
                 clock = journal.trade_clock(trade)
@@ -713,7 +709,15 @@ def chart_panel(journal, trade, annotation: dict, zone) -> None:
                      hide_index=True, width='stretch')
 
 
-# An open trade's numbers and chart are drawn again every LIVE from what the watcher has stored by then, the
-# rest of the page staying as it is; they read through journals.live. A closed trade's are drawn once.
-live_numbers = st.fragment(run_every=LIVE)(numbers)
+def following(journal, trade, annotation: dict, zone) -> None:
+    """An open trade's numbers, after bringing a named journal's copy of the trade up to date
+    (journals.follow); the watcher keeps the capture journal so."""
+    journals.follow(journal, trade)
+    numbers(journal, trade, annotation, zone)
+
+
+# An open trade's numbers, chart and MAE / MFE are drawn again every LIVE from what has been stored by then, the
+# rest of the page staying as it is. A closed trade's are drawn once.
+live_numbers = st.fragment(run_every=LIVE)(following)
 live_chart = st.fragment(run_every=LIVE)(chart_panel)
+live_excursions = st.fragment(run_every=LIVE)(excursions_panel)

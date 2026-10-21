@@ -6,17 +6,21 @@ Archiving hides a journal; its database and media remain recoverable. Paths are 
 """
 from __future__ import annotations
 
+import datetime as dt
 import json
 import re
 import sqlite3
 import uuid
 from pathlib import Path
 
-from .model import product
+from .model import instant, product, timestamp
+from .scope import allows_source
 from .store import Journal, ImportConflict, encode
 from .workspace import label
 
 KEY = 'journal_registry'
+RECENT = dt.timedelta(minutes=3)       # the study writes the last two minutes' candles again as each minute closes
+CONTEXT = dt.timedelta(minutes=120)    # the widest chart context before entry (Trades → Options)
 
 
 def registry(capture):
@@ -128,31 +132,54 @@ def account_alias(capture, provider, account, name):
     edit(capture, lambda state: state['account_aliases'].update({key: name}))
 
 
-class Live:
-    """A journal as an open trade's one-second redraw reads it: its own settings, reviews and keys, with
-    prices, measurements, gaps and orders read where the watcher writes them as they arrive. See live()."""
-    MARKET = frozenset({'path', 'prices', 'price_sources', 'metric_options', 'best_metric', 'capture_gaps',
-                        'trade_clock', 'protection_events'})
-
-    def __init__(self, journal, market):
-        self.journal, self.market = journal, market
-
-    def __getattr__(self, name):
-        return getattr(self.market if name in self.MARKET else self.journal, name)
-
-
-def live(journal, trade):
-    """The journal an open trade's redraw reads, or None when nothing would change between redraws. The
-    watcher measures the capture journal as prices arrive; a named journal holds copies, brought up to date
-    only when the whole page is drawn (open_named), so its redraw reads the capture journal, but only for a
-    trade the capture measures as the named journal holds it: one changed there alone (a fill added by
-    hand, its own multiplier) is measured by nothing as it trades, and is drawn once like a closed trade."""
-    if trade.status != 'open':
-        return None
+def follow(journal, trade):
+    """Bring a named journal's copy of an open trade up to date, as the watcher keeps the capture journal: the
+    prices, gaps and orders the capture holds for it since, then its measurement. An open trade's one-second
+    redraw calls this; the rest of a named journal is brought up to date when the whole page is drawn
+    (open_named). A trade the capture journal measures as this journal holds it takes that measurement; one
+    changed in this journal alone (a fill added by hand, its own multiplier) is measured here. Nothing to do
+    for a capture journal, which the watcher keeps."""
     capture = getattr(journal, 'capture_journal', None)
-    if capture is None:
-        return Live(journal, journal)
-    return Live(journal, capture) if capture.metric_options(trade) else None
+    if capture is None or trade.status != 'open':
+        return
+    since = {}
+    with capture.connect() as db:
+        stored = {label: Journal._distinct(db, 'source', 'symbol=? AND ', (label,))
+                  for label in capture._labels(db, trade.symbol)}
+    with journal.connect() as db:
+        db.execute('ATTACH DATABASE ? AS capture', (str(capture.path),))
+        db.execute('BEGIN')
+        for label, sources in stored.items():
+            for source in sources:
+                if not allows_source(trade, source):
+                    continue
+                held = db.execute('SELECT max(ts) FROM main.prices WHERE symbol=? AND source=?', (label, source)).fetchone()[0]
+                # From the newest price held, less the minutes whose candles the study writes again as each
+                # minute closes; nothing held yet, from the chart's widest context before entry.
+                start = timestamp(instant(held) - RECENT if held else instant(trade.opened) - CONTEXT)
+                changed = ('FROM capture.prices incoming WHERE incoming.symbol=? AND incoming.source=? AND incoming.ts>=? '
+                           'AND NOT EXISTS (SELECT 1 FROM main.prices held WHERE held.key=incoming.key '
+                           'AND held.payload=incoming.payload)')
+                first = db.execute('SELECT min(incoming.ts) ' + changed, (label, source, start)).fetchone()[0]
+                if first is None:
+                    continue
+                db.execute('INSERT INTO main.prices(key,symbol,source,ts,payload) SELECT incoming.key,incoming.symbol,'
+                           'incoming.source,incoming.ts,incoming.payload ' + changed +
+                           ' ON CONFLICT(key) DO UPDATE SET payload=excluded.payload', (label, source, start))
+                since[source] = min(since.get(source, instant(first)), instant(first))
+        db.execute('INSERT OR IGNORE INTO main.capture_events SELECT * FROM capture.capture_events '
+                   'WHERE source IN (SELECT DISTINCT source FROM main.prices) AND ts>=?', (timestamp(trade.opened),))
+        db.execute('INSERT OR REPLACE INTO main.protection SELECT * FROM capture.protection '
+                   'WHERE provider=? AND account=? AND symbol=? AND ts>=?',
+                   (trade.provider, trade.account, trade.symbol, timestamp(trade.opened)))
+        measured = db.execute('SELECT count(*) FROM capture.metrics WHERE trade_id=? AND basis=?',
+                              (trade.id, trade.basis)).fetchone()[0]
+        if measured:
+            db.execute('INSERT OR REPLACE INTO main.metrics SELECT * FROM capture.metrics WHERE trade_id=? AND basis=?',
+                       (trade.id, trade.basis))
+    if not measured:
+        for source, first in since.items():
+            journal.measure(trade, source, since=first)
 
 
 def alias(capture, scope):

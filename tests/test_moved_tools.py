@@ -155,14 +155,17 @@ def menu(app, label, *, run=True):
     return app
 
 
-def test_the_session_timer_sits_above_the_list_with_play_pause_stop_and_a_duration(home):
+def test_the_session_timer_sits_above_the_list_with_play_pause_stop_and_its_minutes_under_check_ins(home):
     journal = seed_preview(home)
     app = open_app()
     play, pause, stop = (app.button(key=f'session-timer-live-{name}') for name in ('play', 'pause', 'stop'))
     assert not play.disabled and pause.disabled and stop.disabled
     assert said(app.main.markdown, "class='mwj-timer off'") and said(app.main.markdown, '>05:00<')
+    assert not any(n.key == 'timer-minutes-live' for n in app.number_input)   # the row holds the count and buttons
+    menu(app, 'Check-Ins')
     duration = app.number_input(key='timer-minutes-live')
-    assert duration.value == session.DEFAULT_MINUTES
+    assert duration.value == session.DEFAULT_MINUTES and duration.label == 'Minutes Between Check-Ins'
+    menu(app, 'Check-Ins', run=False)
     duration.set_value(2).run()
     assert journal.workspace()['preferences']['timer_minutes'] == 2 and said(app.main.markdown, '>02:00<')
     app.button(key='session-timer-live-play').click().run()

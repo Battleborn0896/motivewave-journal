@@ -149,7 +149,7 @@ def test_prices_read_back_are_the_prices_stored(tmp_path):
     assert [dataclasses.asdict(s) for s in read] == [dataclasses.asdict(s) for s in stored]
 
 
-def test_a_named_journal_redraw_reads_the_capture_journals_newest_prices_and_measurements(tmp_path):
+def test_a_named_journals_open_trade_is_brought_up_to_date_at_each_redraw(tmp_path):
     capture, bridge = watched(tmp_path)
     write(bridge, [fill('buy', 'in', 20000, '2026-10-07T14:00:00Z'), tick(19995, '2026-10-07T14:00:01Z')])
     worker = SyncWorker(capture)
@@ -157,32 +157,39 @@ def test_a_named_journal_redraw_reads_the_capture_journals_newest_prices_and_mea
     id = journals.create(capture, 'Main', [('motivewave-native:ws:live', 'SIM')])
     named = journals.open_named(capture, id)
     named.set_excursion_unit('points')
-    # The watcher keeps writing to the capture journal; the named copy is refreshed only by a whole page.
-    write(bridge, [tick(20030, '2026-10-07T14:00:02Z')])
-    worker.poll()
     trade, = named.trades()
-    live = journals.live(named, trade)
+    # The watcher keeps writing to the capture journal; the named copy is behind until it is followed.
+    write(bridge, [tick(20030, '2026-10-07T14:00:02Z'),
+                   {'version': 1, 'type': 'gap', 'provider': 'motivewave-ticks', 'symbol': 'NQ', 'dropped': 1,
+                    'start_ts': '2026-10-07T14:00:02Z', 'end_ts': '2026-10-07T14:00:02Z', 'ts': '2026-10-07T14:00:02Z'}])
+    worker.poll()
     assert named.best_metric(trade)['observations'] == 1 and len(named.prices('NQZ6', 'motivewave-ticks')) == 1
-    assert live.best_metric(trade)['observations'] == 2 and len(live.prices('NQZ6', 'motivewave-ticks')) == 2
-    assert live.path == capture.path and live.price_sources('NQZ6', trade) == ['motivewave-ticks']
-    # Its own settings and reviews stay its own.
-    assert live.display_settings()['excursion_unit'] == 'points' != capture.display_settings()['excursion_unit']
-    assert live.ui_scope == named.ui_scope and live.annotations() == named.annotations()
-    # A journal that is not a named one reads itself; a closed trade has nothing to follow.
-    assert journals.live(capture, capture.trades()[0]).market is capture
-    closed = dataclasses.replace(trade, closed='2026-10-07T14:00:05+00:00')
-    assert journals.live(named, closed) is None and journals.live(capture, closed) is None
-    # A trade the capture journal does not hold as the named journal does (a fill added to the named journal
-    # alone) is measured by nothing as it trades: it is drawn once, from the named journal's own copy.
-    named.ingest([(Execution('motivewave-native:ws:live', 'SIM', 'ESZ6', 'buy', 1, 5000, '2026-10-07T14:00:00Z',
+    journals.follow(named, trade)
+    assert named.best_metric(trade) == capture.best_metric(trade)
+    assert named.best_metric(trade)['observations'] == 2 and len(named.prices('NQZ6', 'motivewave-ticks')) == 2
+    assert named.capture_gaps('motivewave-ticks') == capture.capture_gaps('motivewave-ticks')
+    # Its own settings stay its own; following again with nothing new changes nothing.
+    assert named.display_settings()['excursion_unit'] == 'points' != capture.display_settings()['excursion_unit']
+    journals.follow(named, trade)
+    assert named.best_metric(trade)['observations'] == 2
+    # A capture journal and a closed trade: nothing to do.
+    journals.follow(capture, trade)
+    journals.follow(named, dataclasses.replace(trade, closed='2026-10-07T14:00:05+00:00'))
+    # A trade changed in the named journal alone (a fill added by hand) is measured there as prices arrive.
+    named.ingest([(Execution('motivewave-native:ws:live', 'SIM', 'NQZ6', 'buy', 1, 20010, '2026-10-07T14:00:01.5Z',
                              execution_id='by-hand'), {})])
-    named.ingest_prices([PriceSample('ES', '2026-10-07T14:00:01Z', 'my-data', 4990, 4990)])
-    measure = SyncWorker(named)
-    measure.rebuild = True                             # as Recalculate does after a fill added by hand
-    measure.poll()
-    by_hand = next(t for t in named.trades() if t.symbol == 'ESZ6')
-    assert by_hand.status == 'open' and journals.live(named, by_hand) is None
-    assert named.best_metric(by_hand)['mae_points'] == 10
+    by_hand, = named.trades()
+    assert by_hand.id == trade.id and by_hand.basis != trade.basis and not capture.metric_options(by_hand)
+    write(bridge, [tick(19980, '2026-10-07T14:00:03Z')])
+    worker.poll()
+    journals.follow(named, by_hand)
+    measured = named.best_metric(by_hand)                  # measured from entry the first time
+    assert measured['observations'] == 3 and measured['last_price'] == 19980
+    assert measured['mae_points'] == 25                    # from the average of 20000 and 20010
+    write(bridge, [tick(19970, '2026-10-07T14:00:04Z')])
+    worker.poll()
+    journals.follow(named, by_hand)
+    assert named.best_metric(by_hand)['mae_points'] == 35 and named.best_metric(by_hand)['observations'] == 4
 
 
 def test_an_open_trades_chart_reads_only_the_prices_after_its_kept_minutes(tmp_path, monkeypatch):

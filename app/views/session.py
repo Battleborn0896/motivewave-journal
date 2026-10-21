@@ -59,10 +59,9 @@ def _ticking(journal, open_rows):
 
 
 def minutes(journal) -> int:
-    widget = common.key(journal, 'timer-minutes')
-    if widget not in st.session_state:
-        st.session_state[widget] = int(journal.workspace()['preferences'].get('timer_minutes', DEFAULT_MINUTES))
-    return int(st.session_state[widget] or DEFAULT_MINUTES)
+    """The saved minutes between check-ins: the one place they are kept. The box under Check-Ins writes them;
+    its own state is gone whenever that menu is closed."""
+    return int(journal.workspace()['preferences'].get('timer_minutes', DEFAULT_MINUTES))
 
 
 def remaining(running, interval: int) -> int:
@@ -93,9 +92,6 @@ def _timer(journal, open_rows) -> None:
         if current and not current.get('paused'):
             current.update(remaining=max(0, current['next'] - time.monotonic()), paused=True)
 
-    def save_minutes():
-        journal.save_preferences(timer_minutes=minutes(journal))
-
     with st.container(horizontal=True, vertical_alignment='center', gap='small', key='session-timer'):
         st.markdown(f"<div class='mwj-timer {state}' title='Next check-in'>{left // 60:02d}:{left % 60:02d}</div>",
                     unsafe_allow_html=True)
@@ -106,11 +102,6 @@ def _timer(journal, open_rows) -> None:
                   help='Pause the timer. Check-ins already made stay saved.')
         st.button('', icon=':material/stop:', key=key + '-stop', on_click=lambda: st.session_state.pop(key, None),
                   disabled=not running, help='Stop the timer. Play starts a full interval again.')
-        st.number_input('Duration · Minutes', min_value=1, max_value=120, step=1,
-                        key=common.key(journal, 'timer-minutes'), on_change=save_minutes, width=104,
-                        label_visibility='collapsed',
-                        help='Minutes between check-ins. Takes effect the next time the timer starts.')
-        st.markdown("<div class='mwj-timer-unit'>min</div>", unsafe_allow_html=True)
     # The check-in sits in one placeholder, so the redrawn timer never leaves an old one on screen.
     slot = st.empty()
     if state != 'due':
@@ -183,6 +174,12 @@ def menus(journal, rows) -> None:
 
 
 def checkins_panel(journal) -> None:
+    # How long the timer counts down: a setting, kept here with the groups that ask, so the timer row holds
+    # only the count and its buttons.
+    widget = common.key(journal, 'timer-minutes')
+    st.number_input('Minutes Between Check-Ins', min_value=1, max_value=120, step=1, value=minutes(journal),
+                    key=widget, on_change=lambda: journal.save_preferences(timer_minutes=st.session_state[widget]),
+                    help='How long the timer counts down. Takes effect the next time it starts.')
     every = list(tagging.ordered_groups(journal.tag_library()))
     groups_key = common.key(journal, 'timer-groups')
     st.session_state.setdefault(groups_key, groups(journal))
