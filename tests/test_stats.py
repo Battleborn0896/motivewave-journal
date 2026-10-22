@@ -7,8 +7,9 @@ import pytest
 
 import common
 import runtime
-from mwjournal import Execution, Journal
-from test_app import open_app, show, widget
+import theme
+from mwjournal import Execution, Journal, tagging
+from test_app import open_app, open_tab, said, show, widget
 from views import edge
 
 NY = 'America/New_York'
@@ -153,3 +154,111 @@ def test_the_compare_table_writes_average_r_but_still_sorts_it_as_a_number():
     assert '+0.50R' in shown and '—' in shown and 'None' not in shown and 'nan' not in shown
     assert '+$810.02' in shown and '-$152.48' in shown
     assert list(table.data.columns)[0] == 'Tag'
+
+
+def tagged_trades():
+    """three_trades() tagged from the starter categories: f1 +$196 and f2 -$104 are Breakouts, m1 +$496 a Pullback;
+    f1 and m1 Followed Plan, f2 Chased Entry; f1 Calm, f2 FOMO, m1 no Mindset tag. Only f1 has a stop: 1.96R."""
+    journal = three_trades()
+    trades = {t.fills[0]['execution_id'][:2]: t for t in journal.trades()}
+    for id, setup, execution, mindset in (('f1', 'Breakout', 'Followed Plan', 'Calm'),
+                                          ('f2', 'Breakout', 'Chased Entry', 'FOMO'),
+                                          ('m1', 'Pullback', 'Followed Plan', None)):
+        journal.set_trade_tag_group(trades[id], 'Setup', [setup])
+        journal.set_trade_tag_group(trades[id], 'Execution', [execution])
+        if mindset:
+            journal.set_trade_tag_group(trades[id], 'Mindset', [mindset])
+    journal.update_annotation(trades['f1'].id, {'planned_stop': 4998})
+    return journal
+
+
+def tag_tables(app):
+    """Each tag table on the page, top to bottom, as {tag: (trades, net, win %, average trade, average R)}."""
+    return [{row['Tag']: (row['Trades'], row['Net P&L'], row['Win %'], row['Average Trade'],
+                          None if row['Average R'] != row['Average R'] else round(row['Average R'], 2))
+             for _, row in d.value.iterrows()} for d in app.dataframe if 'Tag' in d.value.columns]
+
+
+def chip(app, group, *names):
+    """Choose exactly these tags, by name, in a category's row of chips."""
+    library = Journal().tag_library()
+    pills = next(p for p in app.pills if p.label == group)
+    pills.set_value([next(iter(tagging.ids(library, [name]))) for name in names]).run()
+    assert not app.exception
+
+
+def test_compare_shows_a_table_per_tag_category_and_chips_narrow_every_table():
+    tagged_trades()
+    app = open_tab(open_app('Edge'), 'Compare')
+    assert widget(app.selectbox, 'Compare by').value == 'Tags'
+    # The chips: each category in the library's order, with only the tags these trades carry.
+    assert [(p.label, p.options) for p in app.pills] == [('Setup', ['Breakout', 'Pullback']),
+                                                         ('Execution', ['Followed Plan', 'Chased Entry']),
+                                                         ('Mindset', ['Calm', 'FOMO'])]
+    assert not any('of 3 closed trades' in c.value for c in app.caption)
+    setup, execution, mindset = tag_tables(app)
+    assert setup == {'Breakout': (2, 92, 50, 46, 1.96), 'Pullback': (1, 496, 100, 496, None)}
+    assert execution == {'Followed Plan': (2, 692, 100, 346, 1.96), 'Chased Entry': (1, -104, 0, -104, None)}
+    assert mindset == {'Calm': (1, 196, 100, 196, 1.96), 'FOMO': (1, -104, 0, -104, None),
+                       'Untagged': (1, 496, 100, 496, None)}
+    # Five columns, a dash for an Average R with no stop, and each tag's name in its colour, in a text colour that
+    # reads on it; Untagged has none.
+    tables = [d.proto for d in app.dataframe if 'Tag' in d.value.columns]
+    assert all(list(t.column_order) == ['Tag', 'Trades', 'Net P&L', 'Win %', 'Average Trade', 'Average R']
+               and t.placeholder == '—' for t in tables)
+    assert f'background-color: #65CA98; color: {theme.ink_on("#65CA98")}' in tables[0].arrow_data.styler.styles
+    mindset_styles = tables[2].arrow_data.styler.styles                              # Calm and FOMO, not Untagged
+    assert '_row0_col0' in mindset_styles and '_row1_col0' in mindset_styles and '_row2_' not in mindset_styles
+
+    chip(app, 'Setup', 'Breakout')
+    assert said(app.caption, '2 of 3 closed trades')
+    setup, execution, mindset = tag_tables(app)
+    assert setup == {'Breakout': (2, 92, 50, 46, 1.96)}
+    assert execution == {'Followed Plan': (1, 196, 100, 196, 1.96), 'Chased Entry': (1, -104, 0, -104, None)}
+    assert mindset == {'Calm': (1, 196, 100, 196, 1.96), 'FOMO': (1, -104, 0, -104, None)}
+
+    chip(app, 'Execution', 'Followed Plan')                    # every chosen tag: Breakout and Followed Plan
+    assert said(app.caption, '1 of 3 closed trades')
+    assert tag_tables(app)[2] == {'Calm': (1, 196, 100, 196, 1.96)}
+    # The other ways to compare use the same trades.
+    widget(app.selectbox, 'Compare by').set_value('Direction').run()
+    table = next(d.value for d in app.dataframe if 'Direction' in d.value.columns)
+    assert table[['Direction', 'Trades', 'Net P&L']].values.tolist() == [['long', 1, 196]]
+    widget(app.selectbox, 'Compare by').set_value('Setups').run()
+    assert next(d.value for d in app.dataframe if 'Setup' in d.value.columns)['Trades'].tolist() == [1]
+    # Still chosen after another tab was open.
+    open_tab(app, 'Overview')
+    open_tab(app, 'Compare')
+    assert said(app.caption, '1 of 3 closed trades')
+    widget(app.selectbox, 'Compare by').set_value('Tags').run()
+    chip(app, 'Execution')
+    chip(app, 'Setup', 'Pullback')
+    chip(app, 'Mindset', 'FOMO')                               # no Pullback was taken in FOMO
+    assert said(app.info, 'No closed trade has all of the chosen tags') and not tag_tables(app)
+
+
+def test_tag_tables_follow_the_filters_and_leave_retired_tags_out_of_the_chips():
+    journal = tagged_trades()
+    journal.edit_tag(next(iter(tagging.ids(journal.tag_library(), ['FOMO']))), retired=True)
+    app = open_tab(open_app('Edge'), 'Compare')
+    assert next(p for p in app.pills if p.label == 'Mindset').options == ['Calm']
+    assert tag_tables(app)[2]['FOMO'] == (1, -104, 0, -104, None)          # its trades still count
+    chip(app, 'Execution', 'Chased Entry')
+    assert said(app.caption, '1 of 3 closed trades')
+    # The page's own Filters come first. No trade they keep was a Chased Entry: that chip is no longer offered,
+    # and nothing is left chosen that the page does not show.
+    widget(app.multiselect, 'Tags').set_value(['Followed Plan']).run()
+    assert not app.exception
+    assert [p.options for p in app.pills][:2] == [['Breakout', 'Pullback'], ['Followed Plan']]
+    assert not any(p.value for p in app.pills) and not said(app.caption, 'closed trades')
+    assert tag_tables(app)[0] == {'Breakout': (1, 196, 100, 196, 1.96), 'Pullback': (1, 496, 100, 496, None)}
+    chip(app, 'Setup', 'Pullback')
+    assert said(app.caption, '1 of 2 closed trades')
+
+
+def test_compare_says_so_when_no_trade_has_a_tag():
+    three_trades()
+    app = open_tab(open_app('Edge'), 'Compare')
+    assert not app.pills and said(app.info, 'None of these trades has a tag yet')
+    widget(app.selectbox, 'Compare by').set_value('Weekday').run()
+    assert next(d.value for d in app.dataframe if 'Weekday' in d.value.columns)['Trades'].sum() == 3
