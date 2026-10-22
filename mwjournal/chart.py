@@ -6,7 +6,7 @@ import datetime as dt
 from collections import defaultdict
 
 from .matching import FLAT
-from .model import PriceSample, Trade, instant, trade_prices
+from .model import ENTRY_MISSING, PriceSample, Trade, instant, trade_prices
 from .risk import settles_at
 from .scope import allows_source, is_history, is_simulated, provenance
 
@@ -116,8 +116,9 @@ def closing_pairs(fills: list[dict]) -> list[dict]:
     """Each exit joined to the entries it closed, first in first out, as a platform's entry/exit lines join them:
     a scale-in closed at once gives a pair per entry, a partial exit takes from the oldest entry still open, and a
     reversing fill closes this trade with its exit part alone (the rest opens the next trade). `entry` and `exit`
-    are the fills' places in trade.fills; `points` is what that part made per contract, by price alone. An exit
-    with no entry before it (the platform no longer has it) is joined to nothing; so is a fill with no price."""
+    are the fills' places in trade.fills; `points` is what that part made per contract, by price alone. A fill with
+    no price is joined to nothing. A trade whose entry the platform no longer has gets no pairs (trade_chart): the
+    lost entries came first, so what each kept exit closed is not known."""
     pairs, held = [], []                  # held: [place, quantity still open] of each entry, oldest first
     for i, fill in enumerate(fills):
         if fill['role'] == 'entry':
@@ -184,7 +185,8 @@ def trade_chart(trade: Trade, samples: list[PriceSample], source: str, stop=None
         chart_data = [lookup.get(t, {'time': t}) for t in range(data[0]['time'], data[-1]['time'] + 60, 60)]
     return {'series': {'type': 'candles', 'name': trade.symbol + ' · 1m', 'data': chart_data,
                        'volume': any(b.get('volume', 0) > 0 for b in data)},
-            'overlays': {'fills': fills, 'pairs': closing_pairs(trade.fills), 'levels': segments,
+            'overlays': {'fills': fills, 'pairs': [] if ENTRY_MISSING in trade.flags else closing_pairs(trade.fills),
+                         'levels': segments,
                          'opened': instant(trade.opened).timestamp(),
                          'closed': instant(trade.closed).timestamp() if trade.closed else None},
             'provenance': provenance(source), 'notes': list(dict.fromkeys(notes))}

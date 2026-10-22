@@ -211,7 +211,7 @@ function build(s) {
   new ResizeObserver(() => { if (chart) { chart.applyOptions({ width: el.clientWidth }); requestOverlay(); } }).observe(el);
   box.addEventListener('pointermove', requestOverlay, {passive: true});
   box.addEventListener('wheel', requestOverlay, {passive: true});
-  // A fill's details follow the pointer while it is over the fill's arrow or box (the event target).
+  // A fill arrow's details follow the pointer while it is over the arrow (the arrow is the event target).
   const tip = document.getElementById('fill-tip');
   const hideTip = () => { if (tip) tip.hidden = true; };
   box.addEventListener('pointermove', ev => {
@@ -350,28 +350,38 @@ function drawOverlay() {
   // beside it a box with the signed size and price, a buy's below and a sell's above.
   const priceText = formatter(spec.format), boxes = [], boxHeight = 14, step = boxHeight + 2;
   const top = spec.title ? 52 : 30, bottom = plotHeight - boxHeight - 1;   // in the plot, below the title and legend
-  const free = (x, y, w) => !boxes.some(b => x < b.x + b.w + 2 && b.x < x + w + 2 && y < b.y + step && b.y < y + step);
-  for (const {fill,x,y} of placed.values()) {
-    if (x < 0 || x > plotWidth || y < 0 || y > plotHeight) continue;    // scrolled out of view
+  // A fill scrolled out of view gets no arrow or box. A box goes where no other box is and over no fill's arrow, so
+  // every fill's price stays in sight.
+  const shown = [...placed.values()].filter(({x, y}) => x >= 0 && x <= plotWidth && y >= 0 && y <= plotHeight);
+  const arrows = shown.map(({fill, x, y}) => ({x: x - 5, y: fill.side === 'buy' ? y : y - 7}));
+  const free = (x, y, w) => !boxes.some(b => x < b.x + b.w + 2 && b.x < x + w + 2 && y < b.y + step && b.y < y + step)
+    && !arrows.some(a => x < a.x + 10 && a.x < x + w && y < a.y + 7 && a.y < y + boxHeight);
+  // A box's places on one side of the price, from `at` outward (way 1 down, -1 up), as far as the plot goes.
+  const places = (at, way) => {
+    const list = [];
+    for (at = way > 0 ? Math.max(at, top) : Math.min(at, bottom); at >= top && at <= bottom; at += way * step) list.push(at);
+    return list;
+  };
+  for (const {fill,x,y} of shown) {
     const detail = fill.side.toUpperCase() + ' · ' + fill.label + '\n' + timeLabel(fill.time,true)
       + '\nUTC ' + fill.ts;
     // No SVG <title>: the browser would show it in the system's font. #fill-tip shows data-detail instead.
-    const group = element('g', {'pointer-events':'visiblePainted',role:'img','aria-label':detail,
-                                'data-detail':detail},layer);
+    const group = element('g', {role:'img','aria-label':detail,'data-detail':detail},layer);
     const buy = fill.side === 'buy', direction = buy ? 1 : -1, colour = buy ? t.candleUp : t.candleDown;
+    // Only the arrow takes the pointer: over a box the chart still zooms and pans.
     element('polygon',{points:[[x,y], [x-5,y+7*direction], [x+5,y+7*direction]].map(p => p.join(',')).join(' '),
-      fill:colour,stroke:t.surface,'stroke-width':1,'stroke-linejoin':'round',
+      fill:colour,stroke:t.surface,'stroke-width':1,'stroke-linejoin':'round','pointer-events':'visiblePainted',
       class:'trade-fill-arrow','data-side':fill.side,'data-role':fill.role},group);
     const box = element('rect',{height:boxHeight,rx:2,fill:colour,class:'trade-fill-label'},group);
     const text = element('text',{'font-size':10,'font-weight':600,'font-family':t.font,fill:t.surface,
       'text-anchor':'middle'},group, (buy ? '+' : '−') + fill.qty.toLocaleString('en-US',
       {maximumFractionDigits: 8}) + ' @ ' + priceText(fill.price));
     const w = Math.ceil(text.getComputedTextLength()) + 8, left = Math.max(1, Math.min(plotWidth - w - 1, x - w / 2));
-    // Its place by the arrow; if another box is there, the nearest free place further from the price, else nearer.
-    const start = Math.max(top, Math.min(bottom, buy ? y + 9 : y - 9 - boxHeight)), tops = [];
-    for (let at = start; at >= top && at <= bottom; at += direction * step) tops.push(at);
-    for (let at = start - direction * step; at >= top && at <= bottom; at -= direction * step) tops.push(at);
-    const at = tops.find(at => free(left, at, w)) ?? start;
+    // Its place by the arrow; if that is taken, the nearest free place further from the price. With no room on that
+    // side (a sell at the top of the plot, a buy at the bottom), the other side of the price: never over its own arrow.
+    const tops = [...places(buy ? y + 9 : y - 9 - boxHeight, direction),
+                  ...places(buy ? y - 9 - boxHeight : y + 9, -direction)];
+    const at = tops.find(at => free(left, at, w)) ?? tops[0] ?? top;
     box.setAttribute('x', left); box.setAttribute('y', at); box.setAttribute('width', w);
     text.setAttribute('x', left + w / 2); text.setAttribute('y', at + 10.5);
     boxes.push({x:left, y:at, w});

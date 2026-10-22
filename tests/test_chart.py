@@ -9,7 +9,8 @@ from mwjournal import Execution, Journal, PriceSample
 from mwjournal.chart import chart_window, closing_pairs, minute_candles, protection_segments, trade_chart
 from mwjournal.importers import apply_preview, preview_bridge, preview_csv, preview_prices_csv
 from mwjournal.metrics import excursions
-from mwjournal.model import ProtectionEvent, instant
+from mwjournal.matching import match
+from mwjournal.model import ENTRY_MISSING, ProtectionEvent, instant
 from mwjournal.sync import SyncWorker
 
 
@@ -164,11 +165,26 @@ def test_a_reversal_joins_each_trade_to_its_own_part_of_the_reversing_fill(tmp_p
 def test_an_exit_without_its_entry_or_a_fill_without_a_price_is_joined_to_nothing():
     def leg(role, side, qty, price):
         return {'role': role, 'side': side, 'qty': qty, 'price': price}
-    # The platform no longer has the first exit's entry; the first entry has no price, yet it is still the one the
-    # next exit closes; the last contract is still open.
+    # Nothing is open before the first exit; the first entry has no price, yet it is still the one the next exit
+    # closes; the last contract is still open.
     fills = [leg('exit', 'sell', 1, 5001), leg('entry', 'buy', 1, 0), leg('entry', 'buy', 2, 4999),
              leg('exit', 'sell', 2, 5000)]
     assert closing_pairs(fills) == [{'entry': 2, 'exit': 3, 'qty': 1, 'points': 1}]
+
+
+def test_a_position_whose_entry_the_platform_lost_has_no_entry_exit_lines():
+    """Kept of one platform position: buy 1 at 100, sell 1 at 104, sell 2 at 98, so 2 or more bought earlier are
+    gone. First in first out, the first sell closed one of those and the kept buy went out at 98, a loss: a line
+    from the buy to the first sell would show a win that never happened. What each exit closed is not known."""
+    executions = [Execution('motivewave-native:sim', 'paper', 'NQZ6', side, qty, price, f'2026-10-07T14:0{minute}:00Z',
+                            execution_id=id, native_position_id='P1', native_entry=entry)
+                  for id, side, qty, price, minute, entry in (('b', 'buy', 1, 100, 1, True),
+                                                              ('s1', 'sell', 1, 104, 2, False),
+                                                              ('s2', 'sell', 2, 98, 3, False))]
+    trade, = match(executions)
+    assert ENTRY_MISSING in trade.flags and len(trade.fills) == 3
+    overlays = trade_chart(trade, [], 'none')['overlays']
+    assert len(overlays['fills']) == 3 and overlays['pairs'] == []
 
 
 def test_dst_repeated_clock_hour_stays_two_distinct_utc_minutes():

@@ -151,12 +151,14 @@ def test_a_small_arrow_points_at_each_exact_fill_with_its_size_and_price_boxed_b
     (line,) = joins(nodes)
     assert line == (x_at(23.25), tip(prices[0]), x_at(97.75), tip(prices[1]), UP)
     assert not any(n['tag'] == 'line' and n['attrs'].get('stroke') == MUTED for n in nodes)   # no consecutive joins
-    # The details stay in the chart's own IBM Plex Sans tooltip (data-detail) over the arrow and its box, not an
-    # SVG <title>, which the browser would show in the system's font.
+    # The details stay in the chart's own IBM Plex Sans tooltip (data-detail) over the arrow, not an SVG <title>,
+    # which the browser would show in the system's font. Only the arrow takes the pointer: over a box the chart
+    # still zooms and pans (the overlay itself takes none).
     assert not any(n['tag'] == 'title' for n in nodes)
     groups = [n for n in nodes if 'data-detail' in n['attrs']]
-    assert len(groups) == 2
-    assert all({c['tag'] for c in g['children']} == {'polygon', 'rect', 'text'} for g in groups)
+    assert len(groups) == 2 and not any('pointer-events' in g['attrs'] for g in groups)
+    assert [[(c['tag'], c['attrs'].get('pointer-events')) for c in g['children']] for g in groups] == \
+        [[('polygon', 'visiblePainted'), ('rect', None), ('text', None)]] * 2
     details = [g['attrs']['data-detail'] for g in groups]
     assert 'Entry · 1 @ ' + str(prices[0]) in details[0] and 'paper-0' not in details[0]      # no fill id on screen
     assert 'UTC 1970-01-01T00:00:23.250Z' in details[0]
@@ -210,13 +212,22 @@ def test_labels_never_overlap_and_stay_in_the_plot_clear_of_the_title_and_legend
     fills = [fill(i, 'buy', 'entry', 23.25 + i, 100) for i in range(4)]             # a scale-in at one price
     fills += [fill(4, 'sell', 'exit', 60, 246), fill(5, 'sell', 'exit', 61, 245.5),   # at the top of the plot
               fill(6, 'buy', 'exit', 120, 3),                                       # at the bottom
-              fill(7, 'buy', 'entry', 1765, 150)]                                   # at the right edge
-    nodes = render(fills, minutes=(0, 60, 120, 180, 1740))
+              fill(7, 'buy', 'entry', 1765, 150),                                   # at the right edge
+              fill(8, 'sell', 'entry', 1745, 230),                   # just under the legend: no room above it
+              fill(9, 'sell', 'entry', 610, 100), fill(10, 'buy', 'exit', 625, 106)]   # covered just above, soon after
+    nodes = render(fills, minutes=(0, 60, 120, 180, 600, 1740))
     labels = [box for box, _, _ in boxes(nodes)]
     assert len(labels) == len(fills)
     for (x, y, w, h), (x2, y2, w2, h2) in itertools.combinations(labels, 2):
         assert x + w <= x2 or x2 + w2 <= x or y + h <= y2 or y2 + h2 <= y
     assert all(0 <= x and x + w <= PLOT_WIDTH and 30 <= y and y + h <= PLOT_HEIGHT for x, y, w, h in labels)
+    # A box covers no fill's arrow, its own or another's, so every fill's price stays in sight. With no room on its
+    # arrow's side, a box goes the other side of the price.
+    for x, y, w, h in labels:
+        for arrow in arrows(nodes):
+            xs, ys = [p[0] for p in arrow], [p[1] for p in arrow]
+            assert x + w <= min(xs) or max(xs) <= x or y + h <= min(ys) or max(ys) <= y
+    assert labels[8][1] > tip(230)
     # The scale-in's boxes stack downward, away from the price, each still under its arrow.
     assert [y for _, y, _, _ in labels[:4]] == sorted(y for _, y, _, _ in labels[:4])
     assert all(y > tip(100) for _, y, _, _ in labels[:4])
