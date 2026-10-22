@@ -60,7 +60,7 @@ final class JournalAccountCapture {
    * publishes a new one and the tick thread only ever reads. */
   private record Holdings(Side live, Side replay, long nanos) {}
   /** Instruments with an open position, and instruments where a fill was first seen moments ago. */
-  private record Side(Set<String> open, Set<String> traded, Map<String,Long> lastFill) {}
+  private record Side(Set<String> open, Set<String> traded) {}
   /** run is the provider a replay fill is filed under, which names its replay run, and empty for a live fill. */
   record Book(boolean replay, String account, String symbol, String run) {}
   private static final class Tally { double net; int fills; long latest; }
@@ -237,7 +237,8 @@ final class JournalAccountCapture {
   }
 
   /** What the tick gate asks: holding(), or a fill first seen within the last pre-roll. The second part
-   * catches the trade that was opened and closed between two polls, and leaves a short tail after an exit. */
+   * catches the trade that was opened and closed between two polls, and leaves a short tail after an exit.
+   * Nothing longer: the minutes after an exit come from MotiveWave's tick history (JournalBackfill). */
   boolean active(String instrumentSymbol, boolean replay) {
     return active(instrumentSymbol, replay, System.nanoTime());
   }
@@ -245,14 +246,6 @@ final class JournalAccountCapture {
     Side side = side(replay, nowNanos);
     return side == null || instrumentSymbol != null
         && (side.open().contains(instrumentSymbol) || side.traded().contains(instrumentSymbol));
-  }
-  /** Optional post-exit tail runs on MARKET time, not wall time: accelerated and paused replay
-   * must retain the same analysis horizon. Prior replay runs never extend the current run's tail. */
-  boolean recording(String symbol, boolean replay, long marketTime, int minutes, long nowNanos) {
-    Side side = side(replay, nowNanos);
-    if (side == null || active(symbol, replay, nowNanos)) return true;
-    Long latest = symbol == null ? null : side.lastFill().get(symbol);
-    return minutes > 0 && latest != null && marketTime >= latest && marketTime - latest <= minutes * 60000L;
   }
   private Side side(boolean replay, long nowNanos) {
     Holdings known = holdings;
@@ -289,19 +282,15 @@ final class JournalAccountCapture {
     // is only kept out of the sets, which cannot hold a null.
     var liveOpen = new HashSet<String>();
     var replayOpen = new HashSet<String>();
-    var liveLast = new HashMap<String,Long>();
-    var replayLast = new HashMap<String,Long>();
     next.forEach((book, tally) -> {
       // Phrased so that a quantity that is not a number counts as open.
       if (book.symbol() != null && !(Math.abs(tally.net) <= FLAT)) (book.replay() ? replayOpen : liveOpen).add(book.symbol());
-      if (book.symbol() != null && (!book.replay() || book.run().equals(replayProvider)))
-        (book.replay() ? replayLast : liveLast).merge(book.symbol(), tally.latest, Math::max);
     });
     var liveTraded = new HashSet<String>();
     var replayTraded = new HashSet<String>();
     for (Book book : traded.keySet()) if (book.symbol() != null) (book.replay() ? replayTraded : liveTraded).add(book.symbol());
-    return new Holdings(new Side(Set.copyOf(liveOpen), Set.copyOf(liveTraded), Map.copyOf(liveLast)),
-        new Side(Set.copyOf(replayOpen), Set.copyOf(replayTraded), Map.copyOf(replayLast)), nowNanos);
+    return new Holdings(new Side(Set.copyOf(liveOpen), Set.copyOf(liveTraded)),
+        new Side(Set.copyOf(replayOpen), Set.copyOf(replayTraded)), nowNanos);
   }
 
   /** For the study's log line: whether fills are being read right now. */

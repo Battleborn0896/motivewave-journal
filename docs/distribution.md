@@ -41,17 +41,19 @@ candles drawn from those prints. Put the study on the chart you trade, the contr
 a trade is measured with the prices of its product (`NQZ6`, `NQ` and a continuous `NQ` are all `NQ`;
 `MNQ` is another product), its exact contract's first when both were recorded.
 
-Since version 0.3.2 the study defaults to **Always While Study Runs**, retaining every trade print
-MotiveWave sends to that chart; version 0.3.3 is the first that MotiveWave actually sends them to, because
-it requires bar updates. This supports 5/15/30-minute runner comparisons by individual tag, tag category or
-setup. The lower-storage position-gated mode remains available when its After Exit window is long
-enough for the selected comparison horizon.
+Since version 0.3.8 the study defaults to **During Trades Only**: it records the prints of each trade,
+from a few seconds before the entry to a few seconds after the exit, and loads the minutes after each exit
+(**After Exit (Minutes)**, 30 by default) from MotiveWave's own tick history once they are over, on a chart
+of the exact contract. This supports 5/15/30-minute runner comparisons by individual tag, tag category or
+setup without writing every print of the day. Studies 0.3.2 to 0.3.7 defaulted to **Always While Study
+Runs**, which keeps every print MotiveWave sends to the chart and remains a choice; version 0.3.3 is the
+first that MotiveWave actually sends them to, because it requires bar updates.
 
 Replay records the events the replay actually emits. Its own prints count as real ticks by default;
 switch off **Advanced → Real Tick Data** when the replay is generated from bars, and they are labelled
 simulated. Once a replay trade is flat, study 0.3.3 also loads the real ticks of its holding time from
 MotiveWave's tick history for that replay run, never past the replay's current time, on a chart of the
-exact contract.
+exact contract; study 0.3.8 adds the minutes after its exit, as the replay plays through them.
 
 ## macOS release
 

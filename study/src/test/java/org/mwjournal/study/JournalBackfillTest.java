@@ -63,23 +63,148 @@ public final class JournalBackfillTest {
           && !JournalBackfill.applies(" ", " ", false, replay, replay, 30);
     }
     windows();
+    afterExitWindows();
     spans();
     bookkeeping(folder);
     overlapAndPasses(folder);
     cap(folder);
     backpressure(folder);
     cancelling(folder);
+    afterExitPasses(folder);
     replayWindows();
     replayPasses(folder);
     replayLedger(folder);
+    replayAfterExit(folder);
     try (var left = Files.walk(folder)) {
       for (var path : left.sorted(java.util.Comparator.reverseOrder()).toList()) Files.delete(path);
     }
     System.out.println("Journal backfill passed: windows from fills (scale-in, partial exits, back to back, a missing "
         + "entry, replay and other symbols left out), done once across restarts, an empty answer asked again only "
         + "by a later load, the tick cap and its gap event, waiting for the writer's queue, cancelling, two charts; "
+        + "the minutes after each exit, whole once settled, after every holding window, once, under the same provider; "
         + "replay: windows per run and position, clamped to the replay clock, nothing past it written, the rest "
-        + "loaded once the replay plays on, its own provider and sidecar, rewinds and restarts, no live leakage.");
+        + "loaded once the replay plays on, its own provider and sidecar, rewinds and restarts, no live leakage, and "
+        + "the minutes after a replay exit loaded as the replay plays through them.");
+  }
+
+  /** The minutes after each exit: the same positions as the holding windows, from the last fill on. */
+  private static void afterExitWindows() {
+    var fills = new ArrayList<Fill>();
+    fills.add(fill("paper", "ESZ6", "first", true, 1, 0, false));
+    fills.add(fill("paper", "ESZ6", "first", false, 1, 60, false));
+    fills.add(fill("paper", "ESZ6", "second", false, 2, 600, false));
+    fills.add(fill("paper", "ESZ6", "second", true, 1, 630, false));
+    fills.add(fill("paper", "ESZ6", "second", true, 1, 660, false));
+    // Never a window, as for the holding time: still open, replay, another instrument, no position id.
+    fills.add(fill("paper", "ESZ6", "still-open", true, 1, 700, false));
+    fills.add(fill("REPLAY-1", "ESZ6", "replayed", true, 1, 400, true));
+    fills.add(fill("REPLAY-1", "ESZ6", "replayed", false, 1, 430, true));
+    fills.add(fill("paper", "NQZ6", "other", true, 1, 500, false));
+    fills.add(fill("paper", "NQZ6", "other", false, 1, 530, false));
+    fills.add(fill("paper", "ESZ6", "", true, 1, 800, false));
+    fills.add(fill("paper", "ESZ6", "", false, 1, 830, false));
+    long minute = 60_000;
+    Window first = new Window(T + 60_000, T + 60_000 + 30 * minute), second = new Window(T + 660_000, T + 660_000 + 30 * minute);
+    assert JournalBackfill.afterExit(fills, "ESZ6", NOW - 30 * DAY, NOW, 30).equals(List.of(first, second))
+        : JournalBackfill.afterExit(fills, "ESZ6", NOW - 30 * DAY, NOW, 30);
+    assert JournalBackfill.afterExit(fills, "ESZ6", NOW - 30 * DAY, second.end() - 1, 30).equals(List.of(first))
+        : "Asked for whole, once all of it is over";
+    assert JournalBackfill.afterExit(fills, "ESZ6", NOW - 30 * DAY, NOW, 0).isEmpty() : "0 minutes: none";
+    assert JournalBackfill.afterExit(fills, "ESZ6", T + 61_000 + PAD, NOW, 30).equals(List.of(second))
+        : "Positions that ended before the days setting reaches back are left out, as their holding windows are";
+    assert JournalBackfill.afterExit(fills, "NQZ6", NOW - 30 * DAY, Long.MAX_VALUE, 120)
+        .equals(List.of(new Window(T + 530_000, T + 530_000 + 120 * minute)));
+    assert JournalBackfill.afterExit(fills, null, NOW - 30 * DAY, NOW, 30).isEmpty();
+  }
+
+  /** Loading the minutes after an exit: whole once they and the settling time have passed, after every
+   * holding window, never twice, under the same provider, and longer when the setting grows. */
+  private static void afterExitPasses(Path folder) throws Exception {
+    var file = folder.resolve("after-exit.ndjson");
+    var fills = List.of(fill("paper", "ESZ6", "trade", true, 1, 0, false), fill("paper", "ESZ6", "trade", false, 1, 60, false));
+    Window holding = new Window(T - PAD, T + 60_000 + PAD);
+    var history = new History();
+    var events = new ArrayList<String>();
+    var load = new JournalBackfill(new Ledger(file));
+    // Ten minutes after the exit: the holding window is due, the 30 minutes after the exit are not.
+    var result = load.pass("ESZ6", fills, T + 600_000, 30, 30, history, events::add, NEVER);
+    assert result.done() == 1 && result.remaining() == 0 && history.asked.equals(List.of(holding)) : history.asked;
+    // 30 minutes and the settling time after the exit: the rest of them, where the holding window ended.
+    long due = T + 60_000 + 1_800_000 + JournalBackfill.SETTLE_MILLIS;
+    assert load.pass("ESZ6", fills, due - 1, 30, 30, history, events::add, NEVER).attempted() == 0 : "Not a moment early";
+    result = load.pass("ESZ6", fills, due, 30, 30, history, events::add, NEVER);
+    assert result.done() == 1 && history.asked.equals(List.of(holding, new Window(T + 60_000 + PAD, T + 1_860_000)))
+        : history.asked;
+    assert result.ticks() == 1_795_000 / 250 && events.size() == 280 + 7_180 : result;
+    assert events.stream().allMatch(s -> s.startsWith("{\"version\":1,\"type\":\"tick\",\"mode\":\"live\","
+        + "\"provider\":\"motivewave-ticks:history\",\"symbol\":\"ESZ6\",\"ts\":\"")) : "The same provider as the holding window";
+    assert events.getLast().contains("\"ts\":\"2026-10-07T14:30:59.750Z\"") : events.getLast();
+    // Done once: not again in this load, nor after a restart.
+    assert load.pass("ESZ6", fills, due + DAY, 30, 30, history, events::add, NEVER).attempted() == 0;
+    assert new Ledger(file).written("ESZ6", new Window(T - PAD, T + 1_860_000));
+    var restarted = new JournalBackfill(new Ledger(file));
+    assert restarted.pass("ESZ6", fills, due + DAY, 30, 30, history, events::add, NEVER).attempted() == 0 && history.asked.size() == 2;
+    // A longer setting loads only the minutes it adds.
+    result = restarted.pass("ESZ6", fills, due + DAY, 30, 60, history, events::add, NEVER);
+    assert result.done() == 1 && history.asked.getLast().equals(new Window(T + 1_860_000, T + 3_660_000)) : history.asked;
+    assert events.size() == events.stream().distinct().count() : "No print written twice";
+
+    // A backlog, one window a pass: both holding windows come before the minutes after either exit, although
+    // the first exit's minutes start before the second trade does.
+    var backlog = List.of(fill("paper", "ESZ6", "a", true, 1, 0, false), fill("paper", "ESZ6", "a", false, 1, 60, false),
+        fill("paper", "ESZ6", "b", false, 1, 600, false), fill("paper", "ESZ6", "b", true, 1, 660, false));
+    var slow = new JournalBackfill(new Ledger(folder.resolve("after-exit-backlog.ndjson")), JournalBackfill.MAX_TICKS, 1);
+    var asked = new History();
+    var written = new ArrayList<String>();
+    result = slow.pass("ESZ6", backlog, NOW, 30, 30, asked, written::add, NEVER);
+    assert result.done() == 1 && result.remaining() == 4 : result;
+    slow.pass("ESZ6", backlog, NOW, 30, 30, asked, written::add, NEVER);
+    assert asked.asked.equals(List.of(holding, new Window(T + 600_000 - PAD, T + 660_000 + PAD))) : asked.asked;
+    for (int n = 0; n < 3; n++) assert slow.pass("ESZ6", backlog, NOW, 30, 30, asked, written::add, NEVER).done() == 1;
+    assert slow.pass("ESZ6", backlog, NOW, 30, 30, asked, written::add, NEVER).attempted() == 0 && asked.asked.size() == 5;
+    assert written.size() == written.stream().distinct().count() && written.size() == (2_460_000 + PAD) / 250
+        : "From the first entry to 30 minutes after the second exit, once: " + written.size();
+
+    // No tick history for those minutes: counted as empty, asked again only by a later load.
+    var quiet = new History();
+    quiet.empty.add(new Window(T + 600_000, T + 700_000));
+    var none = new JournalBackfill(new Ledger(folder.resolve("after-exit-quiet.ndjson")));
+    result = none.pass("ESZ6", fills, due, 30, 30, quiet, events::add, NEVER);
+    assert result.done() == 1 && result.empty() == 1 : result;
+    assert none.pass("ESZ6", fills, due, 30, 30, quiet, events::add, NEVER).attempted() == 0 && quiet.asked.size() == 2;
+  }
+
+  /** Replay: the minutes after a replay exit are loaded as the replay plays through them, never past its
+   * present, for the run's own provider, and each stretch once. */
+  private static void replayAfterExit(Path folder) throws Exception {
+    var fills = List.of(replay("run-a", "ESZ6", "RPLY-1", true, 0), replay("run-a", "ESZ6", "RPLY-1", false, 60));
+    long clock = R + 120_000;
+    assert JournalBackfill.replayAfterExit(fills, "ESZ6", clock - DAY, clock, 30)
+        .equals(List.of(new JournalBackfill.RunWindow("run-a", new Window(R + 60_000, clock)))) : "Cut at the replay clock";
+    assert JournalBackfill.replayAfterExit(fills, "ESZ6", R + 60_000 - DAY, R + 60_000, 30).isEmpty()
+        : "Nothing after the exit has played yet";
+    assert JournalBackfill.replayAfterExit(fills, "ESZ6", clock - DAY, clock, 0).isEmpty();
+    assert JournalBackfill.replayAfterExit(fills, "ESZ6", R + 7_200_000 - DAY, R + 7_200_000, 30)
+        .equals(List.of(new JournalBackfill.RunWindow("run-a", new Window(R + 60_000, R + 1_860_000))));
+    assert JournalBackfill.afterExit(fills.stream().map(JournalBackfill.ReplayFill::fill).toList(), "ESZ6", 0, Long.MAX_VALUE, 30)
+        .isEmpty() : "Never a live window";
+
+    var history = new History();
+    var events = new ArrayList<String>();
+    var load = new JournalBackfill(new Ledger(folder.resolve("after-exit.replay.ndjson"), true));
+    var result = load.replayPass("ESZ6", fills, clock, NOW, 30, 30, history, events::add, NEVER);
+    assert result.done() == 2 && history.asked.equals(List.of(new Window(R - PAD, R + 60_000 + PAD),
+        new Window(R + 60_000 + PAD, clock))) : "The holding window, then what has played since: " + history.asked;
+    assert events.size() == 280 + 220 && events.stream().allMatch(e -> stamp(e) < clock) : "Nothing past the replay clock";
+    assert events.stream().allMatch(e -> e.contains("\"mode\":\"replay\",\"provider\":\"motivewave-replay:run-a:history\""));
+    // The replay plays on: only what it played since, each time, up to 30 minutes after the exit and no further.
+    history.asked.clear();
+    load.replayPass("ESZ6", fills, R + 600_000, NOW, 30, 30, history, events::add, NEVER);
+    load.replayPass("ESZ6", fills, R + 3_600_000, NOW, 30, 30, history, events::add, NEVER);
+    assert load.replayPass("ESZ6", fills, R + 7_200_000, NOW, 30, 30, history, events::add, NEVER).attempted() == 0;
+    assert history.asked.equals(List.of(new Window(clock, R + 600_000), new Window(R + 600_000, R + 1_860_000)))
+        : history.asked;
+    assert events.size() == (1_860_000 + PAD) / 250 && events.size() == events.stream().distinct().count() : events.size();
   }
 
   private static void windows() {
@@ -196,10 +321,10 @@ public final class JournalBackfillTest {
     var events = new ArrayList<String>();
     var load = new JournalBackfill(new Ledger(file));
 
-    assert load.pass("ESZ6", fills, NOW, 0, history, events::add, NEVER).attempted() == 0 && history.asked.isEmpty()
+    assert load.pass("ESZ6", fills, NOW, 0, 0, history, events::add, NEVER).attempted() == 0 && history.asked.isEmpty()
         : "0 days switches it off";
-    assert load.pass("ESZ6", null, NOW, 30, history, events::add, NEVER).attempted() == 0 : "No snapshot yet";
-    var result = load.pass("ESZ6", fills, NOW, 30, history, events::add, NEVER);
+    assert load.pass("ESZ6", null, NOW, 30, 0, history, events::add, NEVER).attempted() == 0 : "No snapshot yet";
+    var result = load.pass("ESZ6", fills, NOW, 30, 0, history, events::add, NEVER);
     assert result.done() == 1 && result.empty() == 1 && result.failed() == 0 && result.remaining() == 0 : result;
     assert history.asked.equals(List.of(first, quiet)) : "Oldest first, and never the replay position: " + history.asked;
     assert result.ticks() == 280 && events.size() == 280 : "70 seconds at four prints a second: " + result.ticks();
@@ -209,7 +334,7 @@ public final class JournalBackfillTest {
         : "Only prints inside the window, although the history answered with more";
 
     // The same study load: neither is asked for again, whatever came back.
-    result = load.pass("ESZ6", fills, NOW + 60_000, 30, history, events::add, NEVER);
+    result = load.pass("ESZ6", fills, NOW + 60_000, 30, 0, history, events::add, NEVER);
     assert result.attempted() == 0 && result.remaining() == 0 && history.asked.size() == 2 && events.size() == 280;
     String sidecar = Files.readString(Ledger.sidecar(file));
     assert Ledger.sidecar(file).getFileName().toString().equals("motivewave.ndjson.tick-backfill");
@@ -220,30 +345,30 @@ public final class JournalBackfillTest {
     // A restart: the finished window is not loaded again; the empty one is asked for once more.
     history.asked.clear();
     var restarted = new JournalBackfill(new Ledger(file));
-    result = restarted.pass("ESZ6", fills, NOW, 30, history, events::add, NEVER);
+    result = restarted.pass("ESZ6", fills, NOW, 30, 0, history, events::add, NEVER);
     assert result.done() == 0 && result.empty() == 1 && history.asked.equals(List.of(quiet)) && events.size() == 280 : result;
-    assert restarted.pass("ESZ6", fills, NOW, 30, history, events::add, NEVER).attempted() == 0 && history.asked.size() == 1;
+    assert restarted.pass("ESZ6", fills, NOW, 30, 0, history, events::add, NEVER).attempted() == 0 && history.asked.size() == 1;
     // By the next load the history has it.
     history.empty.clear();
     history.asked.clear();
     var later = new JournalBackfill(new Ledger(file));
-    result = later.pass("ESZ6", fills, NOW, 30, history, events::add, NEVER);
+    result = later.pass("ESZ6", fills, NOW, 30, 0, history, events::add, NEVER);
     assert result.done() == 1 && result.empty() == 0 && history.asked.equals(List.of(quiet)) && events.size() == 560 : result;
     assert new Ledger(file).written("ESZ6", first) && new Ledger(file).written("ESZ6", quiet);
     assert !new Ledger(file).written("NQZ6", first) : "Another instrument's history is its own";
     history.asked.clear();
-    assert new JournalBackfill(new Ledger(file)).pass("ESZ6", fills, NOW, 30, history, events::add, NEVER).attempted() == 0
+    assert new JournalBackfill(new Ledger(file)).pass("ESZ6", fills, NOW, 30, 0, history, events::add, NEVER).attempted() == 0
         && history.asked.isEmpty() : "Nothing left to do after another restart";
 
     // The history cannot be asked (no connection): counted, not retried by this load, asked again by the next.
     fills.add(fill("paper", "ESZ6", "offline", true, 1, 1800, false));
     fills.add(fill("paper", "ESZ6", "offline", false, 1, 1830, false));
     history.failure = new IOException("Fixture: not connected");
-    result = later.pass("ESZ6", fills, NOW, 30, history, events::add, NEVER);
+    result = later.pass("ESZ6", fills, NOW, 30, 0, history, events::add, NEVER);
     assert result.failed() == 1 && result.done() == 0 && "IOException".equals(result.failure()) && history.asked.size() == 1 : result;
-    assert later.pass("ESZ6", fills, NOW, 30, history, events::add, NEVER).attempted() == 0 && history.asked.size() == 1;
+    assert later.pass("ESZ6", fills, NOW, 30, 0, history, events::add, NEVER).attempted() == 0 && history.asked.size() == 1;
     history.failure = null;
-    result = new JournalBackfill(new Ledger(file)).pass("ESZ6", fills, NOW, 30, history, events::add, NEVER);
+    result = new JournalBackfill(new Ledger(file)).pass("ESZ6", fills, NOW, 30, 0, history, events::add, NEVER);
     assert result.done() == 1 && result.failed() == 0 && history.asked.size() == 2 : result;
 
     assert Ledger.shared(file) == Ledger.shared(folder.resolve("other").resolveSibling("motivewave.ndjson"))
@@ -272,13 +397,13 @@ public final class JournalBackfillTest {
     var events = new ArrayList<String>();
     var load = new JournalBackfill(new Ledger(file));
     assert JournalBackfill.WINDOWS_PER_PASS == 4;
-    var result = load.pass("ESZ6", fills, NOW, 30, history, events::add, NEVER);
+    var result = load.pass("ESZ6", fills, NOW, 30, 0, history, events::add, NEVER);
     assert result.done() == 4 && result.remaining() == 3 : "A few at a time, and how many are left: " + result;
     assert history.asked.subList(0, 2).equals(List.of(new Window(T + 200_000 - PAD, T + 230_000 + PAD),
         new Window(T + 230_000 + PAD, T + 260_000 + PAD))) : "The second window starts where the first ended: " + history.asked;
-    result = load.pass("ESZ6", fills, NOW, 30, history, events::add, NEVER);
+    result = load.pass("ESZ6", fills, NOW, 30, 0, history, events::add, NEVER);
     assert result.done() == 3 && result.remaining() == 0 && history.asked.size() == 7 : result;
-    assert load.pass("ESZ6", fills, NOW, 30, history, events::add, NEVER).attempted() == 0 && history.asked.size() == 7;
+    assert load.pass("ESZ6", fills, NOW, 30, 0, history, events::add, NEVER).attempted() == 0 && history.asked.size() == 7;
     assert events.size() == events.stream().distinct().count() : "No print written twice";
     assert events.size() == (70 + 5 * 30) * 4 : events.size();
   }
@@ -290,7 +415,7 @@ public final class JournalBackfillTest {
     var history = new History();
     var events = new ArrayList<String>();
     var load = new JournalBackfill(new Ledger(file), 30, 4); // 80 prints in the window, room for 30
-    var result = load.pass("ESZ6", fills, NOW, 30, history, events::add, NEVER);
+    var result = load.pass("ESZ6", fills, NOW, 30, 0, history, events::add, NEVER);
     assert result.done() == 1 && result.cut() == 1 && result.ticks() == 30 && result.empty() == 0 : result;
     assert events.size() == 31 && events.subList(0, 30).stream().allMatch(s -> s.contains("\"type\":\"tick\""));
     String gap = events.getLast();
@@ -299,8 +424,8 @@ public final class JournalBackfillTest {
         : "How many were left out, and from when to when: " + gap;
     assert events.get(29).contains("\"ts\":\"2026-10-07T14:00:02.250Z\"") : "The last print written is the one before the gap";
     // Cut is still done: asking again would only reach the same cap.
-    assert load.pass("ESZ6", fills, NOW, 30, history, events::add, NEVER).attempted() == 0;
-    assert new JournalBackfill(new Ledger(file), 30, 4).pass("ESZ6", fills, NOW, 30, history, events::add, NEVER).attempted() == 0;
+    assert load.pass("ESZ6", fills, NOW, 30, 0, history, events::add, NEVER).attempted() == 0;
+    assert new JournalBackfill(new Ledger(file), 30, 4).pass("ESZ6", fills, NOW, 30, 0, history, events::add, NEVER).attempted() == 0;
     assert history.asked.size() == 1 && events.size() == 31;
     assert JournalBackfill.MAX_TICKS == 2_000_000 && JournalBackfill.MAX_WINDOW_MILLIS == DAY;
   }
@@ -322,7 +447,7 @@ public final class JournalBackfillTest {
     });
     drain.start();
     var sent = new ArrayList<String>();
-    var result = new JournalBackfill(new Ledger(folder.resolve("slow.ndjson"))).pass("ESZ6", fills, NOW, 30, new History(),
+    var result = new JournalBackfill(new Ledger(folder.resolve("slow.ndjson"))).pass("ESZ6", fills, NOW, 30, 0, new History(),
         event -> { boolean taken = queue.offer(event); if (taken) sent.add(event); return taken; }, NEVER);
     running.set(false);
     drain.join();
@@ -334,7 +459,7 @@ public final class JournalBackfillTest {
     var day = List.of(fill("paper", "ESZ6", "day", true, 1, 0, false), fill("paper", "ESZ6", "day", false, 1, 24_990, false));
     var writer = JournalEventWriter.acquire(file);
     int[] deepest = {0};
-    result = new JournalBackfill(new Ledger(file)).pass("ESZ6", day, NOW + DAY, 30, new History(), event -> {
+    result = new JournalBackfill(new Ledger(file)).pass("ESZ6", day, NOW + DAY, 30, 0, new History(), event -> {
       boolean taken = writer.offerBelow(event, JournalBackfill.HIGH_WATER);
       if (taken && writer.offer(LIVE_PRINT)) deepest[0]++; // a live print beside every history print
       return taken;
@@ -362,7 +487,7 @@ public final class JournalBackfillTest {
     var load = new JournalBackfill(ledger);
     var events = new ArrayList<String>();
     try {
-      load.pass("ESZ6", fills, NOW, 30, new History(), events::add, () -> events.size() >= 100);
+      load.pass("ESZ6", fills, NOW, 30, 0, new History(), events::add, () -> events.size() >= 100);
       throw new AssertionError("A cancelled pass must say so");
     } catch (CancellationException expected) { }
     assert events.size() == 100 && !ledger.written("ESZ6", window) && !Files.exists(Ledger.sidecar(file));
@@ -374,7 +499,7 @@ public final class JournalBackfillTest {
     });
     events.clear();
     try {
-      load.pass("ESZ6", fills, NOW, 30, stubborn, events::add, () -> events.size() >= 100);
+      load.pass("ESZ6", fills, NOW, 30, 0, stubborn, events::add, () -> events.size() >= 100);
       throw new AssertionError("Still cancelled");
     } catch (CancellationException expected) { }
     assert events.size() == 100 && !ledger.written("ESZ6", window) : "Nothing written after the cancel: " + events.size();
@@ -387,14 +512,14 @@ public final class JournalBackfillTest {
     var otherHistory = new History();
     var seen = new ArrayList<JournalBackfill.Result>();
     history.during = () -> {
-      try { seen.add(otherChart.pass("ESZ6", fills, NOW, 30, otherHistory, events::add, NEVER)); }
+      try { seen.add(otherChart.pass("ESZ6", fills, NOW, 30, 0, otherHistory, events::add, NEVER)); }
       catch (IOException exc) { throw new IllegalStateException(exc); }
     };
-    var result = load.pass("ESZ6", fills, NOW, 30, history, events::add, NEVER);
+    var result = load.pass("ESZ6", fills, NOW, 30, 0, history, events::add, NEVER);
     assert result.done() == 1 && result.ticks() == 280 && events.size() == 280 && ledger.written("ESZ6", window) : result;
     assert seen.size() == 1 && seen.getFirst().attempted() == 0 && seen.getFirst().remaining() == 0
         && otherHistory.asked.isEmpty() : "Two charts on one instrument must not both load the window: " + seen;
-    assert otherChart.pass("ESZ6", fills, NOW, 30, otherHistory, events::add, NEVER).attempted() == 0 && events.size() == 280;
+    assert otherChart.pass("ESZ6", fills, NOW, 30, 0, otherHistory, events::add, NEVER).attempted() == 0 && events.size() == 280;
   }
 
   // ---------------------------------------------------------------- replay
@@ -458,11 +583,11 @@ public final class JournalBackfillTest {
     var events = new ArrayList<String>();
     var load = new JournalBackfill(new Ledger(replayFile, true));
     long clock = R + 152_000, wall = NOW;
-    assert load.replayPass("ESZ6", fills, clock, wall, 0, history, events::add, NEVER).attempted() == 0 : "0 days is off";
-    assert load.replayPass("ESZ6", fills, 0, wall, 30, history, events::add, NEVER).attempted() == 0 : "No replay time yet";
-    assert load.replayPass("ESZ6", null, clock, wall, 30, history, events::add, NEVER).attempted() == 0 : "No snapshot yet";
+    assert load.replayPass("ESZ6", fills, clock, wall, 0, 0, history, events::add, NEVER).attempted() == 0 : "0 days is off";
+    assert load.replayPass("ESZ6", fills, 0, wall, 30, 0, history, events::add, NEVER).attempted() == 0 : "No replay time yet";
+    assert load.replayPass("ESZ6", null, clock, wall, 30, 0, history, events::add, NEVER).attempted() == 0 : "No snapshot yet";
     assert history.asked.isEmpty();
-    var result = load.replayPass("ESZ6", fills, clock, wall, 30, history, events::add, NEVER);
+    var result = load.replayPass("ESZ6", fills, clock, wall, 30, 0, history, events::add, NEVER);
     assert result.done() == 3 && result.empty() == 0 && result.remaining() == 0 : result;
     // The two runs overlap in time, and each gets its own copy: the app measures a trade with its own run's prices.
     assert history.asked.equals(List.of(new Window(R - PAD, R + 65_000), new Window(R + 25_000, R + 95_000),
@@ -480,17 +605,17 @@ public final class JournalBackfillTest {
     assert !Files.exists(Ledger.sidecar(liveFile)) : "Replay bookkeeping stays beside the replay bridge";
 
     // The same load, the clock unchanged: nothing to do. The replay plays on: only the rest of the cut window.
-    assert load.replayPass("ESZ6", fills, clock, wall, 30, history, events::add, NEVER).attempted() == 0;
+    assert load.replayPass("ESZ6", fills, clock, wall, 30, 0, history, events::add, NEVER).attempted() == 0;
     history.asked.clear();
     long later = R + 600_000;
-    result = load.replayPass("ESZ6", fills, later, wall, 30, history, events::add, NEVER);
+    result = load.replayPass("ESZ6", fills, later, wall, 30, 0, history, events::add, NEVER);
     assert result.done() == 1 && history.asked.equals(List.of(new Window(clock, R + 150_000 + PAD))) : history.asked;
     assert result.ticks() == 12 && events.size() == 720 : result;
 
     // A window with more ticks than the cap: cut, and a gap event under the run's own provider.
     var capped = new ArrayList<String>();
     var small = new JournalBackfill(new Ledger(folder.resolve("replay-cap.replay.ndjson"), true), 30, 4);
-    result = small.replayPass("ESZ6", fills.subList(0, 2), later, wall, 30, new History(), capped::add, NEVER);
+    result = small.replayPass("ESZ6", fills.subList(0, 2), later, wall, 30, 0, new History(), capped::add, NEVER);
     assert result.done() == 1 && result.cut() == 1 && capped.size() == 31 : result;
     assert capped.getLast().startsWith("{\"version\":1,\"type\":\"gap\",\"provider\":\"motivewave-replay:run-a:history\","
         + "\"symbol\":\"ESZ6\"") && capped.getLast().contains("\"dropped\":250,") : capped.getLast();
@@ -506,7 +631,7 @@ public final class JournalBackfillTest {
     var history = new History();
     var events = new ArrayList<String>();
     long clock = R + 600_000;
-    assert new JournalBackfill(new Ledger(replayFile, true)).replayPass("ESZ6", fills, clock, NOW, 30, history, events::add,
+    assert new JournalBackfill(new Ledger(replayFile, true)).replayPass("ESZ6", fills, clock, NOW, 30, 0, history, events::add,
         NEVER).done() == 1 && events.size() == 280;
     String sidecar = Files.readString(Ledger.sidecar(replayFile));
     assert Ledger.sidecar(replayFile).getFileName().toString().equals("ledger.replay.ndjson.tick-backfill");
@@ -520,13 +645,13 @@ public final class JournalBackfillTest {
     // A restart, and the replay rewound to before the trade and played past it again in the same run: not again.
     history.asked.clear();
     var restarted = new JournalBackfill(new Ledger(replayFile, true));
-    assert restarted.replayPass("ESZ6", fills, clock, NOW, 30, history, events::add, NEVER).attempted() == 0;
-    assert restarted.replayPass("ESZ6", fills, R + 10_000, NOW, 30, history, events::add, NEVER).attempted() == 0;
+    assert restarted.replayPass("ESZ6", fills, clock, NOW, 30, 0, history, events::add, NEVER).attempted() == 0;
+    assert restarted.replayPass("ESZ6", fills, R + 10_000, NOW, 30, 0, history, events::add, NEVER).attempted() == 0;
     assert history.asked.isEmpty() && events.size() == 280;
     // A rewind starts a new run, and its trade at the same times is loaded again, for that run.
     fills.add(replay("run-c", "ESZ6", "RPLY-1", true, 0));
     fills.add(replay("run-c", "ESZ6", "RPLY-1", false, 60));
-    var result = restarted.replayPass("ESZ6", fills, clock, NOW, 30, history, events::add, NEVER);
+    var result = restarted.replayPass("ESZ6", fills, clock, NOW, 30, 0, history, events::add, NEVER);
     assert result.done() == 1 && history.asked.equals(List.of(window)) && events.size() == 560 : result;
     assert events.subList(280, 560).stream().allMatch(e -> e.contains("motivewave-replay:run-c:history"));
 
@@ -536,11 +661,11 @@ public final class JournalBackfillTest {
     Window quiet = new Window(R + 300_000 - PAD, R + 330_000 + PAD);
     history.empty.add(quiet);
     history.asked.clear();
-    result = restarted.replayPass("ESZ6", fills, clock, NOW, 30, history, events::add, NEVER);
+    result = restarted.replayPass("ESZ6", fills, clock, NOW, 30, 0, history, events::add, NEVER);
     assert result.empty() == 1 && result.done() == 0 && history.asked.equals(List.of(quiet)) : result;
-    assert restarted.replayPass("ESZ6", fills, clock, NOW, 30, history, events::add, NEVER).attempted() == 0;
+    assert restarted.replayPass("ESZ6", fills, clock, NOW, 30, 0, history, events::add, NEVER).attempted() == 0;
     history.empty.clear();
-    result = new JournalBackfill(new Ledger(replayFile, true)).replayPass("ESZ6", fills, clock, NOW, 30, history,
+    result = new JournalBackfill(new Ledger(replayFile, true)).replayPass("ESZ6", fills, clock, NOW, 30, 0, history,
         events::add, NEVER);
     assert result.done() == 1 && history.asked.size() == 2 : result;
 

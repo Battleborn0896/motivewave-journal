@@ -5,6 +5,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Instant;
 import java.util.ArrayList;
+import java.util.Collection;
 import java.util.Comparator;
 import java.util.HashMap;
 import java.util.List;
@@ -17,7 +18,8 @@ import java.util.function.BooleanSupplier;
 import java.util.function.Consumer;
 
 /** Real ticks for trades that were not recorded as they happened: the fills say when each position was
- * held, and the platform's tick history is asked for exactly those stretches. Nothing is generated from
+ * held and when it ended, and the platform's tick history is asked for exactly those stretches: the holding
+ * window, for MAE / MFE, and the minutes after the exit, for the runner analysis. Nothing is generated from
  * bars, and a stretch with no tick history stays empty.
  *
  * Live positions go to the live bridge as motivewave-ticks:history. Replay positions go to the replay
@@ -104,68 +106,107 @@ final class JournalBackfill {
         && !instrumentSymbol.isBlank() && instrumentSymbol.equals(journalSymbol);
   }
 
-  private static final class Held { double net; long first = Long.MAX_VALUE, last = Long.MIN_VALUE; }
+  private static final Comparator<Window> OLDEST = Comparator.comparingLong(Window::start).thenComparingLong(Window::end);
+  private static final Comparator<RunWindow> OLDEST_RUN = Comparator.comparing(RunWindow::window, OLDEST)
+      .thenComparing(RunWindow::run);
 
-  /** The holding windows of this instrument's positions, oldest first: first fill to last fill, a few
-   * seconds either side. A position is the fills that share an account and MotiveWave's position id;
-   * netting fills flat-to-flat instead would turn one missing entry into a window days long.
-   *
-   * Left out: replay fills, other instruments, fills without a position id, positions that are not flat
-   * in the fills MotiveWave retains (still open, or an entry or exit is missing, so there is no complete
-   * trade to measure), positions longer than 24 hours, those that ended before notBefore, and those
-   * with a fill after notAfter. Positions held at the very same times, as copied accounts are, give
-   * one window. */
-  static List<Window> windows(List<JournalNativeAccess.Fill> fills, String symbol, long notBefore, long notAfter) {
+  /** One position: its fills netted, and when the first and the last of them were. run: its replay run,
+   * null for a live position. */
+  private static final class Held {
+    final String run;
+    double net;
+    long first = Long.MAX_VALUE, last = Long.MIN_VALUE;
+
+    Held(String run) { this.run = run; }
+
+    void add(JournalNativeAccess.Fill fill) {
+      net += fill.buy() ? fill.qty() : -fill.qty();
+      first = Math.min(first, fill.time());
+      last = Math.max(last, fill.time());
+    }
+
+    /** A complete trade to measure: flat in the fills MotiveWave retains (not still open, and no entry or
+     * exit missing), held no longer than 24 hours, and ended no earlier than notBefore. Phrased so that a
+     * quantity that is not a number counts as not flat. */
+    boolean over(long notBefore) {
+      return Math.abs(net) <= FLAT && last - first + 2 * PAD_MILLIS <= MAX_WINDOW_MILLIS && last + PAD_MILLIS >= notBefore;
+    }
+  }
+
+  /** This instrument's live positions. A position is the fills that share an account and MotiveWave's
+   * position id; netting fills flat-to-flat instead would turn one missing entry into a window days long.
+   * Left out: replay fills, other instruments, and fills without a position id. */
+  private static Collection<Held> positions(List<JournalNativeAccess.Fill> fills, String symbol) {
     var positions = new HashMap<String, Held>();
     for (var fill : fills) {
       if (fill.replay() || symbol == null || !symbol.equals(fill.symbol()) || fill.positionId().isBlank()
           || fill.time() <= 0) continue;
-      Held held = positions.computeIfAbsent(fill.account() + "\0" + fill.positionId(), key -> new Held());
-      held.net += fill.buy() ? fill.qty() : -fill.qty();
-      held.first = Math.min(held.first, fill.time());
-      held.last = Math.max(held.last, fill.time());
+      positions.computeIfAbsent(fill.account() + "\0" + fill.positionId(), key -> new Held(null)).add(fill);
     }
-    var result = new TreeSet<Window>(Comparator.comparingLong(Window::start).thenComparingLong(Window::end));
-    for (Held held : positions.values()) {
-      // Phrased so that a quantity that is not a number counts as not flat.
-      if (!(Math.abs(held.net) <= FLAT) || held.last - held.first + 2 * PAD_MILLIS > MAX_WINDOW_MILLIS
-          || held.last + PAD_MILLIS < notBefore || held.last > notAfter) continue;
-      result.add(new Window(held.first - PAD_MILLIS, held.last + PAD_MILLIS));
-    }
-    return List.copyOf(result);
+    return positions.values();
   }
 
-  /** The holding windows of this instrument's replay positions, oldest first, each with its run. A replay
-   * position is the fills that share a run, an account and MotiveWave's position id (MotiveWave can give a
-   * position of a later run the id of an earlier one).
-   *
-   * Only positions that are flat and whose last fill is no later than clock, the replay's current time:
-   * the trade is over in the replay. The window is the same as live, first fill to last, a few seconds
-   * either side, except that it ends at clock at the latest: nothing after the replay's present is ever
-   * asked for. The rest of the window is asked for in a later pass, once the replay has played past it.
-   * Left out, as live: live fills, other instruments, fills without a run or a position id, positions
-   * longer than 24 hours, and those that ended before notBefore. */
-  static List<RunWindow> replayWindows(List<ReplayFill> fills, String symbol, long notBefore, long clock) {
+  /** This instrument's replay positions. A replay position is the fills that share a run, an account and
+   * MotiveWave's position id (MotiveWave can give a position of a later run the id of an earlier one).
+   * Left out, as live: live fills, other instruments, and fills without a run or a position id. */
+  private static Collection<Held> replayPositions(List<ReplayFill> fills, String symbol) {
     var positions = new HashMap<String, Held>();
-    var runs = new HashMap<String, String>();
     for (var filed : fills) {
       var fill = filed.fill();
       if (!fill.replay() || filed.run() == null || filed.run().isBlank() || symbol == null
           || !symbol.equals(fill.symbol()) || fill.positionId().isBlank() || fill.time() <= 0) continue;
-      String key = filed.run() + "\0" + fill.account() + "\0" + fill.positionId();
-      runs.put(key, filed.run());
-      Held held = positions.computeIfAbsent(key, k -> new Held());
-      held.net += fill.buy() ? fill.qty() : -fill.qty();
-      held.first = Math.min(held.first, fill.time());
-      held.last = Math.max(held.last, fill.time());
+      positions.computeIfAbsent(filed.run() + "\0" + fill.account() + "\0" + fill.positionId(),
+          key -> new Held(filed.run())).add(fill);
     }
-    var result = new TreeSet<RunWindow>(Comparator.comparingLong((RunWindow w) -> w.window().start())
-        .thenComparingLong(w -> w.window().end()).thenComparing(RunWindow::run));
-    positions.forEach((key, held) -> {
-      if (!(Math.abs(held.net) <= FLAT) || held.last - held.first + 2 * PAD_MILLIS > MAX_WINDOW_MILLIS
-          || held.last + PAD_MILLIS < notBefore || held.last > clock) return;
-      result.add(new RunWindow(runs.get(key), new Window(held.first - PAD_MILLIS, Math.min(held.last + PAD_MILLIS, clock))));
-    });
+    return positions.values();
+  }
+
+  /** The holding windows of this instrument's positions, oldest first: first fill to last fill, a few
+   * seconds either side. Only positions that are over (Held.over) and have no fill after notAfter.
+   * Positions held at the very same times, as copied accounts are, give one window. */
+  static List<Window> windows(List<JournalNativeAccess.Fill> fills, String symbol, long notBefore, long notAfter) {
+    var result = new TreeSet<Window>(OLDEST);
+    for (Held held : positions(fills, symbol))
+      if (held.over(notBefore) && held.last <= notAfter)
+        result.add(new Window(held.first - PAD_MILLIS, held.last + PAD_MILLIS));
+    return List.copyOf(result);
+  }
+
+  /** The minutes after the exit of the same positions, oldest first, for the runner analysis: from the
+   * last fill to so many minutes later. Only once all of it is no later than notAfter, so that it is asked
+   * for whole. 0 minutes gives none. Exits a few minutes apart share their overlap, as holding windows do. */
+  static List<Window> afterExit(List<JournalNativeAccess.Fill> fills, String symbol, long notBefore, long notAfter,
+                                int minutes) {
+    var result = new TreeSet<Window>(OLDEST);
+    long after = minutes * 60_000L;
+    for (Held held : positions(fills, symbol))
+      if (after > 0 && held.over(notBefore) && held.last + after <= notAfter)
+        result.add(new Window(held.last, held.last + after));
+    return List.copyOf(result);
+  }
+
+  /** The holding windows of this instrument's replay positions, oldest first, each with its run.
+   *
+   * Only positions that are over (Held.over) and whose last fill is no later than clock, the replay's
+   * current time: the trade is over in the replay. The window is the same as live, first fill to last, a
+   * few seconds either side, except that it ends at clock at the latest: nothing after the replay's present
+   * is ever asked for. The rest of the window is asked for in a later pass, once the replay has played past it. */
+  static List<RunWindow> replayWindows(List<ReplayFill> fills, String symbol, long notBefore, long clock) {
+    var result = new TreeSet<RunWindow>(OLDEST_RUN);
+    for (Held held : replayPositions(fills, symbol))
+      if (held.over(notBefore) && held.last <= clock)
+        result.add(new RunWindow(held.run, new Window(held.first - PAD_MILLIS, Math.min(held.last + PAD_MILLIS, clock))));
+    return List.copyOf(result);
+  }
+
+  /** The minutes after the exit of the same replay positions, as live, except that a window ends at clock
+   * at the latest: it is loaded as the replay plays through it, never ahead of it. 0 minutes gives none. */
+  static List<RunWindow> replayAfterExit(List<ReplayFill> fills, String symbol, long notBefore, long clock, int minutes) {
+    var result = new TreeSet<RunWindow>(OLDEST_RUN);
+    long after = minutes * 60_000L;
+    for (Held held : replayPositions(fills, symbol))
+      if (after > 0 && held.over(notBefore) && held.last < clock)
+        result.add(new RunWindow(held.run, new Window(held.last, Math.min(held.last + after, clock))));
     return List.copyOf(result);
   }
 
@@ -176,13 +217,19 @@ final class JournalBackfill {
    * history could not be asked about, is remembered by this instance only, so it is asked again the next
    * time the study loads and not before. Cancelling leaves the window to be done again.
    *
-   * days is the 'Backfill Trade Ticks (Days)' setting; 0 does nothing. */
-  synchronized Result pass(String symbol, List<JournalNativeAccess.Fill> fills, long now, int days,
+   * Holding windows come first, so MAE / MFE never wait behind the minutes after an exit; those are loaded
+   * once they and the settling time have passed, under the same provider.
+   *
+   * days is the 'Backfill Trade Ticks (Days)' setting; 0 does nothing. minutes is 'After Exit (Minutes)';
+   * 0 loads holding windows only. */
+  synchronized Result pass(String symbol, List<JournalNativeAccess.Fill> fills, long now, int days, int minutes,
                            TickSource source, Sink sink, BooleanSupplier cancelled) throws IOException {
     if (days <= 0 || symbol == null || fills == null) return Result.NONE;
-    long horizon = now - Math.min(days, MAX_DAYS) * 86_400_000L;
+    long horizon = now - Math.min(days, MAX_DAYS) * 86_400_000L, settled = now - SETTLE_MILLIS;
     var jobs = new ArrayList<Job>();
-    for (Window window : windows(fills, symbol, horizon, now - SETTLE_MILLIS))
+    for (Window window : windows(fills, symbol, horizon, settled))
+      jobs.add(new Job(symbol, SOURCE, "live", window));
+    for (Window window : afterExit(fills, symbol, horizon, settled, minutes))
       jobs.add(new Job(symbol, SOURCE, "live", window));
     return run(symbol, jobs, now, source, sink, cancelled);
   }
@@ -190,12 +237,14 @@ final class JournalBackfill {
   /** The same for replay: the flat replay positions of this instrument, each written for its own run, and
    * never past clock, the replay's current time. days counts back from clock. now is the wall clock, which
    * only dates the ledger's entries. The ledger is the replay bridge's. */
-  synchronized Result replayPass(String symbol, List<ReplayFill> fills, long clock, long now, int days,
+  synchronized Result replayPass(String symbol, List<ReplayFill> fills, long clock, long now, int days, int minutes,
                                  TickSource source, Sink sink, BooleanSupplier cancelled) throws IOException {
     if (days <= 0 || symbol == null || fills == null || clock <= 0) return Result.NONE;
     long horizon = clock - Math.min(days, MAX_DAYS) * 86_400_000L;
     var jobs = new ArrayList<Job>();
     for (RunWindow window : replayWindows(fills, symbol, horizon, clock))
+      jobs.add(new Job(replayKey(window.run(), symbol), replaySource(window.run()), "replay", window.window()));
+    for (RunWindow window : replayAfterExit(fills, symbol, horizon, clock, minutes))
       jobs.add(new Job(replayKey(window.run(), symbol), replaySource(window.run()), "replay", window.window()));
     return run(symbol, jobs, now, source, sink, cancelled);
   }

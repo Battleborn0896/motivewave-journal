@@ -31,9 +31,10 @@ import org.mwjournal.study.JournalTicks.Held;
 import static org.mwjournal.study.JournalSettings.*;
 import static org.mwjournal.study.JournalTicks.NEVER;
 
-/** Records what the MotiveWave Journal app needs from a chart: one-minute bars, every trade print the
- * chart receives, real ticks for the holding time of closed trades, and (through a read-only internal
- * observer) the fills and their linked stop orders, live and replay. Everything goes to a local
+/** Records what the MotiveWave Journal app needs from a chart: one-minute bars, the trade prints the chart
+ * receives while a trade is open, real ticks from MotiveWave's history for the holding time of closed trades
+ * and the minutes after their exit, and (through a read-only internal observer) the fills and their linked
+ * stop orders, live and replay. Everything goes to a local
  * file; nothing is sent anywhere and no order is ever placed, changed or cancelled.
  *
  * requiresBarUpdates: MotiveWave calls onTick only for a study that receives bar updates. With
@@ -217,9 +218,9 @@ public class MotiveWaveJournal extends Study {
     } catch (IOException | RuntimeException exc) { report(exc); }
   }
 
-  private Held held(Capture capture, String source, JournalPriceEvents.Print print) {
+  private static Held held(Capture capture, String source, JournalPriceEvents.Print print) {
     return new Held(capture.symbol(), capture.proxy(), source, print, capture.instrument().getSymbol(),
-        capture.instrument().getActiveSymbol(), getSettings().getInteger(POST_EXIT, POST_EXIT_DEFAULT));
+        capture.instrument().getActiveSymbol());
   }
 
   private String replaySource(String run, boolean real) {
@@ -326,10 +327,12 @@ public class MotiveWaveJournal extends Study {
     if (isReplay && !getSettings().is(REPLAY, REPLAY_DEFAULT)) return;
     nextBackfill = System.nanoTime() + (isReplay ? REPLAY_BACKFILL_EVERY_NANOS : BACKFILL_EVERY_NANOS);
     int days = Math.max(0, Math.min(JournalBackfill.MAX_DAYS, getSettings().getInteger(BACKFILL, BACKFILL_DEFAULT)));
-    submitBackfill(chart, days, isReplay);
+    int minutes = Math.max(0, Math.min(POST_EXIT_MAX, getSettings().getInteger(POST_EXIT, POST_EXIT_DEFAULT)));
+    submitBackfill(chart, days, minutes, isReplay);
   }
 
-  private synchronized void submitBackfill(Capture chart, int days, boolean replay) {
+  /** minutes: After Exit, the minutes after each exit loaded with the holding window. */
+  private synchronized void submitBackfill(Capture chart, int days, int minutes, boolean replay) {
     JournalAccountCapture observer = accounts;
     if (disposed || observer == null || !JournalBackfill.applies(chart.instrument().getSymbol(), chart.symbol(),
         chart.historyProxy(), replayMode, replay, days)) return;
@@ -361,13 +364,13 @@ public class MotiveWaveJournal extends Study {
           if (fills == null || clock <= 0) return; // no snapshot or no replay time yet; the next beat asks again
           // A separate reference keeps the writer alive while settings/destroy close the study's own.
           JournalEventWriter target = output = JournalEventWriter.acquire(file);
-          result = load.replayPass(symbol, fills, clock, System.currentTimeMillis(), days, ticks,
+          result = load.replayPass(symbol, fills, clock, System.currentTimeMillis(), days, minutes, ticks,
               event -> target.offerBelow(event, JournalBackfill.HIGH_WATER), cancelled);
         } else {
           var fills = observer.fills();
           if (fills == null) return; // no snapshot yet; the next beat asks again
           JournalEventWriter target = output = JournalEventWriter.acquire(file);
-          result = load.pass(symbol, fills, System.currentTimeMillis(), days, ticks,
+          result = load.pass(symbol, fills, System.currentTimeMillis(), days, minutes, ticks,
               event -> target.offerBelow(event, JournalBackfill.HIGH_WATER), cancelled);
         }
         if (result.remaining() > 0) nextBackfill = System.nanoTime() + BACKFILL_MORE_NANOS;

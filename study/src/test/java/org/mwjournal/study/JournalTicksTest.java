@@ -36,7 +36,9 @@ public final class JournalTicksTest {
       capture.poll(System.nanoTime() + ahead[0]);
     };
 
-    // What arms the gate. Anything short of a book known to be flat records.
+    // What arms the gate with the default setting, During Trades Only. Anything short of a book known to be
+    // flat records.
+    assert JournalSettings.RECORD_DEFAULT.equals(IN_POSITION);
     assert JournalTicks.armed(null, IN_POSITION, false, "ESZ6", "ESZ6", "ESZ6") : "Fill capture off records everything";
     assert JournalTicks.armed(capture, IN_POSITION, false, "ESZ6", "ESZ6", "ESZ6") : "No poll yet records everything";
     poll.run();
@@ -52,7 +54,8 @@ public final class JournalTicksTest {
     poll.run();
     live(gate, writer, capture, 5);
     live(gate, writer, capture, 6);
-    // Out again. The prints right after the exit are still written; once that tail has lapsed, none are.
+    // Out again. The prints right after the exit are still written; once that short tail has lapsed, none
+    // are, however close to the exit in market time: the minutes after an exit come from the tick history.
     fills.add(fill("exit", false, false));
     poll.run();
     live(gate, writer, capture, 7);
