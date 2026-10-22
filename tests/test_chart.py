@@ -197,6 +197,9 @@ def test_chart_window_is_bounded_for_long_open_positions(tmp_path):
     trade.closed = None
     start, end = chart_window(trade, 30, now=instant('2027-10-07T14:00:00Z'))
     assert (end - start).total_seconds() == 10000 * 60
+    # An open replay trade's chart ends at its replay clock: the replay's later minutes are stored already.
+    start, end = chart_window(trade, 30, now=instant(trade.opened) + dt.timedelta(minutes=5))
+    assert end == instant(trade.opened) + dt.timedelta(minutes=5)
 
 
 def test_historical_capture_gap_uses_price_window_not_export_wall_clock(tmp_path):

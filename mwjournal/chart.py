@@ -15,9 +15,16 @@ EXIT = '#E8B45A'
 
 
 def chart_window(trade: Trade, padding_minutes=15, *, now=None):
+    """From padding_minutes before entry to padding_minutes after exit. An open trade's ends at `now`, its replay
+    clock (Journal.trade_clock), when it has one: a replay's later minutes are already stored, and a chart drawn
+    while the trade is open must not show them. A live one has none and runs on past the wall clock."""
     start = instant(trade.opened) - dt.timedelta(minutes=padding_minutes)
-    end = (instant(trade.closed) if trade.closed else (now or dt.datetime.now(dt.timezone.utc)))
-    end += dt.timedelta(minutes=padding_minutes)
+    if trade.closed:
+        end = instant(trade.closed) + dt.timedelta(minutes=padding_minutes)
+    elif now is not None:
+        end = now
+    else:
+        end = dt.datetime.now(dt.timezone.utc) + dt.timedelta(minutes=padding_minutes)
     # Bound local reads/rendering even for a position left open for months.
     end = min(end, start + dt.timedelta(minutes=10000))
     return start, end
