@@ -189,7 +189,7 @@ def test_every_stylesheet_and_component_names_ibm_plex_sans_first_and_no_monospa
 def test_numbers_that_sit_in_columns_keep_tabular_figures():
     css = re.sub(r'\s+', ' ', theme.CSS + trades.CSS)
     for selector in ('[data-testid="stMetricValue"] {', '.mwj-trade {', '.mwj-day {', 'input {',
-                     '.js-plotly-plot .plotly text {', '[class*="st-key-journal-calendar"] button p {'):
+                     '.js-plotly-plot .plotly text {', '.mwj-cal {', '.mwj-cal-month {'):
         start = re.search(r'(?:\}|<style>) ' + re.escape(selector), css)    # the rule for it, not a longer selector
         rule = css[start.end():].split('}', 1)[0]
         assert 'font-variant-numeric:tabular-nums' in rule, selector

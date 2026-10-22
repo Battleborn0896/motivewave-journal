@@ -3,12 +3,14 @@ import copy
 import datetime as dt
 import itertools
 import json
+import re
 from concurrent.futures import ThreadPoolExecutor
 
 import pytest
 
 import common
 import runtime
+import theme
 from mwjournal import Execution, Journal
 from mwjournal import tagging
 from mwjournal import workspace
@@ -383,6 +385,79 @@ def test_dashboard_calendar_navigation_and_widget_save(home):
     button.click().run()
     assert not app.exception
     assert widget(app.date_input, 'Trading day').value == dt.date(2026, 10, 7)
+
+
+def trade_on(journal, day, points, n=0):
+    """One NQ round trip opened at 10:1n New York time on `day`: `points` × $20, no fees."""
+    journal.ingest([(Execution('motivewave', 'paper', 'NQZ6', 'buy', 1, 20000, f'{day}T14:1{n}:00Z',
+                               execution_id=f'{day}-{n}-in'), {}),
+                    (Execution('motivewave', 'paper', 'NQZ6', 'sell', 1, 20000 + points, f'{day}T14:1{n}:30Z',
+                               execution_id=f'{day}-{n}-out'), {})])
+
+
+def calendar_cells(app):
+    """Each Trading Calendar cell by its first line ('5', 'Week 2'; the month's total under 'Month'):
+    (classes, net result, trade count), the last two None for a cell without trades."""
+    cells = {}
+    for body in (m.value for m in app.main.markdown if m.value.startswith("<div class='mwj-cal")):
+        found = re.fullmatch(r"<div class='([^']*)'(?: title='[^']*')?>(?:<span class='d'>([^<]*)</span>)?"
+                             r"(?:<span class='n'>([^<]*)</span><span class='k'>([^<]*)</span>)?</div>", body)
+        assert found, body
+        classes, label, net, trades = found.groups()
+        cells[label or 'Month'] = (classes.split(), net and net.replace('&#36;', '$'), trades)
+    return cells
+
+
+def test_calendar_days_and_weeks_are_tinted_by_their_result_and_say_how_many_trades(home):
+    journal = Journal()
+    journal.save_preferences(display_timezone='America/New_York')
+    trade_on(journal, '2026-10-05', 50)                  # Mon +$1,000: the month's biggest day
+    trade_on(journal, '2026-10-06', -10)                 # Tue two losers, -$300 in all: under a third of it
+    trade_on(journal, '2026-10-06', -5, 1)
+    trade_on(journal, '2026-10-07', 25)                  # Wed +$500: half of it
+    trade_on(journal, '2026-10-08', 0)                   # Thu break-even; Fri no trades
+    trade_on(journal, '2026-10-13', -20)                 # the next Tuesday, -$400
+    app = open_app('Dashboard')
+    cells = calendar_cells(app)
+    assert cells['5'] == (['mwj-cal', 'up', 'l3'], '+$1,000', '1 trade')
+    assert cells['6'] == (['mwj-cal', 'down', 'l1'], '-$300', '2 trades')
+    assert cells['7'] == (['mwj-cal', 'up', 'l2'], '+$500', '1 trade')
+    assert cells['8'] == (['mwj-cal'], '$0', '1 trade')                 # break-even stays neutral
+    assert cells['9'] == (['mwj-cal'], None, None)                     # so does a day without trades
+    # Each week's total ends its row, tinted against the month's biggest week.
+    assert cells['Week 1'] == (['mwj-cal'], None, None)
+    assert cells['Week 2'] == (['mwj-cal', 'up', 'l3'], '+$1,200', '5 trades')
+    assert cells['Week 3'] == (['mwj-cal', 'down', 'l1'], '-$400', '1 trade')
+    assert cells['Month'] == (['mwj-cal-month', 'up', 'l3'], '+$800', '6 trades')
+    captions = [c.value for c in app.main.caption]
+    assert captions[captions.index('Mon'):][:8] == ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun', 'Week']
+    # The tints are the result colours, three steps deep; the amount takes the result colour too.
+    css = re.sub(r'\s+', ' ', theme.CSS)
+    for tone, colour in (('up', theme.UP), ('down', theme.DOWN)):
+        for level, alpha in enumerate(theme.TINTS, 1):
+            assert f'.mwj-cal.{tone}.l{level} {{ background:{colour}{alpha};' in css
+        assert f':is(.mwj-cal, .mwj-cal-month).{tone} .n {{ color:{colour}; }}' in css
+    # A day still opens its Daily Report Card.
+    next(b for b in app.button if b.label.startswith('6  \n')).click().run()
+    assert not app.exception and widget(app.date_input, 'Trading day').value == dt.date(2026, 10, 6)
+
+
+def test_a_hidden_weekend_still_counts_in_its_weeks_total(home):
+    journal = Journal()
+    journal.save_preferences(display_timezone='America/New_York', hide_weekends=True)
+    trade_on(journal, '2026-10-09', 10)                  # Fri +$200
+    trade_on(journal, '2026-10-11', 5)                   # Sun +$100, in a column that is hidden
+    cells = calendar_cells(open_app('Dashboard'))
+    assert '9' in cells and '10' not in cells and '11' not in cells
+    assert cells['Week 2'] == (['mwj-cal', 'up', 'l3'], '+$300', '2 trades')
+    assert cells['Month'][1:] == ('+$300', '2 trades')
+
+
+def test_calendar_tint_steps():
+    assert theme.tint(None, 100) == theme.tint(0, 100) == theme.tint(0, 0) == ''
+    assert theme.tint(1, 100) == 'up l1' and theme.tint(-33, 100) == 'down l1'
+    assert theme.tint(34, 100) == 'up l2' and theme.tint(-66, 100) == 'down l2'
+    assert theme.tint(67, 100) == 'up l3' and theme.tint(-100, 100) == 'down l3'
 
 
 def test_export_includes_new_workflow_definitions_and_run_history(home):

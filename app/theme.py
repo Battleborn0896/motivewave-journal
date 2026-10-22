@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import hashlib
 import html
+import math
 import re
 
 import plotly.graph_objects as go
@@ -42,6 +43,11 @@ STATUS = {'good': UP, 'warning': '#E2CF32', 'critical': DOWN, 'neutral': MUTED}
 TAG_COLOURS = {'Setup': '#65CA98', 'Execution': '#EBAB66', 'Mindset': '#BD9DE8', 'Other tags': '#73B6EB'}
 FONT = fonts.STACK         # IBM Plex Sans, with system fallbacks only until the bundled files load
 TABULAR = 'font-variant-numeric:tabular-nums'   # figures of one width, for numbers that line up
+# A Trading Calendar cell's tint (tint() picks the step): the result colour at 8, 15 and 22% over the page, so a
+# big day reads deeper than a small one and the month never turns garish.
+TINTS = ('14', '26', '38')
+TINT_CSS = ''.join(f'.mwj-cal.{tone}.l{level} {{ background:{colour}{alpha}; border-color:{colour}{alpha}; }}\n'
+                   for tone, colour in (('up', UP), ('down', DOWN)) for level, alpha in enumerate(TINTS, 1))
 
 # The browser tab's icon: the Mac app's icon (desktop/macos/Main.swift), three yellow candles on charcoal.
 # Written into the page as an SVG, because a Material icon here makes the browser fetch it from Google.
@@ -83,13 +89,30 @@ html, body, [data-testid="stAppViewContainer"], .stApp {{ background:{PAGE}; fon
 [data-testid="stSidebar"] [data-testid="stButtonGroup"] > div {{ flex-direction:column; gap:2px; }}
 [data-testid="stSidebar"] [data-testid="stButtonGroup"] button {{ width:100%; min-width:160px; justify-content:flex-start;
     border:0; background:transparent; padding:6px 10px; min-height:30px; font-family:{FONT}; }}
+/* The Trading Calendar: each day and each week's total is a cell tinted by its result; an invisible button lies
+   over a day's cell and opens it. */
 [class*="st-key-journal-calendar"] [data-testid="stVerticalBlock"] {{ gap:4px; }}
 [class*="st-key-journal-calendar"] [data-testid="stHorizontalBlock"] {{ gap:4px; }}
-[class*="st-key-journal-calendar"] button {{ padding:2px !important; min-height:34px !important; height:34px; }}
-[class*="st-key-journal-calendar"] button p {{ font-size:10px; line-height:12px; {TABULAR};
-    white-space:normal; margin:0 !important; overflow:visible; text-overflow:clip; }}
-/* The label's paragraph is inline, so its lines take the container's height: keep both lines inside the cell. */
-[class*="st-key-journal-calendar"] button [data-testid="stMarkdownContainer"] {{ font-size:10px; line-height:12px; }}
+[class*="st-key-journal-calendar"] [data-testid="stMarkdownContainer"] {{ margin-bottom:0 !important; }}
+[class*="st-key-calendar-day-"] {{ position:relative; gap:0 !important; }}
+[class*="st-key-calendar-day-"] [data-testid="stElementContainer"]:has(.stButton) {{ position:absolute !important;
+    inset:0; z-index:2; margin:0 !important; }}
+[class*="st-key-calendar-day-"] .stButton, [class*="st-key-calendar-day-"] .stButton button {{ width:100%; height:100%;
+    min-height:0 !important; padding:0; opacity:0; cursor:pointer; }}
+.mwj-cal {{ display:flex; flex-direction:column; height:50px; padding:3px 5px; border:1px solid {HAIRLINE};
+    border-radius:4px; background:{SURFACE}; font-family:{FONT}; font-size:10.5px; line-height:13px; {TABULAR};
+    color:{INK_2}; white-space:nowrap; overflow:hidden; container-type:inline-size; }}
+/* In a narrow cell the amount and the count get smaller with it (cqi: a hundredth of the cell's width), down to
+   a size still read easily; past that they end in '…', and pointing at the cell shows the whole amount. */
+.mwj-cal > span {{ overflow:hidden; text-overflow:ellipsis; }}
+.mwj-cal .n {{ font-size:12px; font-size:clamp(9.5px, 24cqi, 12px); line-height:16px; font-weight:650; }}
+.mwj-cal .k {{ font-size:10px; font-size:clamp(8.5px, 22cqi, 10px); color:{MUTED}; }}
+{TINT_CSS}[class*="st-key-calendar-day-"]:hover .mwj-cal {{ border-color:{ACCENT}; }}
+[class*="st-key-calendar-day-"]:has(button:focus-visible) .mwj-cal {{ outline:2px solid {ACCENT}; }}
+.mwj-cal-month {{ text-align:right; font-family:{FONT}; font-size:12px; color:{MUTED}; {TABULAR}; white-space:nowrap; }}
+.mwj-cal-month .n {{ font-size:15px; font-weight:650; color:{INK_2}; margin-right:6px; }}
+:is(.mwj-cal, .mwj-cal-month).up .n {{ color:{UP}; }}
+:is(.mwj-cal, .mwj-cal-month).down .n {{ color:{DOWN}; }}
 [data-testid="stSidebar"] button[aria-checked="true"] {{ background:{ACCENT_DEEP} !important;
     border-color:{ACCENT} !important; color:{ACCENT} !important; }}
 [data-testid="stSidebar"] button[aria-checked="true"] p {{ color:inherit !important; }}
@@ -226,6 +249,14 @@ def outcome_style(row):
         return [''] * len(row)
     colour, background = (UP, '#233D31') if net > 0 else (DOWN, '#402A29') if net < 0 else (ACCENT, '#393720')
     return [f'background-color: {background}; color: {colour}'] * len(row)
+
+
+def tint(value, biggest) -> str:
+    """A calendar cell's classes: 'up' or 'down' by the result's sign, and a step 'l1' to 'l3' by its size against
+    `biggest`, the largest result of its kind that month. No result or break-even: '' (the cell stays neutral)."""
+    if not value or not biggest:
+        return ''
+    return f"{'up' if value > 0 else 'down'} l{min(len(TINTS), math.ceil(len(TINTS) * abs(value) / biggest))}"
 
 
 def brand(name: str, subtitle: str = '') -> None:

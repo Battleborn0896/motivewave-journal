@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import calendar
 import datetime as dt
+import html
 
 import pandas as pd
 import plotly.express as px
@@ -24,7 +25,9 @@ DEFAULT = {'name': 'Overview', 'columns': 2, 'filters': {}, 'widgets': [
     {'id': 'equity', 'kind': 'Equity', 'title': 'Equity Curve', 'metric': 'Net P&L'}]}
 LINES = ('Equity', 'Tag score', 'Rating', 'Drawdown')
 WIDGET_HELP = {'Radar': 'The share of this sample tagged in each category. Not an edge or a performance score.',
-               'Calendar': 'Each day\'s net result in your display time zone. Click a day for its Daily Report Card.',
+               'Calendar': 'Each day\'s net result and closed trades in your display time zone, a deeper green or red '
+                           'for a bigger day of the month; each week\'s total ends its row. Click a day for its Daily '
+                           'Report Card.',
                'Drawdown': 'How far the running total sits below its highest point so far.'}       # drawn along the trades, one point each
 AXES = {'trade': 'Trade number', 'time': 'Date and time'}
 
@@ -292,33 +295,81 @@ def formatter(metric, currency):
     return lambda v: '—' if v is None else f'{v:+,.2f}'.rstrip('0').rstrip('.')
 
 
+def trade_count(n) -> str:
+    return f'{n} trade{"" if n == 1 else "s"}'
+
+
+def calendar_cell(label, net, trades, biggest, currency, *, kind='mwj-cal') -> str:
+    """A calendar cell (a day, a week, or the month's total, kind 'mwj-cal-month'): its label, then its net result
+    and number of closed trades when it has any, tinted by the result against `biggest`, the month's largest
+    day (or week). '$' is written as an entity: two in one block of Markdown would start a formula."""
+    amount = html.escape(common.money(net, currency, decimals=0)).replace('$', '&#36;')
+    lines, title = f"<span class='d'>{label}</span>" if label else '', ''
+    if trades:
+        lines += f"<span class='n'>{amount}</span><span class='k'>{trade_count(trades)}</span>"
+        title = f" title='{amount}, {trade_count(trades)}'"       # all of it, for a cell too narrow to show it
+    return f"<div class='{kind} {theme.tint(net, biggest)}'{title}>{lines}</div>"
+
+
 def trading_calendar(journal, rows, key):
+    """The month's days, each tinted by its closed trades' net result, deeper for a bigger day of that month, with
+    each week's total at the end of its row and the month's beside the month. A day opens its Daily Report Card."""
     from zoneinfo import ZoneInfo
     zone = common.display_zone(journal)
     currency = rows[0]['currency'] if rows else 'USD'
     days = [instant(r['opened']).astimezone(ZoneInfo(zone)).date() for r in rows]
     latest = max(days) if days else dt.date.today()
     months = sorted({d.replace(day=1) for d in days} | {latest.replace(day=1)}, reverse=True)
+
+    def open_day(date):
+        # The Daily Report Card is on Trades, in place of a trade, for this date.
+        st.session_state.update(common.navigation('Daily review'))
+        st.session_state[common.key(journal, 'review-day')] = date
+        st.session_state[common.key(journal, 'review-tz')] = zone
+
     with st.container(key='journal-calendar-' + key):
-        month = st.selectbox('Month', months, format_func=lambda d: d.strftime('%B %Y'), key=key + '-month', label_visibility='collapsed')
-        hide = journal.workspace()['preferences'].get('hide_weekends', False)
-        names = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'][:5 if hide else 7]
+        choice, total = st.columns(2, vertical_alignment='center')
+        month = choice.selectbox('Month', months, format_func=lambda d: d.strftime('%B %Y'), key=key + '-month',
+                                 label_visibility='collapsed')
+        results = {}                                   # the month's days with closed trades: [net, trades]
+        for r, day in zip(rows, days):
+            if day.replace(day=1) == month and r['status'] == 'closed' and r['net'] is not None:
+                result = results.setdefault(day, [0, 0])
+                result[0] += r['net']
+                result[1] += 1
+        add = lambda dates: [sum(results[d][i] for d in dates if d in results) for i in (0, 1)]
+        weeks = [[dt.date(month.year, month.month, day) if day else None for day in week]
+                 for week in calendar.monthcalendar(month.year, month.month)]
+        # A week's total counts all its days in this month, a hidden weekend's too, as the month's total does.
+        totals = [add(week) for week in weeks]
+        month_net, month_trades = add(results)
+        total.markdown(calendar_cell('', month_net, month_trades, abs(month_net), currency, kind='mwj-cal-month'),
+                       unsafe_allow_html=True)
+        biggest_day = max((abs(net) for net, _ in results.values()), default=0)
+        biggest_week = max((abs(net) for net, _ in totals), default=0)
+        shown = 5 if journal.workspace()['preferences'].get('hide_weekends', False) else 7
+        names = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'][:shown] + ['Week']
         for col, name in zip(st.columns(len(names)), names):
             col.caption(name)
-        for week in calendar.monthcalendar(month.year, month.month):
-            for col, day in zip(st.columns(len(names)), week):
-                if not day:
+        number = 0
+        for week, (week_net, week_trades) in zip(weeks, totals):
+            if not any(week[:shown]) and not week_trades:
+                continue                               # a hidden weekend that starts the month, nothing traded
+            number += 1
+            cols = st.columns(len(names))
+            for col, date in zip(cols, week[:shown]):
+                if date is None:
                     col.caption(' ')
                     continue
-                date = dt.date(month.year, month.month, day)
-                sample = [r for r, opened in zip(rows, days) if opened == date and r['status'] == 'closed' and r['net'] is not None]
-                net = sum(r['net'] for r in sample)
-                title = f'{day}  \n' + common.md(common.money(net, currency, decimals=0)) if sample else str(day)
-                def open_day(date=date):
-                    # The Daily Report Card is on Trades, in place of a trade, for this date.
-                    st.session_state.update(common.navigation('Daily review'))
-                    st.session_state[common.key(journal, 'review-day')] = date
-                    st.session_state[common.key(journal, 'review-tz')] = zone
-                col.button(title, key=key + '-day-' + str(date), on_click=open_day, width='stretch',
-                           help=common.md(f'{common.day_label(date, zone, weekday=True)}: {len(sample)} closed trades, '
-                                          f'{common.money(net, currency)} · click for its Daily Report Card on Trades'))
+                net, trades = results.get(date, (0, 0))
+                with col.container(key=f'calendar-day-{key}-{date}'):
+                    st.markdown(calendar_cell(date.day, net, trades, biggest_day, currency), unsafe_allow_html=True)
+                    # Invisible, over the cell: its label is what a screen reader says.
+                    st.button(f'{date.day}  \n' + common.md(common.money(net, currency, decimals=0)) +
+                              f'  \n{trade_count(trades)}' if trades else str(date.day),
+                              key=key + '-day-' + str(date), on_click=open_day, args=(date,), width='stretch',
+                              help=common.md(f'{common.day_label(date, zone, weekday=True)}: {trade_count(trades)} '
+                                             f'closed, {common.money(net, currency)} · click for its Daily Report Card '
+                                             'on Trades'))
+            cols[-1].markdown(calendar_cell(f'Week {number}', week_net, week_trades, biggest_week, currency),
+                              unsafe_allow_html=True)
