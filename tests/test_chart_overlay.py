@@ -259,3 +259,9 @@ def test_the_stop_r_uses_crosses_the_whole_chart_and_a_moved_stop_its_own_minute
     assert float(full['x1']) == 0 and float(full['x2']) == 930 and 'stroke-dasharray' not in full
     assert float(moved['x1']) == pytest.approx(40 + 60 / 60 * 30) and float(moved['x2']) == pytest.approx(40 + 97.75 / 60 * 30)
     assert moved['stroke-dasharray'] == '7 4'
+    # The full stop's label sits at the plot's right edge, by the price axis, clear of the fills' boxes.
+    label = next(n['attrs'] for n in nodes if n['tag'] == 'text' and n['attrs'].get('fill') == '#F05B70'
+                 and n['attrs'].get('text-anchor') == 'end')
+    assert float(label['x']) == 930 - 6
+    # A long's stop is under its entry: the label goes under the line, away from where an exit's box sits.
+    assert float(label['y']) == 500 - 98 * 2 + 13

@@ -327,10 +327,16 @@ function drawOverlay() {
     const y = entry.api.priceToCoordinate(level.price);
     if (x1 == null || x2 == null || y == null) continue;
     line(x1,y,x2,y,level.color,{dotted: '2 4', dashed: '7 4'}[level.style]);   // anything else is solid
-    const labelX = Math.max(6, Math.min(plotWidth - 220, x2 - 220));
     const labelY = Math.max(spec.title ? 64 : 28, y - 6); // keep stop labels below the title and OHLC legend
-    element('text',{x:labelX,y:labelY,fill:level.color,'font-size':10,'font-family':spec.theme.font},layer,
-      level.label + ' @ ' + formatter(spec.format)(level.price));
+    const text = level.label + ' @ ' + formatter(spec.format)(level.price);
+    // A full level's label sits at the plot's right edge, on the side of the line away from the entry: an exit
+    // at the stop has its box on the entry's side, so the two never cover each other.
+    const opening = ((spec.tradeOverlays || {}).fills || [])[0];
+    const away = opening && level.price < opening.price ? Math.min(plotHeight - 4, y + 13) : labelY;
+    if (level.full) element('text',{x:plotWidth - 6,y:away,fill:level.color,'font-size':10,'text-anchor':'end',
+      'font-family':spec.theme.font},layer,text);
+    else element('text',{x:Math.max(6, Math.min(plotWidth - 220, x2 - 220)),y:labelY,fill:level.color,'font-size':10,
+      'font-family':spec.theme.font},layer,text);
   }
   const t = spec.theme, placed = new Map();     // each drawn fill's arrow tip, by its place in the trade's fills
   for (const fill of spec.tradeOverlays.fills || []) {

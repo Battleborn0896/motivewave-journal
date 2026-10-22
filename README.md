@@ -7,6 +7,20 @@ Live/paper and replay have separate databases. No routine CSV export/import is r
 MotiveWave Journal is an independent open-source project. It is not affiliated with, endorsed by or
 supported by MotiveWave Software.
 
+## What's new in 0.4.13: find your edge by tag, Sierra-style fills, a calendar in colour
+
+- **Find your edge by tag (Stats → Compare).** Click tags under *Only trades with* to keep just the trades that
+  have all of them, then read one table per tag category: every tag of it as a row with its trades, Net P&L,
+  Win %, Average Trade and Average R, and a row for trades with no tag in that category. Pick a context
+  (say, trades with your bias in favour) and see which entries, setups or mindsets work inside it.
+- **Fills drawn as Sierra Chart draws them.** A small arrow points at each fill's exact price and time, buys
+  green from below and sells red from above, with a box such as *+1 @ 29,665.50*. A dashed line joins each
+  entry to the exit that closed it, first in first out: green where that part made money, red where it lost.
+  Your stop's label sits at the right edge, clear of the boxes.
+- **The trading calendar in colour.** Winning days green, losing days red, deeper for bigger days, with each
+  day's trade count, a total for every week and the month's total.
+- Study 0.3.7 stays: nothing to install in MotiveWave.
+
 ## What's new in 0.4.12: clearer steps for new testers and for updating
 
 - **Each release page says what changed and how to update.** It starts with what is new in that version, then

@@ -393,7 +393,8 @@ def compare_table(grouped_rows, field, currency):
     table = pd.DataFrame(grouped_rows, columns=list(columns)).rename(columns=columns)
     table['Average R'] = pd.to_numeric(table['Average R'], errors='coerce')
     styled = common.money_table(table, currency, results=('Net P&L', 'Average Trade', 'Average Winner', 'Average Loser'))
-    return styled.format(lambda v: '—' if v is None or v != v else f'{v:+.2f}R', subset=['Average R'])
+    return (styled.format(lambda v: '—' if v is None or v != v else f'{v:+.2f}R', subset=['Average R'])
+            .format(lambda v: '—' if v is None or v != v else f'{v:.1f}%', subset=['Win %']))   # as the Win Rate card
 
 
 def chart(journal, figure, name: str, *, height=320, keep_layout=False) -> None:
