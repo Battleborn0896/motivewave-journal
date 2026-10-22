@@ -24,6 +24,8 @@ import theme
 
 _COMPONENT = components.declare_component('tvchart', path=str(Path(__file__).resolve().parent / 'components' / 'tvchart'))
 NY = 'America/New_York'
+# Candles wear TradingView's own colours, so a chart reads like the one traders know; a trade's buys and sells too.
+CANDLE_UP, CANDLE_DOWN = '#089981', '#F23645'
 
 
 def _theme() -> dict:
@@ -32,8 +34,7 @@ def _theme() -> dict:
             'up': theme.UP, 'down': theme.DOWN, 'price': theme.PRICE,
             # IBM Plex Sans, which components/tvchart/index.html loads itself and waits for before drawing.
             'font': theme.FONT,
-            # Candles wear TradingView's own colours, so a chart reads like the one traders know.
-            'candleUp': '#089981', 'candleDown': '#F23645',
+            'candleUp': CANDLE_UP, 'candleDown': CANDLE_DOWN,
             'watermark': 'rgba(255,255,255,0.045)'}
 
 

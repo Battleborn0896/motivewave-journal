@@ -6,10 +6,11 @@ from pathlib import Path
 import pytest
 
 from mwjournal import Execution, Journal, PriceSample
-from mwjournal.chart import chart_window, minute_candles, protection_segments, trade_chart
+from mwjournal.chart import chart_window, closing_pairs, minute_candles, protection_segments, trade_chart
 from mwjournal.importers import apply_preview, preview_bridge, preview_csv, preview_prices_csv
 from mwjournal.metrics import excursions
-from mwjournal.model import ProtectionEvent, instant
+from mwjournal.matching import match
+from mwjournal.model import ENTRY_MISSING, ProtectionEvent, instant
 from mwjournal.sync import SyncWorker
 
 
@@ -118,7 +119,11 @@ def test_fill_overlays_use_actual_prices_and_utc_fractional_seconds(tmp_path):
     payload = trade_chart(trade, [bar(0), bar(1), bar(3)], 'motivewave-bars:1m', 4998)
     fills = payload['overlays']['fills']
     assert [f['price'] for f in fills] == [5000, 5002, 5003]
+    assert [(f['side'], f['qty']) for f in fills] == [('buy', 2), ('sell', 1), ('sell', 1)]   # the chart colours by side
     assert [f['label'] for f in fills] == ['Entry · 2 @ 5000', 'Exit · 1 @ 5002', 'Exit · 1 @ 5003']
+    # Scaled out: the 2-lot entry is joined to each exit, one contract each.
+    assert payload['overlays']['pairs'] == [{'entry': 0, 'exit': 1, 'qty': 1, 'points': 2},
+                                            {'entry': 0, 'exit': 2, 'qty': 1, 'points': 3}]
     assert fills[0]['time'] == instant(trade.opened).timestamp()
     assert fills[0]['time'] % 60 == 23.25
     data = payload['series']['data']
@@ -126,6 +131,60 @@ def test_fill_overlays_use_actual_prices_and_utc_fractional_seconds(tmp_path):
     assert payload['overlays']['levels'] == [{'from': instant(trade.opened).timestamp(), 'to': instant(trade.closed).timestamp(),
                                               'price': 4998, 'label': 'Stop · R', 'color': '#F05B70', 'style': 'solid',
                                               'full': True}]            # drawn across the whole chart
+
+
+def execution(id, side, qty, price, second):
+    return Execution('motivewave', 'paper', 'ESZ6', side, qty, price, f'2026-10-07T14:{second // 60:02d}:{second % 60:02d}Z',
+                     execution_id=id), {}
+
+
+def test_entries_and_exits_are_paired_first_in_first_out_as_a_platform_joins_them(tmp_path):
+    journal = Journal(tmp_path / 'journal.sqlite3')
+    # Scaled in: two buys, a 3-lot then a 1-lot, out in two sells of 2. The first sell takes 2 of the oldest entry;
+    # the second takes its last one and the later buy, one pair each.
+    journal.ingest([execution('a', 'buy', 3, 5000, 10), execution('b', 'buy', 1, 4996, 40),
+                    execution('c', 'sell', 2, 5004, 70), execution('d', 'sell', 2, 4998, 100)])
+    pairs = trade_chart(journal.trades()[0], [], 'none')['overlays']['pairs']
+    assert pairs == [{'entry': 0, 'exit': 2, 'qty': 2, 'points': 4}, {'entry': 0, 'exit': 3, 'qty': 1, 'points': -2},
+                     {'entry': 1, 'exit': 3, 'qty': 1, 'points': 2}]
+
+
+def test_a_reversal_joins_each_trade_to_its_own_part_of_the_reversing_fill(tmp_path):
+    """Long 1, sell 2 (out of the long and into a short), buy 1 back: two trades, each with one pair, a short's
+    points counted the short way."""
+    journal = Journal(tmp_path / 'journal.sqlite3')
+    journal.ingest([execution('long', 'buy', 1, 5000, 10), execution('reverse', 'sell', 2, 5002, 70),
+                    execution('cover', 'buy', 1, 5003, 130)])
+    long, short = sorted(journal.trades(), key=lambda t: t.opened)
+    for trade, sides, points in ((long, ['buy', 'sell'], 2), (short, ['sell', 'buy'], -1)):
+        overlays = trade_chart(trade, [], 'none')['overlays']
+        assert [(f['side'], f['qty']) for f in overlays['fills']] == [(sides[0], 1), (sides[1], 1)]
+        assert overlays['pairs'] == [{'entry': 0, 'exit': 1, 'qty': 1, 'points': points}]
+
+
+def test_an_exit_without_its_entry_or_a_fill_without_a_price_is_joined_to_nothing():
+    def leg(role, side, qty, price):
+        return {'role': role, 'side': side, 'qty': qty, 'price': price}
+    # Nothing is open before the first exit; the first entry has no price, yet it is still the one the next exit
+    # closes; the last contract is still open.
+    fills = [leg('exit', 'sell', 1, 5001), leg('entry', 'buy', 1, 0), leg('entry', 'buy', 2, 4999),
+             leg('exit', 'sell', 2, 5000)]
+    assert closing_pairs(fills) == [{'entry': 2, 'exit': 3, 'qty': 1, 'points': 1}]
+
+
+def test_a_position_whose_entry_the_platform_lost_has_no_entry_exit_lines():
+    """Kept of one platform position: buy 1 at 100, sell 1 at 104, sell 2 at 98, so 2 or more bought earlier are
+    gone. First in first out, the first sell closed one of those and the kept buy went out at 98, a loss: a line
+    from the buy to the first sell would show a win that never happened. What each exit closed is not known."""
+    executions = [Execution('motivewave-native:sim', 'paper', 'NQZ6', side, qty, price, f'2026-10-07T14:0{minute}:00Z',
+                            execution_id=id, native_position_id='P1', native_entry=entry)
+                  for id, side, qty, price, minute, entry in (('b', 'buy', 1, 100, 1, True),
+                                                              ('s1', 'sell', 1, 104, 2, False),
+                                                              ('s2', 'sell', 2, 98, 3, False))]
+    trade, = match(executions)
+    assert ENTRY_MISSING in trade.flags and len(trade.fills) == 3
+    overlays = trade_chart(trade, [], 'none')['overlays']
+    assert len(overlays['fills']) == 3 and overlays['pairs'] == []
 
 
 def test_dst_repeated_clock_hour_stays_two_distinct_utc_minutes():
