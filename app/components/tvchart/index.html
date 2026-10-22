@@ -165,7 +165,7 @@ function build(s) {
           const range = chart.timeScale().getVisibleRange();
           const fills = (spec.tradeOverlays.fills || []).filter(f => !range ||
             (f.time >= range.from && f.time <= range.to));
-          const levels = (spec.tradeOverlays.levels || []).filter(l => !range ||
+          const levels = (spec.tradeOverlays.levels || []).filter(l => !range || l.full ||
             (l.to >= range.from && l.from <= range.to));
           const values = [...fills, ...levels].map(p => p.price).filter(Number.isFinite);
           if (values.length) info.priceRange = {
@@ -321,7 +321,10 @@ function drawOverlay() {
       ...(dash ? {'stroke-dasharray':dash} : {})},layer);
   }
   for (const level of spec.tradeOverlays.levels || []) {
-    const x1 = xAt(level.from), x2 = xAt(level.to), y = entry.api.priceToCoordinate(level.price);
+    // A full level (the stop R uses) crosses the whole chart, as a platform draws a stop; the others stand
+    // over their own time (a stop order's later moves).
+    const x1 = level.full ? 0 : xAt(level.from), x2 = level.full ? plotWidth : xAt(level.to);
+    const y = entry.api.priceToCoordinate(level.price);
     if (x1 == null || x2 == null || y == null) continue;
     line(x1,y,x2,y,level.color,{dotted: '2 4', dashed: '7 4'}[level.style]);   // anything else is solid
     const labelX = Math.max(6, Math.min(plotWidth - 220, x2 - 220));

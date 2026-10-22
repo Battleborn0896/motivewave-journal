@@ -15,7 +15,10 @@ This release comes with study **0.3.7**.
   bars of the replayed day and the days before it, once a day, and every replay trade on those days is drawn
   from them, whichever replay run it was in (0.3.6 wrote bars only up to the replay's time, for one run). An
   open replay trade's chart still stops at the replay's current time, so nothing ahead shows while you trade.
-- MAE / MFE still come from ticks only.
+- **Your stop crosses the whole chart,** as a trading platform draws it, labelled *Stop · R*. Later moves of
+  the stop order stay dashed over the minutes each stood.
+- MAE / MFE still come from ticks only. Data → Connection no longer reports a working stop without an
+  instrument: that was a months-old leftover order MotiveWave keeps, not one of your stops.
 
 **What to do:** install the study from **Setup**. Coming from 0.3.6, it takes over by itself in a few seconds.
 Coming from 0.3.5 or older, quit MotiveWave completely first, install, then open MotiveWave.

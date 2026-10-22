@@ -44,7 +44,7 @@ process.stdout.write(JSON.stringify(roots['trade-overlay']));
 """
 
 
-def render(fills, *, missing_minute=False):
+def render(fills, *, missing_minute=False, levels=()):
     node = shutil.which('node')
     if not node:
         pytest.skip('Node.js is required to execute the shipped JavaScript renderer.')
@@ -54,7 +54,7 @@ def render(fills, *, missing_minute=False):
         candles[2] = {'time': 120}
     fixture = {'height': 520, 'timezone': 'UTC', 'theme': {'muted': '#888', 'surface': '#111'},
                'series': [{'type': 'candles', 'data': candles}],
-               'tradeOverlays': {'fills': fills, 'levels': []}}
+               'tradeOverlays': {'fills': fills, 'levels': list(levels)}}
     result = subprocess.run([node, '-e', HARNESS, str(COMPONENT)], input=json.dumps(fixture),
                             text=True, encoding='utf-8', capture_output=True, check=True, timeout=10)
     return json.loads(result.stdout)
@@ -118,3 +118,17 @@ def test_missing_candle_does_not_snap_arrow_or_connect_across_missing_fill():
                               fill(2, 'sell', 'exit', 191, 102)], missing_minute=True)))
     assert len([n for n in nodes if n['tag'] == 'polygon']) == 2
     assert not any(n['tag'] == 'line' for n in nodes)
+
+
+def test_the_stop_r_uses_crosses_the_whole_chart_and_a_moved_stop_its_own_minutes():
+    """A platform draws a stop across the chart; one minute's trade must not leave it a sliver."""
+    levels = [{'from': 23.25, 'to': 97.75, 'price': 98, 'label': 'Stop · R', 'color': '#F05B70', 'style': 'solid',
+               'full': True},
+              {'from': 60, 'to': 97.75, 'price': 99, 'label': 'Stop order', 'color': '#F05B70', 'style': 'dashed'}]
+    nodes = list(walk(render([fill(0, 'buy', 'entry', 23.25, 100), fill(1, 'sell', 'exit', 97.75, 102)],
+                             levels=levels)))
+    stops = [n['attrs'] for n in nodes if n['tag'] == 'line' and n['attrs'].get('stroke') == '#F05B70']
+    full, moved = stops
+    assert float(full['x1']) == 0 and float(full['x2']) == 930 and 'stroke-dasharray' not in full
+    assert float(moved['x1']) == pytest.approx(40 + 60 / 60 * 30) and float(moved['x2']) == pytest.approx(40 + 97.75 / 60 * 30)
+    assert moved['stroke-dasharray'] == '7 4'

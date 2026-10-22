@@ -569,22 +569,20 @@ final class JournalAccountCapture {
    * counts by reason the working stops no position has taken for UNLINKED_GRACE_NANOS. */
   record Stops(JournalNativeAccess.OrderCounts read, int withPosition, int closingSide, int linked,
                Map<String,Integer> unlinked) {
-    /** The heartbeat's part about stops: only while a working stop stays unlinked, or MotiveWave gives a
-     * working stop no instrument (it is then left out, so it must not be left out in silence). */
+    /** The heartbeat's part about stops: only while a working stop stays unlinked. A working stop without an
+     * instrument is only counted: MotiveWave keeps such leftovers (a client order with no instrument and a
+     * negative price, months old), and the reader's own type check (JournalNativeAccess.connect) is what
+     * guards against reading every order's instrument the wrong way, as studies before 0.3.6 did. */
     String warning() {
-      var parts = new ArrayList<String>();
-      if (!unlinked.isEmpty()) {
-        int total = 0;
-        var reasons = new ArrayList<String>();
-        for (var reason : new TreeMap<>(unlinked).entrySet()) {
-          total += reason.getValue();
-          reasons.add(unlinked.size() == 1 ? reason.getKey() : reason.getValue() + " " + reason.getKey());
-        }
-        parts.add(count(total, "working stop order") + " not linked to a position: " + String.join(", ", reasons));
+      if (unlinked.isEmpty()) return null;
+      int total = 0;
+      var reasons = new ArrayList<String>();
+      for (var reason : new TreeMap<>(unlinked).entrySet()) {
+        total += reason.getValue();
+        reasons.add(unlinked.size() == 1 ? reason.getKey() : reason.getValue() + " " + reason.getKey());
       }
-      if (read.noInstrument() > 0)
-        parts.add(count(read.noInstrument(), "working stop order") + " without an instrument, left out");
-      return parts.isEmpty() ? null : String.join("; ", parts) + " (orders: " + counts() + ")";
+      return count(total, "working stop order") + " not linked to a position: " + String.join(", ", reasons)
+          + " (orders: " + counts() + ")";
     }
     String counts() {
       return read.read() + " read, " + read.stops() + " stop, " + read.fresh() + " new, " + read.noInstrument()

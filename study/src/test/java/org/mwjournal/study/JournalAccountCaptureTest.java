@@ -456,17 +456,15 @@ public final class JournalAccountCaptureTest {
         : lines;
   }
 
-  /** A working stop MotiveWave gives no instrument cannot be linked, so it is left out, but never in silence: the
-   * heartbeat says so (studies before 0.3.6 read every order's instrument the wrong way and dropped every stop). */
+  /** A working stop MotiveWave gives no instrument cannot be linked: it is counted and left out. MotiveWave keeps
+   * such leftovers for months (a client order with no instrument), so the heartbeat stays quiet about it. */
   private static void stopWithoutInstrument(Path folder) throws Exception {
     var file = folder.resolve("no-instrument.ndjson");
     var fills = List.of(prop("n1", true, 1, 5000, TIME));
     var capture = JournalAccountCapture.fixture(file, () -> new Snapshot("workspace", fills, List.of(), Map.of(),
         new JournalNativeAccess.OrderCounts(3, 2, 0, 1, 0), Map.of()));
     capture.poll(System.nanoTime());
-    assert capture.warnings.equals("1 fill with an assumed currency; 1 working stop order without an instrument, left "
-        + "out (orders: 3 read, 2 stop, 0 new, 1 without instrument, 0 without state, 0 with a position, "
-        + "0 on the closing side, 0 linked)") : capture.warnings;
+    assert capture.warnings.equals("1 fill with an assumed currency") : capture.warnings;
     capture.close();
     assert protection(file).isEmpty();
   }

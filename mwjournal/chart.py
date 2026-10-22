@@ -81,14 +81,16 @@ def minute_candles(samples: list[PriceSample], symbol: str, source: str) -> tupl
 
 
 def protection_segments(trade: Trade, events, stop=None, *, now=None) -> list[dict]:
-    """The stop the trade's R uses (risk.py), solid across the trade, and its linked stop orders from the
-    moment that stop settled on, dashed: the moves that managed the trade. Take-profit orders are not drawn."""
+    """The stop the trade's R uses (risk.py), solid across the whole chart (`full`) as a platform draws a stop, and
+    its linked stop orders from the moment that stop settled on, dashed over the time each stood: the moves that
+    managed the trade. Take-profit orders are not drawn."""
     start = instant(trade.opened).timestamp()
     end = (instant(trade.closed) if trade.closed else (now or dt.datetime.now(dt.timezone.utc))).timestamp()
     settled = settles_at(trade).timestamp() if trade.fills else start
     result = []
     if stop is not None:
-        result.append({'from': start, 'to': end, 'price': stop, 'label': 'Stop · R', 'color': STOP, 'style': 'solid'})
+        result.append({'from': start, 'to': end, 'price': stop, 'label': 'Stop · R', 'color': STOP, 'style': 'solid',
+                       'full': True})
 
     def moved(left, right, price):
         left = max(left, settled)

@@ -124,7 +124,8 @@ def test_fill_overlays_use_actual_prices_and_utc_fractional_seconds(tmp_path):
     data = payload['series']['data']
     assert len(data) == 4 and data[2] == {'time': data[1]['time'] + 60}
     assert payload['overlays']['levels'] == [{'from': instant(trade.opened).timestamp(), 'to': instant(trade.closed).timestamp(),
-                                              'price': 4998, 'label': 'Stop · R', 'color': '#F05B70', 'style': 'solid'}]
+                                              'price': 4998, 'label': 'Stop · R', 'color': '#F05B70', 'style': 'solid',
+                                              'full': True}]            # drawn across the whole chart
 
 
 def test_dst_repeated_clock_hour_stays_two_distinct_utc_minutes():
