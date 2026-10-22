@@ -24,15 +24,26 @@ alpha is not Authenticode-signed.
 
 1. Open MotiveWave Journal and select **Setup**.
 2. Click **Install MotiveWave study**.
-3. Restart MotiveWave.
+3. If MotiveWave was open and the study is not in its study list yet, quit MotiveWave and open it again.
 4. Add **Journal → MotiveWave Journal** to each chart being traded, the contract's own (`NQZ6`) or a
    continuous one (`NQ`): a trade is measured with the prices of its product (`NQZ6`, `NQ` and a
    continuous `NQ` are all `NQ`; `MNQ` is another product), its exact contract's first when both were
    recorded. There is nothing to set: the study's first tab says so, and every setting is under
    **Advanced** with defaults that record fills, every trade print, and real ticks for closed live and
    replay trades.
-5. If Setup says the study is out of date, click **Install MotiveWave Study** and restart MotiveWave:
-   studies before 0.3.3 never received live or replay prints, and before 0.3.5 never linked a prop account's stops.
+5. If Setup says the study is out of date, click **Install MotiveWave Study**: a study from 0.3.6 on hands
+   over to the new one by itself; with an older one, Setup tells you to quit MotiveWave and open it again.
+
+### Updating from an older version
+
+Any older version updates straight to the newest; there is no need to install the ones in between.
+
+1. Quit MotiveWave Journal and install the new version over the old one (on a Mac, drag it into
+   Applications and choose Replace; on Windows, extract the new ZIP and use its `MotiveWave Journal.exe`).
+   Trades, reviews, tags and settings stay: they live in the app's data folder, not inside the app, and the
+   new version brings them up to date by itself the first time it opens.
+2. Open the app. If Setup says the study is out of date, click **Install MotiveWave Study**, as in step 5.
+3. What changed in each version is under *What's new* at the top of the README and on each release's page.
 
 One study instance records only the trade prints MotiveWave delivers to that chart. Once a replay
 trade is flat, the study loads the real ticks of its holding time from MotiveWave's tick history, never

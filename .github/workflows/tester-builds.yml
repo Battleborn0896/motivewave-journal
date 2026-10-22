@@ -76,21 +76,19 @@ jobs:
       - name: Create checksums
         shell: bash
         run: sha256sum MotiveWave-Journal-*.dmg MotiveWave-Journal-Windows-x64.zip > SHA256SUMS.txt
+      - uses: actions/checkout@v7
+        with:
+          path: source
+      - name: Write the release notes
+        shell: bash
+        run: python3 source/scripts/release_notes.py "${GITHUB_REF_NAME}" > release-notes.md
       - uses: softprops/action-gh-release@v3
         with:
           name: MotiveWave Journal ${{ github.ref_name }}
           prerelease: true
           generate_release_notes: true
-          body: |
-            Early tester build. Use a MotiveWave simulation account or Replay first—not a live account.
-
-            The study is read-only: it records fills, linked protection and chart prices locally and cannot place, change or cancel orders. Journal data stays on the tester's computer.
-
-            macOS: Apple Silicon only for this build. The app is ad-hoc signed, so Gatekeeper may require Control-click → Open.
-
-            Windows: extract the entire ZIP, then run `MotiveWave Journal.exe`. Do not separate the EXE from its `_internal` folder. Windows may show a SmartScreen warning because this tester build is not Authenticode-signed.
-
-            After opening the app, click Install MotiveWave Study in Setup, quit MotiveWave completely and open it again, then add Journal → MotiveWave Journal to the chart you trade (the contract's own or a continuous one). There is nothing to set.
+          # What is new in this version (README.md), how to update from an older one, how to install.
+          body_path: release-notes.md
           files: |
             MotiveWave-Journal-*.dmg
             MotiveWave-Journal-Windows-x64.zip

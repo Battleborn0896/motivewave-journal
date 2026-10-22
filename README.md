@@ -7,6 +7,15 @@ Live/paper and replay have separate databases. No routine CSV export/import is r
 MotiveWave Journal is an independent open-source project. It is not affiliated with, endorsed by or
 supported by MotiveWave Software.
 
+## What's new in 0.4.12: clearer steps for new testers and for updating
+
+- **Each release page says what changed and how to update.** It starts with what is new in that version, then
+  how to update from any older one (your journal stays; the study updates itself from 0.3.6 on) and how to
+  install for the first time. The tester guide has the same.
+- **Setup's last step says what to do if the study is missing.** Until the study reports in, *Add It to Your
+  Chart* also says: not in MotiveWave's study list yet? Quit MotiveWave and open it again.
+- Study 0.3.7 stays: nothing to install in MotiveWave.
+
 ## What's new in 0.4.11: no gaps in a trade's chart
 
 - **Every minute of a trade has its candle.** MotiveWave answers the study from its cache of the day's 1-minute

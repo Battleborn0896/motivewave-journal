@@ -133,7 +133,8 @@ def test_before_the_study_reports_in_setup_asks_to_install_it_then_to_add_it_to_
     assert ('add **Journal → MotiveWave Journal** to the chart you trade' in step.value
             or 'Add **Journal → MotiveWave Journal** to the chart you trade' in step.value)
     assert 'contract chart (ESZ6) or a continuous one (ES) both work' in step.proto.help
-    assert 'Restart MotiveWave' not in step.value and 'Restart MotiveWave first if the study was just' in step.proto.help
+    # Shown only until the study reports in, so it never lingers once the study is on a chart.
+    assert "Not in MotiveWave's study list yet? Quit MotiveWave and open it again." in step.value
     assert 'There is nothing to set.' in step.value and 'File' not in step.value
     assert 'To install it again, use Data → Connection.' in step.proto.help
     assert not any(b.label == setup.INSTALL for b in app.button)

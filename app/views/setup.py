@@ -69,7 +69,8 @@ STEPS = {
                 'Copies the study into your MotiveWave Extensions folder and keeps the previous copy. By hand '
                 'instead: in MotiveWave choose Study → All Studies → Import and pick motivewave-journal.jar.'),
     'chart': ('Add It to Your Chart',
-              'Add **Journal → MotiveWave Journal** to the chart you trade. There is nothing to set.',
+              'Add **Journal → MotiveWave Journal** to the chart you trade. There is nothing to set. Not in '
+              'MotiveWave\'s study list yet? Quit MotiveWave and open it again.',
               'A contract chart (ESZ6) or a continuous one (ES) both work: prices go with trades of the same '
               'product, whatever the contract month. Live and paper trades go to the '
               'Live journal, replay trades to the Replay journal. Restart MotiveWave first if the study was just '
@@ -243,7 +244,8 @@ def step(link, dataset: str = '') -> None:
     if which == 'update':
         line = update_line(link)
     elif which == 'chart' and dataset == 'replay':
-        line = 'Add **Journal → MotiveWave Journal** to the chart you replay. There is nothing to set.'
+        line = ('Add **Journal → MotiveWave Journal** to the chart you replay. There is nothing to set. Not in '
+                'MotiveWave\'s study list yet? Quit MotiveWave and open it again.')
     elif which == 'install' and not connection.JAR.is_file():
         line = ('In MotiveWave choose **Study → All Studies → Import** and pick motivewave-journal.jar, then add '
                 'the study to your chart.')
