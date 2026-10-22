@@ -3,7 +3,8 @@
 One row holds the page title, Filters (with the saved filter every page uses) and Customize; the numbers
 come straight after it, then a tab each for Overview, Compare, MAE / MFE and Runners, and Dashboards, your
 own pages of widgets, always last. The equity curve counts trades along the bottom (1, 2, 3, ...) so nights
-and weekends take no room; a toggle puts it on the clock instead, in the display time zone.
+and weekends take no room; a toggle puts it on the clock instead, in the display time zone. Compare opens on
+tag chips that keep only the trades with every chosen tag, then a table for each tag category.
 """
 
 from __future__ import annotations
@@ -18,6 +19,7 @@ import streamlit as st
 import common
 import theme
 import runner_controls
+import tag_controls
 from views import preferences
 from common import money
 from mwjournal.analytics import cost_summary, grouped, summary
@@ -31,9 +33,10 @@ AXES = {'trade': 'By Trade', 'time': 'By Date'}
 LABELS = {'closed': 'Exit', 'net': 'Net P&L', 'mae': 'MAE', 'mfe': 'MFE', 'max_qty': 'Size',
           'precision': 'Measured from', 'symbol': 'Instrument', 'setup': 'Setup'}
 COMPARE_HELP = ('Start with Trades, the sample size, then Average Trade, the net result per trade after recorded '
-                'fees. A trade with several tags counts in each, so tag rows overlap. Average R uses only trades '
-                'with a stop. These describe your recorded trades, not proof of an edge: small '
-                'samples mislead.')
+                'fees. A trade with several tags counts in each, so tag rows overlap; Untagged is the trades with '
+                'no tag in that category. Average R uses only trades with a stop. These describe your recorded '
+                'trades, not proof of an edge: small samples mislead.')
+TAG_COLUMNS = ['Tag', 'Trades', 'Net P&L', 'Win %', 'Average Trade', 'Average R']    # the tag tables show these
 
 
 def render(journal, rows) -> None:
@@ -270,13 +273,23 @@ def excursion(journal, closed):
 
 def comparisons(journal, closed):
     st.markdown('### What Worked Best?', help=COMPARE_HELP)
+    currency = closed[0]['currency']
+    categories = tag_categories(journal.tag_library(), closed)
+    closed = only_trades_with(journal, closed, categories)
     options = [*SEGMENTS, 'Tags', 'Setups', 'Playbooks']
     segment = common.key(journal, 'edge-segment')
     remember = common.keep({segment: 'Tags'})          # still chosen after another tab has been open
     field = st.columns([1, 2])[0].selectbox('Compare by', options, key=segment, on_change=remember,
-                                            help='Times use your display time zone.')
-    if field in ('Tags', 'Setups', 'Playbooks'):
-        grouped_rows = grouped(closed, {'Tags': 'tags', 'Setups': 'setup', 'Playbooks': 'playbooks'}[field])
+                                            help='Tags shows a table for each tag category. Times use your display '
+                                                 'time zone.')
+    if not closed:
+        st.info('No closed trade has all of the chosen tags.')
+        return
+    if field == 'Tags':
+        tag_tables(closed, categories, currency)
+        return
+    if field in ('Setups', 'Playbooks'):
+        grouped_rows = grouped(closed, {'Setups': 'setup', 'Playbooks': 'playbooks'}[field])
     else:
         timezone = common.display_zone(journal)
         segmented = []
@@ -288,8 +301,86 @@ def comparisons(journal, closed):
                      'Process rating': str(row.get('rating', 'Unreviewed'))}[field]
             segmented.append({**row, 'segment': value})
         grouped_rows = grouped(segmented, 'segment')
-    table = compare_table(grouped_rows, field, closed[0]['currency'])
-    st.dataframe(table, hide_index=True, width='stretch', height=min(430, 36 + 35 * len(table.data)))
+    table = compare_table(grouped_rows, field, currency)
+    # placeholder: the grid writes an empty number itself, as 'None', whatever the table's own '—' says.
+    st.dataframe(table, hide_index=True, width='stretch', height=min(430, 36 + 35 * len(table.data)), placeholder='—')
+
+
+def tag_categories(library, closed) -> dict:
+    """Each tag category, in the library's order, with those of its tags that at least one of these trades
+    carries, in order: what the chips offer and the tag tables list. A category no trade uses is left out."""
+    carried = {id for row in closed for id in row['tag_ids']}
+    categories = {}
+    for group in sorted(library['groups'], key=lambda g: library['groups'][g]['order']):
+        tags = sorted((t for t in library['tags'].values() if t['group'] == group and t['id'] in carried),
+                      key=lambda t: t['order'])
+        if tags:
+            categories[group] = tags
+    return categories
+
+
+def only_trades_with(journal, closed, categories) -> list[dict]:
+    """'Only trades with': a row of chips for each tag category, active tags only. The chosen chips keep the
+    trades that have all of them, for everything below on this tab; Filters have already narrowed the page."""
+    chips = {group: [t for t in tags if not t['retired']] for group, tags in categories.items()}
+    chips = {group: tags for group, tags in chips.items() if tags}
+    if not chips:
+        return closed
+    names = {t['id']: t['name'] for tags in chips.values() for t in tags}
+    keys = {group: common.key(journal, 'edge-only-' + group) for group in chips}
+    remember = common.keep({key: [] for key in keys.values()})      # still chosen after another tab
+    # A chosen chip in its tag's colour, as on Trades; its words take the chip's own readable text colour. Joined
+    # into one stylesheet: only an element holding a lone <style> takes no room on the page (theme.CSS).
+    css = (theme.tag_group_css(chips) + theme.tag_colors_css(chips)
+           + tag_controls.headers_css({g: tag_controls.group_colour(g, tags) for g, tags in chips.items()})
+           + '<style>.st-key-edge-tag-chips [data-testid="stButtonGroup"] button p {color:inherit !important;}</style>')
+    st.markdown(css.replace('</style><style>', ''), unsafe_allow_html=True)
+    theme.subsection('Only trades with', help='Click tags to look only at the trades that have all of them: every '
+                                              'table below then uses just those trades. Click a tag again to remove '
+                                              'it. Filters still apply first.')
+    chosen = set()
+    with st.container(key='edge-tag-chips', horizontal=True, gap='medium'):
+        for group, tags in chips.items():
+            with st.container(key=theme.tag_group_key(group), width='content'):
+                chosen.update(st.pills(group, [t['id'] for t in tags], selection_mode='multi', format_func=names.get,
+                                       key=keys[group], on_change=remember))
+    if not chosen:
+        return closed
+    shown = [row for row in closed if chosen <= set(row['tag_ids'])]
+    st.caption(f'{len(shown)} of {len(closed)} closed trades')
+    return shown
+
+
+def tag_rows(closed, tags) -> list[dict]:
+    """One tag category's comparison: a row for each of `tags` that a trade here carries, in order and with the
+    tag's colour, then Untagged, the trades with none of them. A trade with two of them counts in both."""
+    ids = {t['id'] for t in tags}
+    trades = {id: [] for id in ids}
+    untagged = []
+    for row in closed:
+        mine = ids.intersection(row['tag_ids'])
+        for id in mine:
+            trades[id].append(row)
+        if not mine:
+            untagged.append(row)
+    rows = [{'group': t['name'], 'color': t['color'], **summary(trades[t['id']])} for t in tags if trades[t['id']]]
+    return rows + ([{'group': 'Untagged', 'color': None, **summary(untagged)}] if untagged else [])
+
+
+def tag_tables(closed, categories, currency) -> None:
+    """A table for each tag category, in the library's order, each tag's name in its colour. Tags no trade
+    here has are left out."""
+    if not categories:
+        st.info('None of these trades has a tag yet. Tag trades on Trades, then compare the tags here.')
+        return
+    for group, tags in categories.items():
+        rows = tag_rows(closed, tags)
+        theme.subsection(group)
+        inks = [theme.ink_on(row['color']) for row in rows]
+        styles = [f'background-color: {row["color"]}; color: {ink}' if ink else '' for row, ink in zip(rows, inks)]
+        table = compare_table(rows, 'Tags', currency).apply(lambda _: styles, subset=['Tag'])
+        st.dataframe(table, hide_index=True, width='stretch', column_order=TAG_COLUMNS,
+                     height=min(430, 36 + 35 * len(rows)), placeholder='—')
 
 
 def compare_table(grouped_rows, field, currency):

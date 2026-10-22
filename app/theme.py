@@ -221,22 +221,30 @@ def tag_group_css(groups) -> str:
     return '<style>' + ''.join(rules) + '</style>'
 
 
+def ink_on(colour) -> str | None:
+    """The text colour that reads best on a tag's colour, dark or light; None for anything but a six-digit
+    hex colour, so a stored value never reaches a style unchecked."""
+    if not isinstance(colour, str) or not re.fullmatch(r'#[0-9a-fA-F]{6}', colour):
+        return None
+    def luminance(hex_color):
+        rgb = [int(hex_color[i:i + 2], 16) / 255 for i in (1, 3, 5)]
+        linear = [v / 12.92 if v <= .04045 else ((v + .055) / 1.055) ** 2.4 for v in rgb]
+        return sum(v * weight for v, weight in zip(linear, (.2126, .7152, .0722)))
+    background = luminance(colour)
+    dark = (background + .05) / (luminance(SIDEBAR) + .05)
+    light = (luminance(INK) + .05) / (background + .05)
+    return SIDEBAR if dark >= light else INK
+
+
 def tag_colors_css(groups):
     """Per-tag colors scoped by safe group hashes, never by unescaped user labels."""
     rules = []
     for group, tags in groups.items():
         for index, tag in enumerate(tags, 1):
             color = tag['color']
-            if not re.fullmatch(r'#[0-9a-fA-F]{6}', color):
+            text_color = ink_on(color)
+            if text_color is None:
                 continue
-            def luminance(hex_color):
-                rgb = [int(hex_color[i:i + 2], 16) / 255 for i in (1, 3, 5)]
-                linear = [v / 12.92 if v <= .04045 else ((v + .055) / 1.055) ** 2.4 for v in rgb]
-                return sum(v * weight for v, weight in zip(linear, (.2126, .7152, .0722)))
-            background = luminance(color)
-            dark = (background + .05) / (luminance(SIDEBAR) + .05)
-            light = (luminance(INK) + .05) / (background + .05)
-            text_color = SIDEBAR if dark >= light else INK
             selector = f'.st-key-{tag_group_key(group)} [data-testid="stButtonGroup"] button:nth-of-type({index})'
             rules.append(f'{selector}[aria-pressed="true"],{selector}[aria-checked="true"] '
                          f'{{background:{color} !important;border-color:{color} !important;color:{text_color} !important;}} '
