@@ -46,4 +46,5 @@ def notes(version: str) -> str:
 
 if __name__ == '__main__':
     tag = sys.argv[1] if len(sys.argv) > 1 else ''
+    sys.stdout.reconfigure(encoding='utf-8')               # '→' and '−' on a console that is not UTF-8 (Windows)
     print(notes(tag.removeprefix('v').split('-')[0]))      # v0.4.12-alpha.1 -> 0.4.12

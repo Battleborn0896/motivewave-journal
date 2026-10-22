@@ -1,5 +1,6 @@
 """The text each tester release shows on GitHub (scripts/release_notes.py): what is new in that version, then
 how to update from an older one and how to install."""
+import os
 import re
 import subprocess
 import sys
@@ -30,7 +31,8 @@ def test_every_version_in_the_readme_has_its_notes_and_the_workflow_uses_them():
         assert release_notes.notes(version).startswith(f"## What's new in {version}")
     assert release_notes.notes('9.9.9').startswith('## Updating from an older version')   # none: the guide alone
     run = subprocess.run([sys.executable, str(ROOT / 'scripts' / 'release_notes.py'), f'v{paths.VERSION}-alpha.3'],
-                         capture_output=True, text=True, check=True)
+                         capture_output=True, encoding='utf-8', check=True,
+                         env={**os.environ, 'PYTHONIOENCODING': 'cp1252'})     # a Windows console's encoding
     assert run.stdout.startswith(f"## What's new in {paths.VERSION}")                   # from the tag's name
     workflow = (ROOT / '.github' / 'workflows' / 'tester-builds.yml').read_text(encoding='utf-8')
     assert 'scripts/release_notes.py "${GITHUB_REF_NAME}" > release-notes.md' in workflow
