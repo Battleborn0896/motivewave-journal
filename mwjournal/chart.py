@@ -5,13 +5,12 @@ from __future__ import annotations
 import datetime as dt
 from collections import defaultdict
 
+from .matching import FLAT
 from .model import PriceSample, Trade, instant, trade_prices
 from .risk import settles_at
 from .scope import allows_source, is_history, is_simulated, provenance
 
 STOP = '#F05B70'
-ENTRY = '#58A6FF'
-EXIT = '#E8B45A'
 
 
 def chart_window(trade: Trade, padding_minutes=15, *, now=None):
@@ -113,6 +112,32 @@ def protection_segments(trade: Trade, events, stop=None, *, now=None) -> list[di
     return result
 
 
+def closing_pairs(fills: list[dict]) -> list[dict]:
+    """Each exit joined to the entries it closed, first in first out, as a platform's entry/exit lines join them:
+    a scale-in closed at once gives a pair per entry, a partial exit takes from the oldest entry still open, and a
+    reversing fill closes this trade with its exit part alone (the rest opens the next trade). `entry` and `exit`
+    are the fills' places in trade.fills; `points` is what that part made per contract, by price alone. An exit
+    with no entry before it (the platform no longer has it) is joined to nothing; so is a fill with no price."""
+    pairs, held = [], []                  # held: [place, quantity still open] of each entry, oldest first
+    for i, fill in enumerate(fills):
+        if fill['role'] == 'entry':
+            held.append([i, fill['qty']])
+            continue
+        left = fill['qty']
+        while left > FLAT and held:
+            j, open_ = held[0]
+            take = min(left, open_)
+            entry = fills[j]
+            if entry['price'] and fill['price']:
+                side = 1 if entry['side'] == 'buy' else -1
+                pairs.append({'entry': j, 'exit': i, 'qty': take, 'points': (fill['price'] - entry['price']) * side})
+            left -= take
+            held[0][1] -= take
+            if held[0][1] <= FLAT:
+                held.pop(0)
+    return pairs
+
+
 def trade_chart(trade: Trade, samples: list[PriceSample], source: str, stop=None, events=(), *, now=None,
                 prints: list[PriceSample] = (), prints_source: str = '') -> dict:
     """`stop` is the price the trade's R uses (risk.plan), `events` its linked protective orders. `prints`,
@@ -150,7 +175,7 @@ def trade_chart(trade: Trade, samples: list[PriceSample], source: str, stop=None
         fills.append({'time': stamp, 'price': fill['price'], 'qty': fill['qty'], 'side': fill['side'],
                       'role': fill['role'], 'ts': fill['ts'], 'execution_id': fill['execution_id'],
                       'label': f"{'Entry' if fill['role'] == 'entry' else 'Exit'} · {fill['qty']:g} @ {fill['price']:g}",
-                      'color': ENTRY if fill['role'] == 'entry' else EXIT, 'sequence': i})
+                      'sequence': i})
     segments = protection_segments(trade, events, stop, now=now)
     # Whitespace keeps clock spacing and exact fill placement through missing minutes.
     chart_data = data
@@ -159,6 +184,7 @@ def trade_chart(trade: Trade, samples: list[PriceSample], source: str, stop=None
         chart_data = [lookup.get(t, {'time': t}) for t in range(data[0]['time'], data[-1]['time'] + 60, 60)]
     return {'series': {'type': 'candles', 'name': trade.symbol + ' · 1m', 'data': chart_data,
                        'volume': any(b.get('volume', 0) > 0 for b in data)},
-            'overlays': {'fills': fills, 'levels': segments, 'opened': instant(trade.opened).timestamp(),
+            'overlays': {'fills': fills, 'pairs': closing_pairs(trade.fills), 'levels': segments,
+                         'opened': instant(trade.opened).timestamp(),
                          'closed': instant(trade.closed).timestamp() if trade.closed else None},
             'provenance': provenance(source), 'notes': list(dict.fromkeys(notes))}

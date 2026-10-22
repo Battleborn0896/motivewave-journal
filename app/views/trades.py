@@ -27,7 +27,7 @@ import runner_controls
 import tag_controls
 from views import checklists, daily, preferences, session
 from common import PRECISION, money
-from mwjournal.chart import ENTRY, EXIT, STOP, chart_window, trade_chart
+from mwjournal.chart import STOP, chart_window, trade_chart
 from mwjournal.model import WHY_INCOMPLETE, finite, instant
 from mwjournal.metrics import excursions
 from mwjournal.scope import LIVE_TICKS, PROVENANCE, provenance
@@ -732,10 +732,13 @@ def chart_panel(journal, trade, annotation: dict, zone) -> None:
                      visible_range={'from': candles[0]['time'], 'to': max(candles[-1]['time'], candles[0]['time'] + 60)})
         # Drawn dots rather than '●', which IBM Plex Sans does not have.
         legend = ' '.join(f"<span class='mwj-dot' style='background:{colour}'></span>{name}" for name, colour in
-                          (('Entry', ENTRY), ('Exit', EXIT), ('Stop', STOP)))
+                          (('Buy', tvchart.CANDLE_UP), ('Sell', tvchart.CANDLE_DOWN), ('Stop', STOP)))
         st.caption(f"<span class='mwj-legend'>{legend}</span> · {common.CREDIT}", unsafe_allow_html=True,
-                   help='The solid stop is the one R uses; dashed, where your stop order was moved after that. Hover '
-                        'an arrow for its exact fill. Scroll to zoom, drag to pan, double-click to reset. Review '
+                   help='Each fill is an arrow pointing at its exact price and time, with its size and price beside '
+                        'it: +1 bought, −1 sold. Hover one for its details. A dashed line joins each entry to the exit '
+                        'that closed it, first in first out: green where that part made money, red where it lost. '
+                        'The solid stop is the one R uses; dashed, where your stop order was moved after that. '
+                        'Scroll to zoom, drag to pan, double-click to reset. Review '
                         'only: nothing here can place an order.')
     else:
         st.info('This source has no usable 1-minute candles in the trade window. Full OHLC or observed ticks are '

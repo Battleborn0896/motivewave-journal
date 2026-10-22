@@ -66,9 +66,9 @@ let chart = null, entries = [], signature = null, userMoved = false, spec = null
 let hover = null;                          // the bar under the pointer, so a redraw keeps its legend
 // The canvas keeps whatever font it first drew with, so the first drawing waits for IBM Plex Sans (a
 // local file, normally a few milliseconds; at most three seconds). A font that arrives later still
-// gets the chart redrawn in it.
+// gets the chart redrawn in it. The fills' boxes are sized to their text, in the semibold face.
 let fontLate = false;
-const FONT_FACES = ['400 11px "IBM Plex Sans"', '700 11px "IBM Plex Sans"'];
+const FONT_FACES = ['400 11px "IBM Plex Sans"', '600 10px "IBM Plex Sans"', '700 11px "IBM Plex Sans"'];
 const fontLoaded = document.fonts ? Promise.all(FONT_FACES.map(face => document.fonts.load(face))).catch(() => null)
                                   : Promise.resolve(null);
 const fontReady = Promise.race([fontLoaded.then(() => 'loaded'),
@@ -211,7 +211,7 @@ function build(s) {
   new ResizeObserver(() => { if (chart) { chart.applyOptions({ width: el.clientWidth }); requestOverlay(); } }).observe(el);
   box.addEventListener('pointermove', requestOverlay, {passive: true});
   box.addEventListener('wheel', requestOverlay, {passive: true});
-  // A fill arrow's details follow the pointer while it is over the arrow (the arrow is the event target).
+  // A fill's details follow the pointer while it is over the fill's arrow or box (the event target).
   const tip = document.getElementById('fill-tip');
   const hideTip = () => { if (tip) tip.hidden = true; };
   box.addEventListener('pointermove', ev => {
@@ -332,32 +332,49 @@ function drawOverlay() {
     element('text',{x:labelX,y:labelY,fill:level.color,'font-size':10,'font-family':spec.theme.font},layer,
       level.label + ' @ ' + formatter(spec.format)(level.price));
   }
-  const placed = [];
+  const t = spec.theme, placed = new Map();     // each drawn fill's arrow tip, by its place in the trade's fills
   for (const fill of spec.tradeOverlays.fills || []) {
     if (!actualMinutes.has(Math.floor(fill.time / 60) * 60)) continue;
     const x = xAt(fill.time), y = entry.api.priceToCoordinate(fill.price);
     if (x == null || y == null) continue;
-    placed.push({fill,x,y});
+    placed.set(fill.sequence, {fill,x,y});
   }
-  // Connect consecutive fills rather than implying an average-price execution really occurred.
-  for (let i=1; i<placed.length; i++) {
-    if (placed[i].fill.sequence !== placed[i-1].fill.sequence + 1) continue;
-    line(placed[i-1].x,placed[i-1].y,placed[i].x,placed[i].y,spec.theme.muted,'3 4');
+  // Each entry joined to the exit that closed it, first in first out (chart.py closing_pairs): green where that
+  // part made money, red where it lost, grey where it came out even.
+  for (const pair of spec.tradeOverlays.pairs || []) {
+    const a = placed.get(pair.entry), b = placed.get(pair.exit);
+    if (a && b) line(a.x,a.y,b.x,b.y,pair.points > 0 ? t.candleUp : pair.points < 0 ? t.candleDown : t.muted,'4 3');
   }
-  for (const {fill,x,y} of placed) {
+  // Each fill as a platform marks it: a small arrowhead with its tip at the fill's price and time (not at a candle's
+  // high or low), a buy pointing up from below and a sell down from above, short entries and covers included;
+  // beside it a box with the signed size and price, a buy's below and a sell's above.
+  const priceText = formatter(spec.format), boxes = [], boxHeight = 14, step = boxHeight + 2;
+  const top = spec.title ? 52 : 30, bottom = plotHeight - boxHeight - 1;   // in the plot, below the title and legend
+  const free = (x, y, w) => !boxes.some(b => x < b.x + b.w + 2 && b.x < x + w + 2 && y < b.y + step && b.y < y + step);
+  for (const {fill,x,y} of placed.values()) {
+    if (x < 0 || x > plotWidth || y < 0 || y > plotHeight) continue;    // scrolled out of view
     const detail = fill.side.toUpperCase() + ' · ' + fill.label + '\n' + timeLabel(fill.time,true)
       + '\nUTC ' + fill.ts;
     // No SVG <title>: the browser would show it in the system's font. #fill-tip shows data-detail instead.
     const group = element('g', {'pointer-events':'visiblePainted',role:'img','aria-label':detail,
                                 'data-detail':detail},layer);
-    // Buy points up from below; sell points down from above, including short entries and covers.
-    // The tip and connector stay at the actual fill price/time, not at a candle high or low.
-    const direction = fill.side === 'buy' ? 1 : -1;
-    const points = [[x,y], [x-6,y+8*direction], [x-2.5,y+8*direction],
-      [x-2.5,y+20*direction], [x+2.5,y+20*direction], [x+2.5,y+8*direction], [x+6,y+8*direction]];
-    element('polygon',{points:points.map(p => p.join(',')).join(' '),fill:fill.color,
-      stroke:spec.theme.surface,'stroke-width':1.2,'stroke-linejoin':'round',
+    const buy = fill.side === 'buy', direction = buy ? 1 : -1, colour = buy ? t.candleUp : t.candleDown;
+    element('polygon',{points:[[x,y], [x-5,y+7*direction], [x+5,y+7*direction]].map(p => p.join(',')).join(' '),
+      fill:colour,stroke:t.surface,'stroke-width':1,'stroke-linejoin':'round',
       class:'trade-fill-arrow','data-side':fill.side,'data-role':fill.role},group);
+    const box = element('rect',{height:boxHeight,rx:2,fill:colour,class:'trade-fill-label'},group);
+    const text = element('text',{'font-size':10,'font-weight':600,'font-family':t.font,fill:t.surface,
+      'text-anchor':'middle'},group, (buy ? '+' : '−') + fill.qty.toLocaleString('en-US',
+      {maximumFractionDigits: 8}) + ' @ ' + priceText(fill.price));
+    const w = Math.ceil(text.getComputedTextLength()) + 8, left = Math.max(1, Math.min(plotWidth - w - 1, x - w / 2));
+    // Its place by the arrow; if another box is there, the nearest free place further from the price, else nearer.
+    const start = Math.max(top, Math.min(bottom, buy ? y + 9 : y - 9 - boxHeight)), tops = [];
+    for (let at = start; at >= top && at <= bottom; at += direction * step) tops.push(at);
+    for (let at = start - direction * step; at >= top && at <= bottom; at -= direction * step) tops.push(at);
+    const at = tops.find(at => free(left, at, w)) ?? start;
+    box.setAttribute('x', left); box.setAttribute('y', at); box.setAttribute('width', w);
+    text.setAttribute('x', left + w / 2); text.setAttribute('y', at + 10.5);
+    boxes.push({x:left, y:at, w});
   }
 }
 
