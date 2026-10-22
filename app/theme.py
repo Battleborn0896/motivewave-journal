@@ -99,13 +99,15 @@ html, body, [data-testid="stAppViewContainer"], .stApp {{ background:{PAGE}; fon
     inset:0; z-index:2; margin:0 !important; }}
 [class*="st-key-calendar-day-"] .stButton, [class*="st-key-calendar-day-"] .stButton button {{ width:100%; height:100%;
     min-height:0 !important; padding:0; opacity:0; cursor:pointer; }}
-.mwj-cal {{ display:flex; flex-direction:column; height:50px; padding:3px 5px; border:1px solid {HAIRLINE};
+/* The button sits inside its tooltip's wrappers: they fill the cell too, so all of the cell opens the day. */
+[class*="st-key-calendar-day-"] .stButton :has(button) {{ height:100%; }}
+.mwj-cal {{ display:flex; flex-direction:column; height:50px; padding:3px; border:1px solid {HAIRLINE};
     border-radius:4px; background:{SURFACE}; font-family:{FONT}; font-size:10.5px; line-height:13px; {TABULAR};
     color:{INK_2}; white-space:nowrap; overflow:hidden; container-type:inline-size; }}
 /* In a narrow cell the amount and the count get smaller with it (cqi: a hundredth of the cell's width), down to
    a size still read easily; past that they end in '…', and pointing at the cell shows the whole amount. */
 .mwj-cal > span {{ overflow:hidden; text-overflow:ellipsis; }}
-.mwj-cal .n {{ font-size:12px; font-size:clamp(9.5px, 24cqi, 12px); line-height:16px; font-weight:650; }}
+.mwj-cal .n {{ font-size:12px; font-size:clamp(9.5px, 22cqi, 12px); line-height:16px; font-weight:650; }}
 .mwj-cal .k {{ font-size:10px; font-size:clamp(8.5px, 22cqi, 10px); color:{MUTED}; }}
 {TINT_CSS}[class*="st-key-calendar-day-"]:hover .mwj-cal {{ border-color:{ACCENT}; }}
 [class*="st-key-calendar-day-"]:has(button:focus-visible) .mwj-cal {{ outline:2px solid {ACCENT}; }}

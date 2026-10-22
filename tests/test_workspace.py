@@ -437,7 +437,9 @@ def test_calendar_days_and_weeks_are_tinted_by_their_result_and_say_how_many_tra
         for level, alpha in enumerate(theme.TINTS, 1):
             assert f'.mwj-cal.{tone}.l{level} {{ background:{colour}{alpha};' in css
         assert f':is(.mwj-cal, .mwj-cal-month).{tone} .n {{ color:{colour}; }}' in css
-    # A day still opens its Daily Report Card.
+    # A day still opens its Daily Report Card, from anywhere in its cell: the invisible button sits inside its
+    # tooltip's wrappers, and they are stretched to the cell too.
+    assert '[class*="st-key-calendar-day-"] .stButton :has(button) { height:100%; }' in css
     next(b for b in app.button if b.label.startswith('6  \n')).click().run()
     assert not app.exception and widget(app.date_input, 'Trading day').value == dt.date(2026, 10, 6)
 
@@ -451,6 +453,21 @@ def test_a_hidden_weekend_still_counts_in_its_weeks_total(home):
     assert '9' in cells and '10' not in cells and '11' not in cells
     assert cells['Week 2'] == (['mwj-cal', 'up', 'l3'], '+$300', '2 trades')
     assert cells['Month'][1:] == ('+$300', '2 trades')
+
+
+def test_a_break_even_day_stays_neutral_when_its_trades_add_up_to_a_crumb(home):
+    journal = Journal()
+    journal.save_preferences(display_timezone='America/New_York')
+    # Crude oil, $10 a tick: 10 ticks won, then 10 lost at another price. The two nets add up to about 1e-11.
+    journal.ingest([(Execution('motivewave', 'paper', 'CLZ6', side, 1, price, f'2026-10-06T14:{at}Z',
+                               execution_id=at, point_value=1000), {})
+                    for side, price, at in (('buy', 71.05, '10:00'), ('sell', 71.15, '10:30'),
+                                            ('buy', 72.30, '20:00'), ('sell', 72.20, '20:30'))])
+    assert 0 < sum(trade.net for trade in journal.trades()) < 1e-9
+    cells = calendar_cells(open_app('Dashboard'))
+    assert cells['6'] == (['mwj-cal'], '$0', '2 trades')
+    assert cells['Week 2'] == (['mwj-cal'], '$0', '2 trades')
+    assert cells['Month'] == (['mwj-cal-month'], '$0', '2 trades')
 
 
 def test_calendar_tint_steps():

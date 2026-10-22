@@ -302,13 +302,15 @@ def trade_count(n) -> str:
 def calendar_cell(label, net, trades, biggest, currency, *, kind='mwj-cal') -> str:
     """A calendar cell (a day, a week, or the month's total, kind 'mwj-cal-month'): its label, then its net result
     and number of closed trades when it has any, tinted by the result against `biggest`, the month's largest
-    day (or week). '$' is written as an entity: two in one block of Markdown would start a formula."""
+    day (or week). The tint follows the whole amount the cell shows, so a cell that reads $0 stays neutral: a
+    break-even day of prices such as 71.15 adds up to a crumb like 0.00000000001, not 0. '$' is written as an
+    entity: two in one block of Markdown would start a formula."""
     amount = html.escape(common.money(net, currency, decimals=0)).replace('$', '&#36;')
     lines, title = f"<span class='d'>{label}</span>" if label else '', ''
     if trades:
         lines += f"<span class='n'>{amount}</span><span class='k'>{trade_count(trades)}</span>"
         title = f" title='{amount}, {trade_count(trades)}'"       # all of it, for a cell too narrow to show it
-    return f"<div class='{kind} {theme.tint(net, biggest)}'{title}>{lines}</div>"
+    return f"<div class='{kind} {theme.tint(round(net), biggest)}'{title}>{lines}</div>"
 
 
 def trading_calendar(journal, rows, key):
