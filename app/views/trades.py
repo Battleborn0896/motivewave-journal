@@ -9,6 +9,7 @@ note being typed.
 
 from __future__ import annotations
 
+import datetime as dt
 import hashlib
 import html
 import itertools
@@ -710,9 +711,14 @@ def chart_panel(journal, trade, annotation: dict, zone) -> None:
     # The trade's own recorded prints: live, or its replay run's.
     recorded = next((s for s in sources if provenance(s) in ('recorded-live', 'replay-ticks', 'replay-simulated')), None)
     if provenance(source) == 'platform-bars' and recorded:
-        # The minute in progress has no platform candle yet, nor has a replay's last minute: the prints draw it.
-        after = max((instant(s.ts) for s in samples), default=start)
-        prints = journal.prices(trade.symbol, recorded, start=after.isoformat(), end=end.isoformat())
+        # Minutes with no platform candle are drawn from the prints (trade_chart): the one in progress, a replay's
+        # last one, or ones MotiveWave's history had not filled yet. Read from the first such minute on.
+        have = {int(instant(s.ts).timestamp()) // 60 for s in samples if s.resolution_seconds}
+        first = next((m for m in range(int(start.timestamp()) // 60, int(end.timestamp()) // 60 + 1) if m not in have),
+                     None)
+        if first is not None:
+            after = dt.datetime.fromtimestamp(first * 60, dt.timezone.utc)
+            prints = journal.prices(trade.symbol, recorded, start=after.isoformat(), end=end.isoformat())
     events = [e for e in journal.protection_events(trade) if e.role == 'stop']      # take profit plays no part
     payload = trade_chart(trade, samples, source, risk.plan_for(journal, trade).stop, events, now=clock,
                           prints=prints, prints_source=recorded or LIVE_TICKS)

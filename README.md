@@ -7,6 +7,13 @@ Live/paper and replay have separate databases. No routine CSV export/import is r
 MotiveWave Journal is an independent open-source project. It is not affiliated with, endorsed by or
 supported by MotiveWave Software.
 
+## What's new in 0.4.11: no gaps in a trade's chart
+
+- **Every minute of a trade has its candle.** MotiveWave answers the study from its cache of the day's 1-minute
+  history, which can stop several minutes behind the market until it refreshes. A minute the platform has no
+  candle for yet is now drawn from the prints the study recorded, as the minute in progress already was; the
+  platform's candle replaces it when it arrives. Study 0.3.7 stays: nothing to install in MotiveWave.
+
 ## What's new in 0.4.10: replay charts show the whole replayed day
 
 This release comes with study **0.3.7**.

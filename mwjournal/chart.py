@@ -116,8 +116,8 @@ def protection_segments(trade: Trade, events, stop=None, *, now=None) -> list[di
 def trade_chart(trade: Trade, samples: list[PriceSample], source: str, stop=None, events=(), *, now=None,
                 prints: list[PriceSample] = (), prints_source: str = '') -> dict:
     """`stop` is the price the trade's R uses (risk.plan), `events` its linked protective orders. `prints`,
-    of `prints_source`, draw the minutes after the last candle of `source`: the one in progress, before
-    the platform has its candle. One chart, as on any trading platform. `now` is an open trade's replay clock
+    of `prints_source`, draw every minute `source` has no candle for: the one in progress, before the platform
+    has its candle, or one its history had not filled yet. One chart, as on any trading platform. `now` is an open trade's replay clock
     (Journal.trade_clock): the replayed day's bars are stored whole, so only bars closed by then are drawn, and the
     minute in progress, as live, comes from the prints; nothing shows how it ends."""
     if not allows_source(trade, source):
@@ -127,12 +127,15 @@ def trade_chart(trade: Trade, samples: list[PriceSample], source: str, stop=None
         samples = [s for s in samples if instant(s.ts).timestamp() + s.resolution_seconds <= limit]
     data, notes = minute_candles(samples, trade.symbol, source)
     if prints and allows_source(trade, prints_source):
-        after = data[-1]['time'] + 60 if data else 0
-        forming, _ = minute_candles([p for p in prints if instant(p.ts).timestamp() >= after], trade.symbol, prints_source)
-        if forming:
-            data += forming
-            notes.append('Minutes after the last platform candle, usually just the one in progress, are drawn from '
-                         "the prints the study recorded; the platform's candle replaces each when it arrives.")
+        # Every minute with no platform candle: the one in progress, or one MotiveWave's history did not have when
+        # the study asked (its cache of the day can lag the market by minutes). A minute that has one keeps it.
+        have = {b['time'] for b in data}
+        drawn, _ = minute_candles(prints, trade.symbol, prints_source)
+        filled = [b for b in drawn if b['time'] not in have]
+        if filled:
+            data = sorted(data + filled, key=lambda b: b['time'])
+            notes.append('Minutes with no platform candle, such as the one in progress, are drawn from the prints the '
+                         "study recorded; the platform's candle replaces each when it arrives.")
     bars = {b['time'] for b in data}
     fills = []
     for i, fill in enumerate(trade.fills):

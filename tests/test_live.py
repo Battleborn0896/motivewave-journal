@@ -291,6 +291,26 @@ def test_the_minute_in_progress_is_drawn_from_prints_after_the_last_platform_can
     assert trade_chart(trade, bars, 'motivewave-bars:1m')['series']['data'] == data[:2]
 
 
+def test_minutes_motivewaves_history_did_not_have_are_drawn_from_the_prints():
+    """MotiveWave answers the study from its cache of the day's 1-minute history, which can stop minutes behind
+    the market: those minutes come out of the platform's candles, and the prints the study recorded draw them."""
+    trade, = match([Execution('t', 'a', 'NQZ6', 'sell', 1, 20000, '2026-10-07T14:01:10Z', execution_id='in'),
+                    Execution('t', 'a', 'NQZ6', 'buy', 1, 20010, '2026-10-07T14:04:30Z', execution_id='out')], {'NQZ6': 20})
+    bar = lambda minute, o, h, l, c: PriceSample('NQ', f'2026-10-07T14:0{minute}:00Z', 'motivewave-bars:1m', h, l,
+                                                 resolution_seconds=60, open=o, close=c)
+    bars = [bar(0, 19990, 20005, 19985, 20000), bar(1, 20000, 20004, 19998, 20002), bar(5, 20010, 20012, 20008, 20011)]
+    prints = [PriceSample('NQ', ts, 'motivewave-ticks', p, p) for ts, p in [
+        ('2026-10-07T14:01:40Z', 1), ('2026-10-07T14:02:05Z', 20003), ('2026-10-07T14:02:50Z', 20008),
+        ('2026-10-07T14:03:10Z', 20009), ('2026-10-07T14:04:30Z', 20010)]]
+    chart = trade_chart(trade, bars, 'motivewave-bars:1m', prints=prints, prints_source='motivewave-ticks')
+    data = [d for d in chart['series']['data'] if 'high' in d]
+    assert [d['time'] % 3600 // 60 for d in data] == [0, 1, 2, 3, 4, 5]                  # no gap
+    assert data[1]['low'] == 19998                                # a minute with its candle keeps it, not the stray print
+    assert (data[2]['open'], data[2]['close']) == (20003, 20008) and data[4]['close'] == 20010
+    assert not any('no corresponding candle' in n for n in chart['notes'])
+    assert any('Minutes with no platform candle' in n for n in chart['notes'])
+
+
 def test_cancelling_one_of_two_overlapping_drafts_lets_the_other_attach_at_the_next_poll(tmp_path):
     journal, bridge = watched(tmp_path)
     ids = [journal.save_draft(f'Plan {i}', provider='motivewave-native:ws:live', account='SIM', symbol='NQZ6',

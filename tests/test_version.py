@@ -25,7 +25,7 @@ def test_the_study_keeps_its_own_version():
     java = (ROOT / 'study' / 'src' / 'main' / 'java' / 'org' / 'mwjournal' / 'study' / 'JournalPaths.java')
     source = java.read_text(encoding='utf-8')
     assert 'CONNECTOR_VERSION = "0.3.7"' in source
-    assert paths.VERSION == '0.4.10'
+    assert paths.VERSION == '0.4.11'
     # Setup's 'update the study' line compares against the study this app bundles.
     assert f'CONNECTOR_VERSION = "{paths.STUDY_VERSION}"' in source
     assert f'CONNECTOR = "{paths.STUDY_CONNECTOR}"' in source
