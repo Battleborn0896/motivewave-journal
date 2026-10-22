@@ -329,11 +329,12 @@ def only_trades_with(journal, closed, categories) -> list[dict]:
     names = {t['id']: t['name'] for tags in chips.values() for t in tags}
     keys = {group: common.key(journal, 'edge-only-' + group) for group in chips}
     remember = common.keep({key: [] for key in keys.values()})      # still chosen after another tab
-    # A chosen chip in its tag's colour, as on Trades; its words take the chip's own readable text colour.
-    st.markdown(theme.tag_group_css(chips) + theme.tag_colors_css(chips)
-                + tag_controls.headers_css({g: tag_controls.group_colour(g, tags) for g, tags in chips.items()})
-                + '<style>.st-key-edge-tag-chips [data-testid="stButtonGroup"] button p {color:inherit !important;}</style>',
-                unsafe_allow_html=True)
+    # A chosen chip in its tag's colour, as on Trades; its words take the chip's own readable text colour. Joined
+    # into one stylesheet: only an element holding a lone <style> takes no room on the page (theme.CSS).
+    css = (theme.tag_group_css(chips) + theme.tag_colors_css(chips)
+           + tag_controls.headers_css({g: tag_controls.group_colour(g, tags) for g, tags in chips.items()})
+           + '<style>.st-key-edge-tag-chips [data-testid="stButtonGroup"] button p {color:inherit !important;}</style>')
+    st.markdown(css.replace('</style><style>', ''), unsafe_allow_html=True)
     theme.subsection('Only trades with', help='Click tags to look only at the trades that have all of them: every '
                                               'table below then uses just those trades. Click a tag again to remove '
                                               'it. Filters still apply first.')

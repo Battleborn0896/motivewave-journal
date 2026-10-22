@@ -196,6 +196,8 @@ def test_compare_shows_a_table_per_tag_category_and_chips_narrow_every_table():
                                                          ('Execution', ['Followed Plan', 'Chased Entry']),
                                                          ('Mindset', ['Calm', 'FOMO'])]
     assert not any('of 3 closed trades' in c.value for c in app.caption)
+    # The chips' colours are one stylesheet, so like every other it takes no room on the page (theme.CSS).
+    assert next(m.value for m in app.markdown if 'st-key-edge-tag-chips' in m.value).count('<style>') == 1
     setup, execution, mindset = tag_tables(app)
     assert setup == {'Breakout': (2, 92, 50, 46, 1.96), 'Pullback': (1, 496, 100, 496, None)}
     assert execution == {'Followed Plan': (2, 692, 100, 346, 1.96), 'Chased Entry': (1, -104, 0, -104, None)}
