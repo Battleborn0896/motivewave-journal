@@ -123,6 +123,14 @@ def test_the_replayed_days_minute_bars_draw_every_replay_trades_chart_and_never_
     # The day's later bars move neither an open replay trade's clock nor what is recording.
     assert journal.trade_clock(still_open).isoformat() < '2022-01-03T14:50'
     assert journal.recent_contracts() == ['ESZ6']
+    # An open replay trade's chart shows no bar that closes after its replay clock, not even the minute in
+    # progress's: its prints draw that minute, and nothing shows how it ends.
+    clock = dt.datetime(2022, 1, 3, 14, 31, 20, tzinfo=dt.timezone.utc)
+    shown = trade_chart(still_open, journal.prices('ESZ6', REPLAY_BARS), REPLAY_BARS, now=clock,
+                        prints=[], prints_source='motivewave-replay:run-c:ticks')
+    assert [c['time'] for c in shown['series']['data'] if 'high' in c][-1] == int(clock.timestamp()) // 60 * 60 - 60
+    # The one run's bars that study 0.3.6 wrote are platform candles too.
+    assert provenance('motivewave-replay:run-a:bars') == 'platform-bars'
 
 
 def test_an_unknown_event_type_is_skipped_and_counted_never_fatal(tmp_path):

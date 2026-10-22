@@ -53,7 +53,8 @@ final class JournalSettings {
                 new Choice("Never", JournalTicks.NEVER)),
                 "Always While Study Runs (default): every trade print delivered to this chart, live and replay, "
                 + "for complete post-exit runner windows; the file gets larger. Trade + After Exit Only: a few "
-                + "seconds before entry, the whole position, and the After Exit window. Never: no ticks. One-minute "
+                + "seconds before entry, the whole position, and the After Exit window. Never: no ticks, so in replay the "
+                + "journal has no replay time and an open replay trade's chart stops at its entry. One-minute "
                 + "bars are written in every mode. Trade + After Exit Only relies on Capture Fills: when fills cannot "
                 + "be read, every trade is recorded."),
             whole(POST_EXIT, "After Exit (Minutes)", POST_EXIT_DEFAULT, 0, POST_EXIT_MAX,
@@ -72,8 +73,8 @@ final class JournalSettings {
             + "internals that are not part of the supported SDK, so a MotiveWave update can stop it working."))));
     var history = new Group("History", List.of(
         List.of(whole(DAYS, "1m Bars (Days)", DAYS_DEFAULT, 0, DAYS_MAX,
-                "Days of one-minute bars written when a chart loads (a replay's, up to its own time) and kept up to "
-                    + "date after. 0 = off."),
+                "Days of one-minute bars written when a chart loads (in replay, those days and the replayed day "
+                    + "whole) and kept up to date after. 0 = off."),
             whole(TICKS, "Ticks (Minutes)", TICKS_DEFAULT, 0, TICKS_MAX,
                 "Also writes the real trades of the last N minutes when a live chart loads. 0 = off.")),
         List.of(text(END, "End (UTC)", "", 190, "Loads history up to this moment instead of the end of the chart, "

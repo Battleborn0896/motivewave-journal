@@ -96,6 +96,8 @@ def update_line(link) -> str | None:
     if not common.study_outdated(link):
         return None
     if connection.bundled_study_installed():
+        if link.state != 'Connected':                    # MotiveWave is closed, or the study is off its charts
+            return f'Study {paths.STUDY_VERSION} is installed: open MotiveWave and it starts the new one.'
         if (common.version_parts(link.version) or ()) >= HANDS_OVER:
             return f'Study {paths.STUDY_VERSION} is installed: MotiveWave switches to it in a few seconds.'
         return (f'Study {paths.STUDY_VERSION} is installed and MotiveWave is still running {link.version}. '

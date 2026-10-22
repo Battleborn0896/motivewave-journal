@@ -190,6 +190,20 @@ def test_a_study_older_than_the_bundled_one_gets_only_the_update_step(version):
         assert not any(b.label == setup.INSTALL for b in again.main.button)
 
 
+def test_the_installed_studys_line_says_what_motivewave_does_next(extensions_folder):
+    """Installed and waiting: a running study from 0.3.6 on hands over by itself, an older one needs MotiveWave
+    quit and opened again, and with MotiveWave closed the new one starts when it opens."""
+    if not connection.JAR.is_file():
+        pytest.skip('No built study jar in this checkout.')
+    extensions_folder.mkdir(parents=True, exist_ok=True)
+    (extensions_folder / connection.JAR.name).write_bytes(connection.JAR.read_bytes())
+    on = lambda state, version: SimpleNamespace(connector=paths.STUDY_CONNECTOR, version=version, state=state)
+    assert setup.update_line(on('Connected', '0.3.6')).endswith('MotiveWave switches to it in a few seconds.')
+    assert setup.update_line(on('Connected', '0.3.5')).endswith(
+        'still running 0.3.5. Quit MotiveWave completely and open it again.')
+    assert setup.update_line(on('Stale', '0.3.6')).endswith('open MotiveWave and it starts the new one.')
+
+
 def test_the_bundled_study_or_another_writer_gets_no_update_step():
     study_writes([heartbeat()])
     app = open_app('Setup')

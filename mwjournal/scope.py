@@ -60,11 +60,11 @@ def provenance(source: str) -> str:
         return 'recorded-live'
     if source == HISTORY_TICKS:
         return 'history-backfill'
-    if source == REPLAY_BARS:
-        return 'platform-bars'
     if source.startswith(REPLAY):
         if source.endswith(REPLAY_HISTORY):
             return 'replay-history'
+        if source.endswith(':bars'):          # REPLAY_BARS, and the one run's bars study 0.3.6 wrote
+            return 'platform-bars'
         return 'replay-simulated' if is_simulated(source) else 'replay-ticks'
     if source.startswith('motivewave-bars:'):
         return 'platform-bars'

@@ -117,9 +117,14 @@ def trade_chart(trade: Trade, samples: list[PriceSample], source: str, stop=None
                 prints: list[PriceSample] = (), prints_source: str = '') -> dict:
     """`stop` is the price the trade's R uses (risk.plan), `events` its linked protective orders. `prints`,
     of `prints_source`, draw the minutes after the last candle of `source`: the one in progress, before
-    the platform has its candle. One chart, as on any trading platform."""
+    the platform has its candle. One chart, as on any trading platform. `now` is an open trade's replay clock
+    (Journal.trade_clock): the replayed day's bars are stored whole, so only bars closed by then are drawn, and the
+    minute in progress, as live, comes from the prints; nothing shows how it ends."""
     if not allows_source(trade, source):
         samples = []
+    if not trade.closed and now is not None:
+        limit = now.timestamp()
+        samples = [s for s in samples if instant(s.ts).timestamp() + s.resolution_seconds <= limit]
     data, notes = minute_candles(samples, trade.symbol, source)
     if prints and allows_source(trade, prints_source):
         after = data[-1]['time'] + 60 if data else 0
