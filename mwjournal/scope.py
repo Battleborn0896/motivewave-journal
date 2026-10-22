@@ -2,13 +2,13 @@
 
 LIVE_TICKS = 'motivewave-ticks'                 # prints the study wrote down as they traded
 HISTORY_TICKS = 'motivewave-ticks:history'      # the same real prints, loaded from the platform's history afterwards
-REPLAY = 'motivewave-replay:'                   # + '<run>:ticks', '<run>:simulated', '<run>:history' or '<run>:bars'
+REPLAY = 'motivewave-replay:'                   # + '<run>:ticks', '<run>:simulated' or '<run>:history'; and REPLAY_BARS
 # Real prints of a replay trade's holding window, loaded from MotiveWave's tick history once the trade was
 # flat (study 0.3.3). Observed ticks of that one run, never simulated, whatever the replay itself played.
 REPLAY_HISTORY = ':history'
-# MotiveWave's 1-minute bars of a replay run, up to the replay's own time and never later (study 0.3.6): what a
-# replay trade's chart is drawn from. Bars never measure MAE / MFE.
-REPLAY_BARS = ':bars'
+# MotiveWave's 1-minute bars of the days a replay plays (study 0.3.7): platform history, the same whichever replay
+# run plays them, so they draw the chart of every replay trade they cover. Bars never measure MAE / MFE.
+REPLAY_BARS = 'motivewave-replay:bars'
 # Where a price stream came from. A label beside a measurement, never a ranking: two streams of
 # real prints stay two measurements of one trade, and are not added together.
 PROVENANCE = {'recorded-live': 'Recorded live', 'history-backfill': 'History backfill',
@@ -39,6 +39,8 @@ def allows_source(trade, source):
     if not source.startswith(REPLAY):
         return True  # Prices the user imported themselves are also usable in replay.
     run = replay_run(trade.provider)
+    if source == REPLAY_BARS:
+        return bool(run)  # the platform's history of the replayed days, the same in every run
     return bool(run) and source.startswith(REPLAY + run + ':')
 
 
@@ -58,11 +60,11 @@ def provenance(source: str) -> str:
         return 'recorded-live'
     if source == HISTORY_TICKS:
         return 'history-backfill'
+    if source == REPLAY_BARS:
+        return 'platform-bars'
     if source.startswith(REPLAY):
         if source.endswith(REPLAY_HISTORY):
             return 'replay-history'
-        if source.endswith(REPLAY_BARS):
-            return 'platform-bars'
         return 'replay-simulated' if is_simulated(source) else 'replay-ticks'
     if source.startswith('motivewave-bars:'):
         return 'platform-bars'

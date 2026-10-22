@@ -13,11 +13,9 @@ final class JournalPriceEvents {
   /** The provider of the 1-minute bars a live chart writes. */
   static final String LIVE_BARS = "motivewave-bars:1m";
 
-  /** The provider of a replay run's 1-minute bars: MotiveWave's history up to the replay's own time, never later.
-   * The app draws a replay trade's chart from them; bars never measure MAE / MFE. */
-  static String replayBars(String run) {
-    return "motivewave-replay:" + run + ":bars";
-  }
+  /** The provider of the 1-minute bars of the days a replay plays: MotiveWave's history, the same whichever replay
+   * run plays them, so they draw every replay trade's chart on those days. Bars never measure MAE / MFE. */
+  static final String REPLAY_BARS = "motivewave-replay:bars";
 
   static String bar(String symbol, Bar bar, boolean proxy) { return bar(symbol, bar, proxy, LIVE_BARS); }
 

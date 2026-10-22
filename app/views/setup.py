@@ -86,6 +86,7 @@ STEPS = {
               'on a chart, also when the market is closed. Data → Connection shows when it last reported.'),
 }
 DRAWN = 'setup-step-drawn'          # the step the page was drawn with, per environment: see status_fragment
+HANDS_OVER = (0, 3, 6)              # a running study from this version on hands over to a new one by itself
 
 
 def update_line(link) -> str | None:
@@ -95,6 +96,8 @@ def update_line(link) -> str | None:
     if not common.study_outdated(link):
         return None
     if connection.bundled_study_installed():
+        if (common.version_parts(link.version) or ()) >= HANDS_OVER:
+            return f'Study {paths.STUDY_VERSION} is installed: MotiveWave switches to it in a few seconds.'
         return (f'Study {paths.STUDY_VERSION} is installed and MotiveWave is still running {link.version}. '
                 'Quit MotiveWave completely and open it again.')
     how = ('click Install MotiveWave Study' if connection.JAR.is_file()

@@ -1,4 +1,5 @@
 """Native bridge protocol fixtures only: no brokerage requests or real trading records."""
+import datetime as dt
 import json
 from types import SimpleNamespace
 
@@ -85,39 +86,43 @@ def test_generated_replay_ticks_are_labelled_simulated_in_metrics_and_chart(tmp_
     assert chart['series']['data'] and any('Generated/unknown' in n for n in chart['notes'])
 
 
-def test_a_replay_runs_own_minute_bars_draw_its_trades_chart_and_never_measure_them(tmp_path):
-    """Study 0.3.6 writes MotiveWave's 1-minute bars of a replay up to the replay's own time, filed under its run:
-    the chart of a replay trade is drawn from them, as platform candles, and MAE / MFE still wait for ticks."""
-    from mwjournal.scope import PROVENANCE, provenance
+def test_the_replayed_days_minute_bars_draw_every_replay_trades_chart_and_never_measure_them(tmp_path):
+    """Study 0.3.7 writes MotiveWave's 1-minute bars of the days a replay plays, the same for every run: a trade of
+    any run on those days is drawn from them, as platform candles, MAE / MFE still wait for ticks, and they move
+    neither an open replay trade's clock nor what Setup calls recording."""
+    from mwjournal.scope import PROVENANCE, REPLAY_BARS, provenance
     from views.trades import default_source
 
-    def bar(minute, low, high, run='run-a'):
-        return {'version': 1, 'type': 'bar', 'mode': 'replay', 'provider': f'motivewave-replay:{run}:bars',
+    def bar(minute, low, high):
+        return {'version': 1, 'type': 'bar', 'mode': 'replay', 'provider': REPLAY_BARS,
                 'symbol': 'ESZ6', 'ts': f'2022-01-03T14:{minute:02d}:00Z', 'resolution_seconds': 60,
                 'open': low, 'high': high, 'low': low, 'close': high, 'proxy': False}
 
     journal = Journal(tmp_path / 'replay.db', dataset='replay')
-    apply_preview(journal, preview_bridge(lines([bar(28, 4995, 4998), bar(29, 4997, 5001), bar(30, 4996, 5004),
-                                                 bar(31, 4999, 5006), bar(30, 4000, 4001, run='run-b'),
-                                                 fill('a'), tick(5003), tick(5002, ts='2022-01-03T14:32:00Z'),
-                                                 fill('b', 'sell', 5002, ts='2022-01-03T14:32:00Z')]),
-                                          dataset='replay'))
-    trade = journal.trades()[0]
-    sources = journal.price_sources('ESZ6', trade)
-    assert sources == ['motivewave-replay:run-a:bars', 'motivewave-replay:run-a:ticks']     # never another run's
-    assert default_source(sources) == 'motivewave-replay:run-a:bars'
-    assert PROVENANCE[provenance('motivewave-replay:run-a:bars')] == 'Platform candles'
-    chart = trade_chart(trade, journal.prices('ESZ6', 'motivewave-replay:run-a:bars'), 'motivewave-replay:run-a:bars')
-    assert [c['high'] for c in chart['series']['data']] == [4998, 5001, 5004, 5006]
-    # The exit's minute has no bar yet (a bar is written once the replay is past it): the run's own prints draw it,
-    # as live prints draw a live chart's minute in progress.
-    drawn = trade_chart(trade, journal.prices('ESZ6', 'motivewave-replay:run-a:bars'), 'motivewave-replay:run-a:bars',
+    apply_preview(journal, preview_bridge(lines([
+        bar(28, 4995, 4998), bar(29, 4997, 5001), bar(30, 4996, 5004), bar(31, 4999, 5006), bar(50, 5010, 5012),
+        fill('a'), tick(5003), tick(5002, ts='2022-01-03T14:32:00Z'), fill('b', 'sell', 5002, ts='2022-01-03T14:32:00Z'),
+        fill('c', run='run-b', ts='2022-01-03T14:29:00Z'), fill('d', 'sell', 5004, run='run-b', ts='2022-01-03T14:31:00Z'),
+        fill('e', run='run-c', ts='2022-01-03T14:30:30Z')]), dataset='replay'))
+    first, other, still_open = sorted(journal.trades(), key=lambda t: t.provider)
+    assert journal.price_sources('ESZ6', first) == [REPLAY_BARS, 'motivewave-replay:run-a:ticks']
+    assert journal.price_sources('ESZ6', other) == [REPLAY_BARS]                      # another run, the same day's bars
+    assert default_source(journal.price_sources('ESZ6', other)) == REPLAY_BARS
+    assert PROVENANCE[provenance(REPLAY_BARS)] == 'Platform candles'
+    chart = trade_chart(other, journal.prices('ESZ6', REPLAY_BARS), REPLAY_BARS)
+    assert chart['series']['data'] and not any('no corresponding candle' in n for n in chart['notes'])
+    # The exit's minute has no bar yet when the replay's history goes only to its time: the run's own prints draw
+    # it, as live prints draw a live chart's minute in progress.
+    drawn = trade_chart(first, journal.prices('ESZ6', REPLAY_BARS), REPLAY_BARS,
                         prints=journal.prices('ESZ6', 'motivewave-replay:run-a:ticks'),
                         prints_source='motivewave-replay:run-a:ticks')
-    assert [c['high'] for c in drawn['series']['data']] == [4998, 5001, 5004, 5006, 5002]
-    assert excursions(trade, journal.prices('ESZ6', 'motivewave-replay:run-a:bars'),
-                      'motivewave-replay:run-a:bars')['precision'] != 'observed-ticks'          # bars never measure
-    assert journal.best_metric(trade) is None or journal.best_metric(trade)['source'].endswith(':ticks')
+    exit_minute = int(dt.datetime(2022, 1, 3, 14, 32, tzinfo=dt.timezone.utc).timestamp())
+    assert any(c['time'] == exit_minute for c in drawn['series']['data'])
+    assert excursions(other, journal.prices('ESZ6', REPLAY_BARS), REPLAY_BARS)['precision'] != 'observed-ticks'
+    assert journal.best_metric(other) is None or journal.best_metric(other)['precision'] == 'pending'
+    # The day's later bars move neither an open replay trade's clock nor what is recording.
+    assert journal.trade_clock(still_open).isoformat() < '2022-01-03T14:50'
+    assert journal.recent_contracts() == ['ESZ6']
 
 
 def test_an_unknown_event_type_is_skipped_and_counted_never_fatal(tmp_path):

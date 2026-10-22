@@ -160,7 +160,7 @@ def test_a_study_that_has_gone_quiet_gets_only_the_quiet_step():
     assert not any(b.label == setup.INSTALL for b in app.button)
 
 
-@pytest.mark.parametrize('version', ['0.3.5', '0.3.4', '0.3.2', '0.1.0'])
+@pytest.mark.parametrize('version', ['0.3.6', '0.3.5', '0.3.2', '0.1.0'])
 def test_a_study_older_than_the_bundled_one_gets_only_the_update_step(version):
     study_writes([heartbeat(version=version)])
     app = open_app('Setup')
@@ -175,7 +175,9 @@ def test_a_study_older_than_the_bundled_one_gets_only_the_update_step(version):
         assert said(app.main.markdown, 'click Install MotiveWave Study')
         press(app, setup.INSTALL)                  # MotiveWave reports the old study until it starts the new one
         # Straight after the click, without another run: the line says what is left, never 'click Install'.
-        installed = (f'Study {paths.STUDY_VERSION} is installed and MotiveWave is still running {version}. '
+        installed = (f'Study {paths.STUDY_VERSION} is installed: MotiveWave switches to it in a few seconds.'
+                     if version == '0.3.6' else       # a study from 0.3.6 on hands over to the new one by itself
+                     f'Study {paths.STUDY_VERSION} is installed and MotiveWave is still running {version}. '
                      'Quit MotiveWave completely and open it again.')
         assert steps_shown(app) == ['Update the Study'] and not said(app.main.markdown, 'click Install')
         assert said(app.main.markdown, installed)

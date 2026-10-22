@@ -21,9 +21,9 @@ public final class JournalPriceEventsTest {
     assert event.contains("\"volume\":123.0") && event.contains("\"resolution_seconds\":60");
     assert event.contains("motivewave-bars:1m") && event.contains("\"proxy\":false");
     assert JournalPriceEvents.bar("ESZ6", bar, true).contains("\"proxy\":true");
-    // A replay run's bars are filed under the run, so the app draws a replay trade's chart from its own replay.
-    String replayBar = JournalPriceEvents.bar("ESZ6", bar, false, JournalPriceEvents.replayBars("run-1"));
-    assert replayBar.contains("\"provider\":\"motivewave-replay:run-1:bars\"") && replayBar.contains("\"resolution_seconds\":60")
+    // A replay's bars are the platform's history of the days it plays, the same in every run: one provider.
+    String replayBar = JournalPriceEvents.bar("ESZ6", bar, false, JournalPriceEvents.REPLAY_BARS);
+    assert replayBar.contains("\"provider\":\"motivewave-replay:bars\"") && replayBar.contains("\"resolution_seconds\":60")
         : replayBar;
     assert JournalPriceEvents.bar("ESZ6", bar, false).contains("\"provider\":\"motivewave-bars:1m\"");
     values.put("isComplete", false);

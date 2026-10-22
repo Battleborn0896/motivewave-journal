@@ -857,8 +857,9 @@ class Journal(Workspace):
         with self.connect() as db:
             run = None
             if replay:
+                # The replayed days' bars belong to no run (scope.REPLAY_BARS) and are not recording.
                 row = db.execute("SELECT source FROM prices WHERE source LIKE 'motivewave-replay:%' "
-                                 'ORDER BY rowid DESC LIMIT 1').fetchone()
+                                 "AND source != 'motivewave-replay:bars' ORDER BY rowid DESC LIMIT 1").fetchone()
                 if row:
                     run = row[0][len('motivewave-replay:'):].split(':', 1)[0]
                 else:

@@ -125,7 +125,7 @@ loaded only on a chart of the exact contract and are never proxy.
 | `motivewave-replay:<run>:ticks` | Replay prints, as real tick data: the default (**Real Tick Data** on) |
 | `motivewave-replay:<run>:simulated` | Replay prints with **Real Tick Data** switched off, for a replay generated from bars |
 | `motivewave-replay:<run>:history` | Real trade prints loaded afterwards from the platform's tick history, for the holding window of a replay position of that run (study 0.3.3) |
-| `motivewave-replay:<run>:bars` | One-minute candles of a replay run from the platform's history, up to the replay's own time and never later, topped up each replay minute: what a replay trade's chart is drawn from (study 0.3.6). Like every candle, they never measure MAE / MFE |
+| `motivewave-replay:bars` | One-minute candles of the days a replay plays, from the platform's history: the days before the replay's time and the whole day after it, loaded once a replayed day and topped up each replay minute (study 0.3.7). They belong to no run: the same history draws the chart of every replay trade they cover, whichever run it was in. They never measure MAE / MFE, move no open trade's replay clock, and are not recording |
 
 A replay run is one pass through the replay clock. Rewinding starts a new run, and a replay trade is
 only ever measured against prices from its own run. That holds for `:history` as for the others: its

@@ -125,20 +125,22 @@ public class MotiveWaveJournal extends Study {
       if (observer != null) observer.chart(this, ctx.getInstrument(), ctx.isReplayMode());
       if (ctx.isReplayMode()) {
         Capture capture = capture(ctx);
-        String run = observer == null ? null : observer.replayRun(capture.symbol(), ctx.getCurrentTime());
+        if (observer != null) observer.replayRun(capture.symbol(), ctx.getCurrentTime());
         replayNow = ctx.getCurrentTime();
         replayChart = capture;
-        // The replay's past as 1-minute bars, up to the replay's own time and never later (nothing of what comes
-        // next is ever loaded), filed under its run: what a replay trade's chart is drawn from. Loaded once a run
-        // (again after a rewind, which starts another); onTick tops up each minute as the replay plays.
+        // The days the replay plays, as 1-minute bars from MotiveWave's history: the days before it and the day
+        // after its current time, whole, so every replay trade of those days has its chart, whichever run it was
+        // in. Loaded once a replayed day. An open replay trade's chart still ends at the replay's time (the app
+        // draws it to its replay clock), so nothing ahead shows while trading.
         int days = Math.max(0, Math.min(DAYS_MAX, getSettings().getInteger(DAYS, DAYS_DEFAULT)));
-        if (run == null || days == 0 || replayNow <= 0 || !getSettings().is(REPLAY, REPLAY_DEFAULT)) return;
-        String request = "replay:" + run + ":" + capture + ":" + days;
+        if (days == 0 || replayNow <= 0 || !getSettings().is(REPLAY, REPLAY_DEFAULT)) return;
+        String request = "replay:" + capture + ":" + replayNow / 86400000L + ":" + days;
         synchronized (this) {
           if (request.equals(lastRequest)) return;
           lastRequest = request;
         }
-        submitHistory(capture, replayNow - days * 86400000L, replayNow, true, 0, capture.historyProxy(), true, run);
+        submitHistory(capture, replayNow - days * 86400000L, replayNow + 86400000L, true, 0, capture.historyProxy(),
+            true, true);
         return;
       }
       var series = ctx.getDataSeries();
@@ -156,7 +158,7 @@ public class MotiveWaveJournal extends Study {
         lastRequest = request;
       }
       long start = end - Math.max(days * 86400000L, ticks * 60000L);
-      submitHistory(capture, start, end, days > 0, ticks, capture.historyProxy(), true, null);
+      submitHistory(capture, start, end, days > 0, ticks, capture.historyProxy(), true, false);
     } catch (IOException | RuntimeException exc) { report(exc); }
   }
 
@@ -185,13 +187,12 @@ public class MotiveWaveJournal extends Study {
             : observer.replayRun(capture.symbol(), ctx.getCurrentTime());
         replayNow = ctx.getCurrentTime();
         replayChart = capture;
-        // The minutes the replay just closed, as its run's bars (calculateValues has the rule). A rewind
-        // changes the minute too, and its bars go to the new run.
-        if (print != null && observer != null && getSettings().getInteger(DAYS, DAYS_DEFAULT) > 0
-            && getSettings().is(REPLAY, REPLAY_DEFAULT)) {
+        // The minutes the replay just closed, as the replayed days' bars (calculateValues has the rule): where
+        // MotiveWave's history of a replay goes only as far as its time, they arrive as it plays.
+        if (print != null && getSettings().getInteger(DAYS, DAYS_DEFAULT) > 0 && getSettings().is(REPLAY, REPLAY_DEFAULT)) {
           long minute = print.time() / 60000;
           if (lastReplayMinute.getAndSet(minute) != minute)
-            submitHistory(capture, (minute - 2) * 60000, minute * 60000, true, 0, capture.proxy(), false, run);
+            submitHistory(capture, (minute - 2) * 60000, minute * 60000, true, 0, capture.proxy(), false, true);
         }
         if (print == null || !getSettings().is(REPLAY, REPLAY_DEFAULT) || NEVER.equals(record)) return;
         String source = replaySource(run, getSettings().is(REAL_REPLAY, REAL_REPLAY_DEFAULT));
@@ -212,7 +213,7 @@ public class MotiveWaveJournal extends Study {
       long previous = lastMinute.getAndSet(minute);
       // The minutes these prints just closed: recorded as they traded, so marked like the prints themselves.
       if (minute > previous && getSettings().getInteger(DAYS, DAYS_DEFAULT) > 0)
-        submitHistory(capture, (minute - 2) * 60000, minute * 60000, true, 0, capture.proxy(), false, null);
+        submitHistory(capture, (minute - 2) * 60000, minute * 60000, true, 0, capture.proxy(), false, false);
     } catch (IOException | RuntimeException exc) { report(exc); }
   }
 
@@ -397,7 +398,7 @@ public class MotiveWaveJournal extends Study {
    * asked for, which leaves one line in MotiveWave's log; false for the two-minute top-up that follows every
    * new minute, which would only bury that line. */
   private synchronized void submitHistory(Capture capture, long start, long end, boolean bars, int tickMinutes,
-                                          boolean proxy, boolean log, String run) {
+                                          boolean proxy, boolean log, boolean replay) {
     if (disposed || (!bars && tickMinutes == 0)) return;
     long token = generation.get();
     history().submit(() -> {
@@ -408,9 +409,9 @@ public class MotiveWaveJournal extends Study {
       try {
         if (disposed || generation.get() != token) return;
         // A separate reference keeps the writer alive while settings/destroy close the live one.
-        // A replay run's bars go to the replay bridge under that run (calculateValues); live bars to the live one.
-        output = JournalEventWriter.acquire(run == null ? capture.file() : JournalAccountCapture.replayFile(capture.file()));
-        String provider = run == null ? JournalPriceEvents.LIVE_BARS : JournalPriceEvents.replayBars(run);
+        // Replay bars go to the replay bridge (calculateValues has the rule); live bars to the live one.
+        output = JournalEventWriter.acquire(replay ? JournalAccountCapture.replayFile(capture.file()) : capture.file());
+        String provider = replay ? JournalPriceEvents.REPLAY_BARS : JournalPriceEvents.LIVE_BARS;
         if (bars) {
           for (Object item : capture.instrument().getBars(start, end, BarSize.minute(1), false)) {
             if (disposed || generation.get() != token || Thread.currentThread().isInterrupted()) return;
@@ -443,7 +444,7 @@ public class MotiveWaveJournal extends Study {
         if (output != null) output.release();
         // The one sign in MotiveWave's log that the study ran, and with what result.
         if (log && outcome != null && !disposed)
-          info("MotiveWave Journal: " + capture.symbol() + (run == null ? "" : " replay") + " history: " + wrote[0] + " bars and " + wrote[1]
+          info("MotiveWave Journal: " + capture.symbol() + (replay ? " replay" : "") + " history: " + wrote[0] + " bars and " + wrote[1]
               + " ticks written" + (wrote[2] > 0 ? ", " + wrote[2] + " dropped (queue full)" : "") + outcome
               + " in " + (System.nanoTime() - began) / 1_000_000 + " ms; fill capture " + fillCapture()
               + "; chart instrument " + JournalPriceEvents.names(capture.instrument()) + ".");

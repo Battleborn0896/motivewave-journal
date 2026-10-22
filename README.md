@@ -7,6 +7,19 @@ Live/paper and replay have separate databases. No routine CSV export/import is r
 MotiveWave Journal is an independent open-source project. It is not affiliated with, endorsed by or
 supported by MotiveWave Software.
 
+## What's new in 0.4.10: replay charts show the whole replayed day
+
+This release comes with study **0.3.7**.
+
+- **A replay chart has the whole day.** While a replay chart has the study, it writes MotiveWave's 1-minute
+  bars of the replayed day and the days before it, once a day, and every replay trade on those days is drawn
+  from them, whichever replay run it was in (0.3.6 wrote bars only up to the replay's time, for one run). An
+  open replay trade's chart still stops at the replay's current time, so nothing ahead shows while you trade.
+- MAE / MFE still come from ticks only.
+
+**What to do:** install the study from **Setup**. Coming from 0.3.6, it takes over by itself in a few seconds.
+Coming from 0.3.5 or older, quit MotiveWave completely first, install, then open MotiveWave.
+
 ## What's new in 0.4.9: your stop orders are recorded, replay trades get charts, and no more restarts to update
 
 This release comes with study **0.3.6**.
