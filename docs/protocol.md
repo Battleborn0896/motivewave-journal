@@ -34,8 +34,10 @@ The data home is `MWJ_HOME` when set, otherwise `~/Library/Application Support/M
   later) shows the count on Data → Connection. Before 0.4.8 an unknown type rejected the file's batch.
 - A file can get shorter: the writer empties it once it has been read. A reader starts again from the
   start of the file when the file is shorter than where it stopped, or when the bytes just before that
-  point are no longer the ones it read there (the file was emptied and has grown again since). The app
-  has read files this way since it first watched one.
+  point are no longer the ones it read there (the file was emptied and has grown again since). It checks
+  those bytes after reading what follows them, so a file emptied and written past that point during the
+  read is noticed too. The app has started again on a shorter or rewritten file since it first watched
+  one, and checks after its read from the version that writes read receipts on.
 
 ## Read receipt
 

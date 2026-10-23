@@ -552,3 +552,58 @@ def test_a_bridge_file_emptied_once_read_loses_no_line_and_gives_none_twice(tmp_
         fh.write(rest)                                     # the study finishes its last line
     app_reads()
     assert emptied > 50 and read == written
+
+
+@pytest.mark.parametrize('at', (1, 2, 3))
+def test_a_file_emptied_and_written_past_the_read_position_while_it_is_read_gives_every_new_line_once(tmp_path, at):
+    """The study empties a file the receipt says is read to its end, and can write more than was there before the
+    app's read of it finishes (the app paused in between, a burst of history after a trade). Whichever read of the
+    app's the emptying lands before, the new lines come from the start of the file, each once."""
+    journal = Journal(tmp_path / 'trades.sqlite3')
+    path = tmp_path / 'motivewave.ndjson'
+    old = [json.dumps({'type': 'heartbeat', 'n': n}) for n in range(50)]
+    new = [json.dumps({'type': 'heartbeat', 'n': n, 'pad': 'y' * 40}) for n in range(100, 200)]
+    path.write_text(''.join(line + '\n' for line in old))
+    worker = SyncWorker(journal)
+    blob, _, position = worker.bridge_lines('MotiveWave', path)
+    journal.set_bridge_offset('MotiveWave', *position)
+    assert blob.decode().splitlines() == old and sum(len(line) + 1 for line in new) > position[1]
+    reads, raced = [], []
+
+    def study_empties_and_writes():
+        raced.append(True)
+        with path.open('r+b') as fh:
+            fh.truncate(0)
+            fh.write(''.join(line + '\n' for line in new).encode())
+
+    class Reading:
+        """The app's open file: the study empties it and writes the new lines just before the at-th read."""
+        def __init__(self, fh):
+            self.fh = fh
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc):
+            self.fh.close()
+
+        def __getattr__(self, name):
+            return getattr(self.fh, name)
+
+        def read(self, *args):
+            reads.append(args)
+            if len(reads) == at and not raced:
+                study_empties_and_writes()
+            return self.fh.read(*args)
+
+    watched = SimpleNamespace(open=lambda *args, **kwargs: Reading(path.open(*args, **kwargs)))
+    got = []
+    for _ in range(2):
+        pending = worker.bridge_lines('MotiveWave', watched)
+        if pending:
+            blob, start, position = pending
+            got.extend(blob.decode().splitlines())
+            journal.set_bridge_offset('MotiveWave', *position)
+        if not raced:
+            study_empties_and_writes()          # after this read: the next one starts again from the start
+    assert got == new

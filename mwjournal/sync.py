@@ -102,7 +102,7 @@ class SyncWorker:
 
     def bridge_lines(self, name: str, path: Path):
         """(new committed lines, where they start, the position to store once imported), or None."""
-        with path.open('rb') as fh:
+        with path.open('rb', buffering=0) as fh:          # each read is of the file as it is then
             stat = os.fstat(fh.fileno())               # the file being read, not a later one at this path
             # The device number is left out: it can change across a reboot, which would re-read the
             # whole file, and the checkpoint bytes already tell two files apart.
@@ -114,12 +114,17 @@ class SyncWorker:
             if not (0 < offset <= stat.st_size and len(checkpoint) == min(offset, CHECKPOINT)
                     and checkpoint.endswith(b'\n')):
                 offset, checkpoint = 0, b''
+            fh.seek(offset)
+            blob = fh.read(8 * 1024 * 1024)
+            # The bytes before the position are checked after the read, not before: the study empties a file read
+            # to its end (docs/protocol.md, Read receipt) and can write past the position again before the read
+            # above, which then gave the middle of the new lines. Rewritten in place, even at the same size, too.
             if offset:
                 fh.seek(offset - len(checkpoint))
                 if fh.read(len(checkpoint)) != checkpoint:
-                    offset, checkpoint = 0, b''        # rewritten in place, even at the same size
-            fh.seek(offset)
-            blob = fh.read(8 * 1024 * 1024)
+                    offset, checkpoint = 0, b''
+                    fh.seek(0)
+                    blob = fh.read(8 * 1024 * 1024)
         blob = blob[:blob.rfind(b'\n') + 1]
         if not blob:
             return None
