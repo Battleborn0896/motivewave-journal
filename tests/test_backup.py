@@ -1,9 +1,11 @@
 """Back Up Journal and Restore From Backup: one zip of every journal, checked in full before anything is put back."""
+import datetime as dt
 import json
 import shutil
 import sqlite3
 import zipfile
 from contextlib import closing
+from types import SimpleNamespace
 
 import pytest
 
@@ -73,6 +75,29 @@ def test_a_backup_puts_live_and_replay_back_and_saves_the_journal_it_replaces(ho
     assert backup.read(previous)['trades'] == {'live': 2, 'replay': 2}             # the journal it replaced
 
 
+class OneSecond(dt.datetime):
+    """A clock that stays on one second, so two restores share their time."""
+    @classmethod
+    def now(cls, tz=None):
+        return dt.datetime(2026, 10, 23, 17, 0, 0, tzinfo=tz)
+
+
+def test_restoring_the_copy_saved_before_a_restore_undoes_it_even_within_the_same_second(home, monkeypatch):
+    monkeypatch.setattr(backup, 'dt', SimpleNamespace(datetime=OneSecond, timezone=dt.timezone, date=dt.date))
+    live = Journal()
+    trade(live, 'live-1')
+    saved = backup.write(home / 'backup.zip')
+    trade(live, 'live-2', day=8)
+    before = held('live')
+    first = backup.restore(saved)
+    assert len(Journal().trades()) == 1
+    undone = backup.restore(first['previous'])
+    assert held('live') == before and undone['trades']['live'] == 2
+    assert sorted(p.name for p in (home / 'backups').iterdir()) == ['before-restore-20261023T170000Z-2.zip',
+                                                                    'before-restore-20261023T170000Z.zip']
+    assert backup.read(first['previous'])['trades']['live'] == 2                  # never written over
+
+
 def refused(path, message):
     with pytest.raises(ValueError) as raised:
         backup.read(path)
@@ -94,6 +119,10 @@ def test_a_file_that_is_not_a_sound_backup_of_this_version_is_refused_and_change
     refused(zipped(home / 'empty.zip', {}), backup.NOT_A_BACKUP)
     (home / 'text.zip').write_text('not a zip')
     refused(home / 'text.zip', backup.NOT_A_BACKUP)
+    locked = bytearray(zipped(home / 'locked.zip', good).read_bytes())
+    locked[locked.find(b'PK\x01\x02') + 8] |= 1                 # backup.json marked as behind a password
+    (home / 'locked.zip').write_bytes(locked)
+    refused(home / 'locked.zip', backup.NOT_A_BACKUP)
     refused(zipped(home / 'damaged.zip', {**good, 'live.sqlite3': b'x' * 4096}), backup.DAMAGED)
 
     newer_manifest = {**json.loads(good['backup.json']), 'schema': store.SCHEMA_VERSION + 1}

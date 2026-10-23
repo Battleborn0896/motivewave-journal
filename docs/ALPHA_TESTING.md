@@ -38,7 +38,7 @@ alpha is not Authenticode-signed.
 
 Any older version updates straight to the newest; there is no need to install the ones in between.
 
-1. In the version you have now, click **Back Up Journal** (see *Back up and restore* below).
+1. If the version you have now has **Back Up Journal**, click it first (see *Back up and restore* below).
 2. Quit MotiveWave Journal and install the new version over the old one (on a Mac, drag it into
    Applications and choose Replace; on Windows, extract the new ZIP and use its `MotiveWave Journal.exe`).
    Trades, reviews, tags and settings stay: they live in the app's data folder, not inside the app, and the

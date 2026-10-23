@@ -144,7 +144,8 @@ def _unpacked(file):
             manifest = json.loads(archive.read(MANIFEST))
             created = dt.datetime.fromisoformat(manifest['created'])
             schema = manifest['schema']
-        except (ValueError, TypeError, KeyError, zipfile.BadZipFile):
+        # RuntimeError: a zip with a password; NotImplementedError: one packed in a way Python cannot unpack.
+        except (ValueError, TypeError, KeyError, zipfile.BadZipFile, RuntimeError, NotImplementedError):
             raise ValueError(NOT_A_BACKUP) from None
         if manifest.get('app') != paths.APP_NAME or type(schema) is not int or created.tzinfo is None:
             raise ValueError(NOT_A_BACKUP)
@@ -186,7 +187,11 @@ def restore(file, home=None) -> dict:
     home = _home(home)
     summary = read(file)
     stamp = dt.datetime.now(dt.timezone.utc).strftime('%Y%m%dT%H%M%SZ')
-    previous = write(home / 'backups' / f'before-restore-{stamp}.zip', home)
+    previous, n = home / 'backups' / f'before-restore-{stamp}.zip', 1
+    while previous.exists():         # a second restore within the same second never writes over the first one's copy
+        n += 1
+        previous = previous.with_name(f'before-restore-{stamp}-{n}.zip')
+    previous = write(previous, home)
     with _unpacked(file) as (_, copies):
         for member, copy in copies.items():
             target = _place(home, member)
