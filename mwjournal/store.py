@@ -29,8 +29,9 @@ SCHEMA_VERSION = 3
 #    the bid / ask ('liquidation') measurement is gone: its stored rows are removed when this pass ends.
 MEASUREMENT_RULES = 2
 # The prints a trade uses: from 2 minutes before its first fill to 120 minutes after its last, the longest
-# post-exit horizon (post_exit.py); an open trade's run on to now. Prints outside every trade's window are
-# removed once (Journal._trim_prices): MotiveWave keeps that history itself, and charts draw its candles.
+# post-exit horizon (post_exit.py); an open trade's run on to now, unless it is incomplete: nothing measures
+# one, so its window ends as a closed one's would. Prints outside every trade's window are removed once
+# (Journal._trim_prices): MotiveWave keeps that history itself, and charts draw its candles.
 PRINTS_BEFORE, PRINTS_AFTER = dt.timedelta(minutes=2), dt.timedelta(minutes=120)
 # What a writer may say differently about a fill it already sent, without it being another fill.
 LABELS = ('quality', *NATIVE)
@@ -150,7 +151,10 @@ def _prints_away_from_trades(db) -> int:
     windows = []                                   # [start, end] in time order, overlaps joined; end None runs on
     for trade in sorted(match(fills, instruments), key=lambda t: instant(t.opened)):
         start = instant(trade.opened) - PRINTS_BEFORE
-        end = instant(trade.closed) + PRINTS_AFTER if trade.closed else None
+        # An incomplete trade is never measured. A fill the platform gave no price leaves one open for good, months
+        # on: running on to now, its window would keep every print recorded since.
+        last = trade.closed or (trade.fills[-1]['ts'] if trade.incomplete else None)
+        end = instant(last) + PRINTS_AFTER if last else None
         if windows and (windows[-1][1] is None or start <= windows[-1][1]):
             windows[-1][1] = None if windows[-1][1] is None or end is None else max(windows[-1][1], end)
         else:
@@ -300,6 +304,9 @@ class Journal(Workspace):
             if shutil.disk_usage(self.path.parent).free < size:
                 return                             # the deletion is logged before it commits: next open, with room
             with self.connect() as db:
+                # 64 MB of cache rather than 2: the copied-back prints land all over their indexes, and on a
+                # day of NQ this takes a third off the few seconds others wait for the journal.
+                db.execute('PRAGMA cache_size=-65536')
                 db.execute('BEGIN IMMEDIATE')
                 if db.execute("SELECT 1 FROM journal_meta WHERE key='prices_trimmed'").fetchone():
                     return                         # another opener has just done it

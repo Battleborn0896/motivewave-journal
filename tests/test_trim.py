@@ -115,6 +115,22 @@ def test_windows_that_overlap_or_nest_are_kept_whole(tmp_path):
     assert [ts[11:19] for _, _, _, ts in stored(path)] == ['09:58:00', '13:00:00', '15:00:00', '16:00:00']
 
 
+def test_a_position_a_fill_without_a_price_left_open_keeps_only_the_prints_near_its_fills(tmp_path):
+    path = tmp_path / 'trades.sqlite3'
+    journal = Journal(path)
+    # The platform stored no price for this entry (it reports 0), so the position stays open in the journal for
+    # good, months on, and is never measured: the owner's journal holds one from June. Its window ends as a closed
+    # trade's would; running on to now, it would keep every print recorded since.
+    journal.ingest([(fill('z-in', 'buy', '09:00:00', 0., account='old'), {}),
+                    (fill('a-in', 'buy', '14:00:00'), {}), (fill('a-out', 'sell', '14:10:00', 20008.), {})])
+    assert [(t.status, t.closed) for t in journal.trades()][0] == ('incomplete', None)
+    journal.ingest_prices([tick(clock) for clock in ('08:57:59', '09:30:00', '11:00:00', '11:00:01', '13:00:00',
+                                                     '14:05:00', '20:00:00')])
+    as_0_4_13(path)
+    Journal(path)
+    assert [ts[11:19] for _, _, _, ts in stored(path)] == ['09:30:00', '11:00:00', '14:05:00']
+
+
 def test_a_replay_journal_loses_every_runs_prints_away_from_its_trades_and_keeps_the_replayed_days_candles(tmp_path):
     path = tmp_path / 'replay' / 'trades.sqlite3'
     journal = Journal(path, dataset='replay')
