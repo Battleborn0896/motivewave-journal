@@ -49,6 +49,8 @@ style = "normal"
 address = "localhost"
 # Serves app/static (the bundled fonts) at /app/static/.
 enableStaticServing = true
+# A backup to restore can be large: up to 2000 MB rather than Streamlit's 200.
+maxUploadSize = 2000
 
 [browser]
 gatherUsageStats = false

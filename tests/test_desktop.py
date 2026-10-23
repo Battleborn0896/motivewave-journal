@@ -61,6 +61,7 @@ def test_new_backend_is_local_headless_preserves_runtime_and_only_stops_owned_ch
     assert kwargs['cwd'] == project
     assert kwargs['env']['PYTHONDONTWRITEBYTECODE'] == '1'
     assert '--server.fileWatcherType=none' in command
+    assert '--server.maxUploadSize=2000' in command        # a backup to restore can be larger than 200 MB
     backend.stop()
     process.terminate.assert_called_once()
     process.kill.assert_not_called()

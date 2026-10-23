@@ -38,12 +38,24 @@ alpha is not Authenticode-signed.
 
 Any older version updates straight to the newest; there is no need to install the ones in between.
 
-1. Quit MotiveWave Journal and install the new version over the old one (on a Mac, drag it into
+1. In the version you have now, click **Back Up Journal** (see *Back up and restore* below).
+2. Quit MotiveWave Journal and install the new version over the old one (on a Mac, drag it into
    Applications and choose Replace; on Windows, extract the new ZIP and use its `MotiveWave Journal.exe`).
    Trades, reviews, tags and settings stay: they live in the app's data folder, not inside the app, and the
    new version brings them up to date by itself the first time it opens.
-2. Open the app. If Setup says the study is out of date, click **Install MotiveWave Study**, as in step 5.
-3. What changed in each version is under *What's new* at the top of the README and on each release's page.
+3. Open the app. If Setup says the study is out of date, click **Install MotiveWave Study**, as in step 5.
+4. What changed in each version is under *What's new* at the top of the README and on each release's page.
+
+### Back up and restore
+
+Back up before every test session and before every update: open **Settings → Data → Export & Backup** and
+click **Back Up Journal**. It downloads one zip, `MotiveWave Journal backup YYYY-MM-DD.zip`, that holds Live,
+Replay and every journal you made. Keep it outside the app's data folder.
+
+To go back to a backup, choose its zip under **Restore From Backup** on the same tab. The app shows the
+backup's date and how many live and replay trades it holds; click **Restore This Backup**. The journal as it
+was just before is saved first, to `backups/before-restore-<time>.zip` in the app's data folder: restore that
+file the same way to undo the restore. A backup made by a newer version is refused; update the app first.
 
 One study instance records only the trade prints MotiveWave delivers to that chart. Once a replay
 trade is flat, the study loads the real ticks of its holding time from MotiveWave's tick history, never

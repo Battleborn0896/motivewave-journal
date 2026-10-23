@@ -96,6 +96,7 @@ def streamlit_arguments(project: Path, port: int) -> list[str]:
         "--server.enableXsrfProtection=true",
         "--global.developmentMode=false",
         "--server.enableCORS=true",
+        "--server.maxUploadSize=2000",  # a backup to restore can be large; Streamlit's default is 200 MB
         *font_arguments(),
     ]
 
@@ -199,6 +200,8 @@ def open_native_window(url: str, backend: Backend) -> None:
         text_select=True,
     )
     window.events.closed += backend.stop
+    # pywebview cancels every download unless this is on, and Back Up Journal and the CSV are downloads.
+    webview.settings["ALLOW_DOWNLOADS"] = True
     webview.start(private_mode=False)
 
 

@@ -11,8 +11,8 @@ import pytest
 import common
 import runtime
 from mwjournal import Execution, Journal, PriceSample, paths
-from test_app import (CREDIT, heartbeat, helped, listed, open_app, press, said, show, states, status_of,
-                      study_writes, wait_until, widget)
+from test_app import (CREDIT, backup_controls, heartbeat, helped, listed, open_app, press, said, show, states,
+                      status_of, study_writes, wait_until, widget)
 from test_chart import seed_preview, seed_ticks
 from views import connection, setup
 
@@ -318,8 +318,7 @@ LANDMARKS = {
     'Connection': lambda app: any(t.label == connection.READ_TRADES for t in app.toggle),
     'Journals': lambda app: any(t.label == 'New journal name' for t in app.text_input),
     'Import': lambda app: any(s.label == 'Import format' for s in app.selectbox),
-    'Export': lambda app: [b.label for b in app.download_button] == ['Download Journal JSON', 'Download Trades CSV',
-                                                                     'Download Full Backup'],
+    'Export': lambda app: backup_controls(app),
     'General': lambda app: any(s.label == 'Time Zone' for s in app.selectbox),
 }
 
