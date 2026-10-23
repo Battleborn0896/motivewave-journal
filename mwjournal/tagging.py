@@ -136,9 +136,19 @@ def _plural(count, word):
     return f'{count} {word}' + ('' if count == 1 else 's')
 
 
+def _settings(db):
+    """The stored text of every setting that can name a tag or a category: each journal_meta entry but the tag
+    library. The workspace's rating systems of 0.4.16 and earlier stay stored but are read nowhere, so they are left
+    out: a tag only they name can be deleted."""
+    for key, value in db.execute("SELECT key, value FROM journal_meta WHERE key != 'tag_library'"):
+        if key == 'workspace':
+            value = json.dumps({name: part for name, part in json.loads(value).items() if name != 'ratings'})
+        yield value
+
+
 def tag_uses(db, state, id):
     """Why a tag cannot be deleted, as phrases ('is on 3 trades'); empty when nothing uses it. A
-    used tag is retired instead, so no review, day, playbook, rating, filter, checklist or draft is
+    used tag is retired instead, so no review, day, playbook, filter, checklist or draft is
     left pointing at nothing."""
     names = set(state['tags'][id]['aliases'])
     trades = days = 0
@@ -153,9 +163,8 @@ def tag_uses(db, state, id):
     if any(id in choices for book in state['playbooks'].values() for choices in book['rules'].values()):
         uses.append('is part of a playbook')
     quoted = [json.dumps(name) for name in names]
-    if any(id in value or any(q in value for q in quoted)
-           for (value,) in db.execute("SELECT value FROM journal_meta WHERE key != 'tag_library'")):
-        uses.append('is named in a rating, filter, checklist or draft')
+    if any(id in value or any(q in value for q in quoted) for value in _settings(db)):
+        uses.append('is named in a filter, checklist or draft')
     return uses
 
 
@@ -166,8 +175,8 @@ def group_uses(db, state, group):
     if any(group in book['rules'] for book in state['playbooks'].values()):
         uses.append('is part of a playbook')
     quoted = json.dumps(group)
-    if any(quoted in value for (value,) in db.execute("SELECT value FROM journal_meta WHERE key != 'tag_library'")):
-        uses.append('is named in a rating, timer or checklist')
+    if any(quoted in value for value in _settings(db)):
+        uses.append('is named in a timer or checklist')
     return uses
 
 

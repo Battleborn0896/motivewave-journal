@@ -121,7 +121,7 @@ def tag_editor(journal, library, ordered):
         journal.move_tag(id, 1)
         st.rerun()
     if delete.button('Delete Tag', key=common.key(journal, 'tag-delete'),
-                     help='Only a tag no trade, day, playbook, rating or filter uses. Retire a used one instead.'):
+                     help='Only a tag no trade, day, playbook, filter, checklist or draft uses; retire a used one instead.'):
         try:
             journal.delete_tag(id)
             st.rerun()
@@ -153,7 +153,7 @@ def group_editor(journal, library):
         journal.edit_tag_group(group, move=1)
         st.rerun()
     if delete.button('Delete Category', key=common.key(journal, 'group-delete'),
-                     help='Only an empty category that no playbook, rating or timer names.'):
+                     help='Only an empty category that no playbook, timer or checklist names.'):
         try:
             journal.delete_tag_group(group)
             st.rerun()
