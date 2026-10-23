@@ -73,7 +73,7 @@ def live_day(path):
     journal.ingest_prices([
         bar('12:00:00'), tick('12:00:00', 21000., HISTORY), tick('12:00:00', 19000., 'my-ticks'),
         tick('13:57:59', 25000.), tick('13:58:00', 19990.), tick('14:04:00', 19995., HISTORY),
-        tick('14:05:00', 20012.), tick('14:05:00', 19992.), tick('14:30:00', 20030.), tick('16:10:00', 19980.),
+        tick('14:05:00', 20012.), tick('14:05:00', 19992.), tick('14:20:00', 20030.), tick('16:10:00', 19980.),
         tick('16:10:01', 15000.), bar('17:00:00'), bar('17:00:00', 'my-bars'), tick('17:00:00', 25000.),
         tick('17:59:00', 5001., symbol='ESZ6'), tick('18:03:00', 5003., symbol='ESZ6'), tick('19:00:00', 20020.),
         tick('20:30:00', 6000., symbol='ESZ6'), tick('20:58:00', 20040.), tick('21:30:00', 20070.),
@@ -167,7 +167,7 @@ def test_no_measurement_changes_and_none_is_measured_again(tmp_path):
                                         end=(dt.datetime.fromisoformat(trade.closed) + store.PRINTS_AFTER).isoformat())
                          if trade.closed else [])
                 held[trade.id, source] = (samples, after, measurements(trade, samples, source, now=now))
-            held[trade.id] = best_post_exit(journal, trade, minutes=120) if trade.closed else None
+            held[trade.id] = best_post_exit(journal, trade) if trade.closed else None
         with journal.connect() as db:
             held['metrics'] = [tuple(row) for row in db.execute('SELECT rowid, * FROM metrics ORDER BY rowid')]
         return held

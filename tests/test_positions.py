@@ -304,9 +304,9 @@ def test_incomplete_trades_have_no_excursions_stored_measurements_runner_or_zero
         assert result['path'] == [] and trade.incomplete
         journal.record_metric(trade, {**measured, 'source': 'by-mistake'})
         assert journal.metric_options(trade) == []
-        runner = post_exit(trade, samples, 'test-prices', minutes=5)
-        assert runner['extra_mfe'] is None and runner['coverage'] == 'unavailable' and trade.incomplete[0] in runner['notes'][0]
-        assert best_post_exit(journal, trade, minutes=5)['extra_mfe'] is None
+        runner = post_exit(trade, samples, 'test-prices', 20000)
+        assert runner['extra_mfe'] is None and runner['coverage'] == runner['termination'] == 'unavailable'
+        assert best_post_exit(journal, trade)['extra_mfe'] is None
     with journal.connect() as db:
         assert db.execute('SELECT count(*) FROM metrics').fetchone()[0] == 0
     # A platform's own excursion report is an event this version skips and counts: it attaches nothing.

@@ -23,7 +23,7 @@ import streamlit as st
 import common
 import theme
 import tvchart
-import runner_controls
+import after_exit
 import tag_controls
 from views import checklists, daily, preferences, session
 from common import money
@@ -402,20 +402,15 @@ def detail(journal, trade, ids, zone) -> None:
     with checks:
         checklists.run_panel(journal, trade, prefix='trade-' + trade.id)
     with more:
-        metrics, executions, runner = st.tabs(['MAE / MFE', 'Executions', 'Runner'],
-                                              key=common.key(journal, 'trade-more-tabs'))
+        metrics, executions, after = st.tabs(['MAE / MFE', 'Executions', 'After Exit'],
+                                             key=common.key(journal, 'trade-more-tabs'))
         with executions:
             executions_panel(journal, trade, zone)
         with metrics:
             (live_excursions if live else excursions_panel)(journal, trade, annotation, zone)
-        with runner:
-            if getattr(trade, 'merge_leg_ids', None):
-                st.info('Runner analysis stays per original trade: a merged trade can have different stops. '
-                        'Split it to analyse each original runner.')
-            elif trade.closed:
-                runner_controls.trade_panel(journal, trade)
-            else:
-                st.info('Post-exit runner analysis becomes available after the trade closes.')
+        with after:
+            if words := after_exit.line(journal, trade, common.excursion_unit(journal)):
+                st.markdown(common.md(words))
 
 
 def numbers(journal, trade, annotation: dict, zone) -> None:

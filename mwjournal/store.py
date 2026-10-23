@@ -39,10 +39,12 @@ MEASUREMENT_RULES = 3
 # What the pass for these rules says once at the top of Settings (Journal.recalculation_done).
 MEASURED_AGAIN = ('MAE / MFE were measured again from your recorded ticks, so dollars, points, ticks and R now '
                   'show the same moment.')
-# The prints a trade uses: from 2 minutes before its first fill to 120 minutes after its last, the longest
-# post-exit horizon (post_exit.py); an open trade's run on to now, unless it is incomplete: nothing measures
-# one, so its window ends as a closed one's would. Prints outside every trade's window are removed once
-# (Journal._trim_prices): MotiveWave keeps that history itself, and charts draw its candles.
+# The prints a trade uses: from 2 minutes before its first fill to 120 minutes after its last, which covers the 15
+# minutes after its exit (post_exit.AFTER_EXIT_MINUTES) with room to spare. Never make it shorter than the 30 minutes
+# after each exit the study loads, or those prints would be thrown away. An open trade's window runs on to now,
+# unless it is incomplete: nothing measures one, so its window ends as a closed one's would. Prints outside every
+# trade's window are removed once (Journal._trim_prices): MotiveWave keeps that history itself, and charts draw its
+# candles.
 PRINTS_BEFORE, PRINTS_AFTER = dt.timedelta(minutes=2), dt.timedelta(minutes=120)
 # What a writer may say differently about a fill it already sent, without it being another fill.
 LABELS = ('quality', *NATIVE)
@@ -445,6 +447,20 @@ def _one_connection(db) -> None:
         _add_note(db, 'connections', {'removed': removed, 'note': note})
 
 
+def _after_exit_tab(db) -> None:
+    """Once per journal, inside the caller's transaction. The Stats tab Runners of 0.4.17 and earlier is called After
+    Exit, so a saved choice of Stats tabs (set_dashboard_sections) that has it names it so, in the same place. Only
+    that name changes, so this needs no backup; the upgrade note says so under 'after_exit'."""
+    row = db.execute("SELECT value FROM journal_meta WHERE key='display_settings'").fetchone()
+    settings = json.loads(row[0]) if row else {}
+    renamed = 'Runners' in settings.get('dashboard_sections', [])
+    if renamed:
+        settings['dashboard_sections'] = ['After Exit' if s == 'Runners' else s for s in settings['dashboard_sections']]
+        db.execute("INSERT OR REPLACE INTO journal_meta VALUES('display_settings',?)", (encode(settings),))
+        _add_note(db, 'after_exit', {'note': 'The Stats tab Runners is now called After Exit.'})
+    db.execute("INSERT OR REPLACE INTO journal_meta VALUES('after_exit_tab',?)", (str(int(renamed)),))
+
+
 def _add_note(db, name: str, data: dict):
     """Records what a one-time step did in the upgrade note (Journal.upgrade_note) under `name`, inside the caller's
     transaction."""
@@ -514,6 +530,8 @@ class Journal(Workspace):
             _answers_to_tags(db)
             if not db.execute("SELECT 1 FROM journal_meta WHERE key='one_connection'").fetchone():
                 _one_connection(db)
+            if not db.execute("SELECT 1 FROM journal_meta WHERE key='after_exit_tab'").fetchone():
+                _after_exit_tab(db)
             trim = not db.execute("SELECT 1 FROM journal_meta WHERE key='prices_trimmed'").fetchone()
         if trim:
             self._trim_prices()
@@ -643,9 +661,10 @@ class Journal(Workspace):
         the move to one time zone (_schema_4); under 'prices', the prints recorded away from trades that were removed
         once (_trim_prices); under 'packed', the first packing of the recorded ticks (pack_prices); under
         'answers', the typed setups and 'Followed my plan' answers that became tags (_answers_to_tags); under
-        'connections', the watched files that were removed (_one_connection); and under 'measurement_rules_3', every
-        trade measured again under MEASUREMENT_RULES 3 (recalculation_done). Each one-time step has a note in plain
-        words, which Settings shows once (unseen_notes)."""
+        'connections', the watched files that were removed (_one_connection); under 'after_exit', a saved Runners tab
+        that became After Exit (_after_exit_tab); and under 'measurement_rules_3', every trade measured again under
+        MEASUREMENT_RULES 3 (recalculation_done). Each one-time step has a note in plain words, which Settings shows
+        once (unseen_notes)."""
         with self.connect() as db:
             row = db.execute("SELECT value FROM journal_meta WHERE key='schema_upgrade'").fetchone()
         return json.loads(row[0]) if row else None
@@ -1195,13 +1214,13 @@ class Journal(Workspace):
         with self.connect() as db:
             stored = db.execute("SELECT value FROM journal_meta WHERE key='display_settings'").fetchone()
         settings = {'excursion_unit': 'currency', 'tick_sizes': {},
-                    'dashboard_sections': ['Overview', 'Compare', 'MAE / MFE', 'Runners'],
+                    'dashboard_sections': ['Overview', 'Compare', 'MAE / MFE', 'After Exit'],
                     **(json.loads(stored[0]) if stored else {})}
         settings.pop('excursion_policy', None)     # MAE / MFE Accuracy, until 0.4.7: only recorded ticks measure now
         return settings
 
     def set_dashboard_sections(self, sections):
-        allowed = {'Overview', 'Compare', 'MAE / MFE', 'Runners'}
+        allowed = {'Overview', 'Compare', 'MAE / MFE', 'After Exit'}
         if not sections or len(set(sections)) != len(sections) or not set(sections) <= allowed:
             raise ValueError('Choose at least one unique dashboard section.')
         self._update_display_settings({'dashboard_sections': list(sections)})
@@ -1438,9 +1457,13 @@ class Journal(Workspace):
         return traded + sorted(recent - set(traded))
 
     def trade_clock(self, trade):
-        """Open replay positions advance on recorded replay time, never today's wall clock: the latest
-        price of the trade's product in its own run."""
-        if trade.closed or ':replay:' not in trade.provider:
+        """Open replay positions advance on recorded replay time, never today's wall clock (replay_clock)."""
+        return None if trade.closed else self.replay_clock(trade)
+
+    def replay_clock(self, trade):
+        """The time a replay trade's run has played to: the latest price of the trade's product in its own run, or
+        just after its last fill. None for a live trade, whose clock is the wall clock."""
+        if ':replay:' not in trade.provider:
             return None
         run = trade.provider.rsplit(':replay:', 1)[1]
         prefix = 'motivewave-replay:' + run + ':'

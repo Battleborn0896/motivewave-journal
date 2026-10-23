@@ -717,3 +717,28 @@ def test_the_migration_removes_a_watched_csv_and_keeps_the_default_connection(tm
     replay.put('profiles', 'MotiveWave', {'path': str(paths.bridge_file('replay')), 'mode': 'bridge', 'enabled': True})
     as_0_4_16_connections(replay)
     assert Journal(dataset='replay').upgrade_note() is None
+
+
+# ---------------------------------------------------------------- the Stats tab Runners is called After Exit
+
+def test_a_saved_runners_tab_becomes_after_exit_once_and_needs_no_backup(tmp_path):
+    path = tmp_path / 'trades.sqlite3'
+    journal = Journal(path)
+    with journal.connect() as db:                  # Stats tabs as 0.4.17 saved them
+        db.execute("INSERT OR REPLACE INTO journal_meta VALUES('display_settings', ?)",
+                   (json.dumps({'excursion_unit': 'r', 'dashboard_sections': ['Runners', 'Overview']}),))
+        db.execute("DELETE FROM journal_meta WHERE key='after_exit_tab'")
+    opened = Journal(path)
+    assert opened.display_settings()['dashboard_sections'] == ['After Exit', 'Overview']
+    assert opened.display_settings()['excursion_unit'] == 'r'
+    assert opened.unseen_notes() == {'after_exit': 'The Stats tab Runners is now called After Exit.'}
+    assert not backups(tmp_path) and meta(path, 'after_exit_tab') == '1'
+    # Twice: nothing left to rename, and the note stays as it was.
+    note = opened.upgrade_note()['after_exit']
+    with opened.connect() as db:
+        db.execute("DELETE FROM journal_meta WHERE key='after_exit_tab'")
+    again = Journal(path)
+    assert again.display_settings() == opened.display_settings() and again.upgrade_note()['after_exit'] == note
+    assert meta(path, 'after_exit_tab') == '0'
+    # A journal that never saved its tabs has nothing to say.
+    assert Journal(tmp_path / 'new.sqlite3').upgrade_note() is None

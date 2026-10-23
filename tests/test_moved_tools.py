@@ -242,10 +242,10 @@ def test_dashboards_are_the_last_tab_of_stats_and_customize_cannot_remove_it(hom
     assert [p.proto.popover.label for p in app.main.get('popover')][:4] == [
         'Filters', 'Customize', 'Page Filters', 'Customize Page']
     assert edge.DASHBOARDS not in widget(app.multiselect, 'Tabs, in order').options
-    widget(app.multiselect, 'Tabs, in order').set_value(['Runners'])
+    widget(app.multiselect, 'Tabs, in order').set_value(['After Exit'])
     press(app, 'Save Tabs')
-    assert [t.label for t in app.tabs][:2] == ['Runners', 'Dashboards']
-    assert journal.display_settings()['dashboard_sections'] == ['Runners']
+    assert [t.label for t in app.tabs][:2] == ['After Exit', 'Dashboards']
+    assert journal.display_settings()['dashboard_sections'] == ['After Exit']
 
 
 def test_the_stats_filters_narrow_the_dashboards_too(home):
@@ -270,7 +270,7 @@ def test_dashboards_open_with_no_closed_trade_yet():
 def test_a_tab_that_was_removed_gives_way_to_the_first(home):
     journal = seed_preview(home)
     app = open_app('Edge')
-    open_tab(app, 'Runners')
+    open_tab(app, 'After Exit')
     journal.set_dashboard_sections(['Overview'])
     app.run()
     assert not app.exception and [t.label for t in app.tabs] == ['Overview', 'Dashboards']

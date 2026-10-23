@@ -1,8 +1,9 @@
-"""Hindsight runner analysis, NOT a strategy backtest or a promise of achievable profit.
+"""What the price did after a trade's exit: hindsight, not a strategy backtest or a profit you could have made.
 
-Hypothesis: retain ONLY the quantity sold/bought in the FINAL exit fill, at that fill's price,
-for a fixed horizon. Earlier partial exits remain unchanged. No perfect-exit claim, commissions,
-spread/slippage, stop logic or reinvestment is silently invented.
+The contracts of the final exit fill are held on at that fill's price for AFTER_EXIT_MINUTES, earlier partial exits
+staying as they were, until the trade's stop is touched: the stop R uses (risk.plan_for), else breakeven, the trade's
+average entry before fees (resolve_stop). There is no take profit. Only recorded ticks count, as for MAE / MFE. A
+stop touch is not a stop fill, and fees, spread, slippage and trailing stops are not modelled.
 """
 from __future__ import annotations
 
@@ -11,181 +12,136 @@ from collections import defaultdict
 
 from . import risk
 from .model import finite, instant, trade_prices
-from .scope import allows_source, is_simulated, provenance
+from .scope import allows_source, is_simulated
+
+# How long after an exit the price is followed, on the trade page and in Stats alike. The study loads the 30
+# minutes after each exit, and the journal keeps the prints of 120 (store.PRINTS_AFTER).
+AFTER_EXIT_MINUTES = 15
+# The coverage of a result whose minutes after the exit were recorded to their end, or to the stop.
+COMPLETE = ('window-observed', 'stop-observed')
+# A tick this close after the exit, or before the end of the minutes after it, counts as recorded from or to there.
+# At a moment taken at random over the day, a complete NQ or ES tape has had no print in the second before it about
+# one time in three, but almost never none in the minute before it: a second would call many complete recordings
+# incomplete.
+TOLERANCE = dt.timedelta(seconds=60)
 
 
-def post_exit(trade, samples, source, *, minutes=15, now=None, initial_risk=None, gaps=(),
-              stop_price=None, stop_source='', require_stop=False):
-    if type(minutes) is not int or not 1 <= minutes <= 120:
-        raise ValueError('Post-exit horizon must be 1–120 whole minutes.')
-    result = {'source': source, 'precision': 'pending', 'minutes': minutes, 'extra_mfe': None,
-              'extra_mae': None, 'horizon_extra': None, 'minutes_to_peak': None,
-              'extra_mfe_r': None, 'extra_mae_r': None, 'coverage': 'unavailable',
-              'observations': 0, 'path': [], 'notes': [], 'stop_price': stop_price, 'stop_source': stop_source,
-              'stop_touched': False, 'stop_ts': None, 'extra_mfe_upper': None, 'termination': 'unavailable',
-              'provenance': provenance(source) if source else None}
-    if not trade.complete:
-        # Its last kept fill is not known to be the exit, or has no price to continue from.
-        result['notes'] = ['Unavailable for this trade: ' + ', '.join(trade.incomplete) + '.']
+def post_exit(trade, samples, source, stop_price, *, now=None, initial_risk=None, gaps=()):
+    """What `samples` of one `source` say about the AFTER_EXIT_MINUTES after `trade`'s exit, held to `stop_price`:
+
+    - precision: 'observed-ticks' when they are recorded ticks; candles, another contract's prices and simulated
+      replay prints are named ('estimated-bars', 'proxy-estimate', 'replay-simulated') and never measured;
+    - extra_mfe / extra_mae: how far the price went for / against the final exit's contracts after the exit, in
+      account currency, up to the first stop touch; extra_mfe_r / extra_mae_r: over `initial_risk`, when known;
+    - stop_touched / stop_ts: whether, and when, the stop was first touched;
+    - coverage: 'window-observed' or 'stop-observed' (COMPLETE) when the ticks cover the minutes to their end or to
+      the stop, 'partial-window' when they do not or the study reported `gaps` in them, 'unavailable' with none;
+    - termination: 'stop-already-touched-at-exit' (the exit was at or past the stop: nothing left to hold),
+      'stop-touch', 'still-running-at-cutoff', 'not-over' (the minutes are still running and the stop untouched),
+      'awaiting-prices' (over, but not all recorded) or 'unavailable'."""
+    result = {'source': source, 'precision': 'pending', 'stop_price': stop_price, 'extra_mfe': None,
+              'extra_mae': None, 'extra_mfe_r': None, 'extra_mae_r': None, 'stop_touched': False, 'stop_ts': None,
+              'coverage': 'unavailable', 'termination': 'unavailable', 'observations': 0}
+    if not trade.complete or not trade.closed or trade.point_value is None or not allows_source(trade, source):
         return result
-    if not trade.closed or trade.point_value is None or not allows_source(trade, source):
-        result['notes'] = ['Needs a closed trade, known multiplier and matching replay run.']
+    exit_fill, sign = trade.fills[-1], 1 if trade.direction == 'long' else -1
+    quantity, exit_price, stop_price = exit_fill['qty'], exit_fill['price'], finite(stop_price, 'Stop')
+    result.update(exit_qty=quantity, exit_price=exit_price, stop_price=stop_price)
+    if (exit_price - stop_price) * sign <= 0:
+        result.update(extra_mfe=0., extra_mae=0., stop_touched=True, stop_ts=trade.closed,
+                      termination='stop-already-touched-at-exit')
         return result
-    exit_fill = trade.fills[-1]
+
+    def move(price):
+        return (price - exit_price) * sign * quantity * trade.point_value
+
     start = instant(trade.closed)
-    horizon = start + dt.timedelta(minutes=minutes)
-    through = min(horizon, now or dt.datetime.now(dt.timezone.utc))
-    sign = 1 if trade.direction == 'long' else -1
-    quantity, exit_price = exit_fill['qty'], exit_fill['price']
-    result.update(exit_qty=quantity, exit_price=exit_price)
-    if require_stop and stop_price is None:
-        result['notes'] = ['No stop for this trade. Type your stop under Notes, or choose Breakeven as the '
-                           'runner stop.']
-        return result
-    if stop_price is not None:
-        stop_price = finite(stop_price, 'Runner stop')
-        if (exit_price - stop_price) * sign <= 0:
-            result.update(extra_mfe=0., extra_mae=0., extra_mfe_upper=0., stop_touched=True,
-                          stop_ts=trade.closed, termination='stop-already-touched-at-exit')
-            result['notes'] = ['Selected stop is already reached at the actual exit price; no continuation is possible.']
-            return result
-    used, path = [], []
-    hit, ambiguous_upper = None, None
-    for sample in sorted(trade_prices(samples, trade.symbol, source), key=lambda s: instant(s.ts)):
-        stamp = instant(sample.ts)
-        end = stamp + dt.timedelta(seconds=sample.resolution_seconds)
-        # Entire bars must be after exit and before the horizon. Never borrow pre-exit highs or
-        # future highs from a boundary candle. Ticks at exit are ambiguous and excluded too.
-        if end > through:
-            continue
-        if (sample.resolution_seconds and stamp < start) or (not sample.resolution_seconds and stamp <= start):
-            continue
-        values = [(p - exit_price) * sign * quantity * trade.point_value for p in (sample.low, sample.high)]
-        touched = stop_price is not None and (sample.low <= stop_price if sign > 0 else sample.high >= stop_price)
-        if touched:
-            hit = sample
-            used.append(sample)
-            if sample.resolution_seconds:
-                # Price order inside this candle is unknowable. Its high might be AFTER the stop.
-                ambiguous_upper = max(0., max(values), max((p['high'] for p in path), default=0.))
-            break  # NEVER credit favorable prices observed after the first stop touch
-        endpoint = sample.close if sample.resolution_seconds else sample.high
-        path.append({'ts': sample.ts, 'low': min(values), 'high': max(values),
-                     'close': (endpoint - exit_price) * sign * quantity * trade.point_value if endpoint is not None else None})
+    end = start + dt.timedelta(minutes=AFTER_EXIT_MINUTES)
+    through = min(end, now or dt.datetime.now(dt.timezone.utc))
+    # After the exit, never at its moment: a print stamped with the exit's own time may be the exit itself.
+    window = sorted((s for s in trade_prices(samples, trade.symbol, source) if start < instant(s.ts) <= through),
+                    key=lambda s: instant(s.ts))
+    peak = adverse = 0.
+    hit, used = None, []
+    for sample in window:
         used.append(sample)
+        if sample.low <= stop_price if sign > 0 else sample.high >= stop_price:
+            hit = sample
+            adverse = min(adverse, move(stop_price))
+            break                                  # nothing after the first stop touch counts
+        worst, best = sorted((move(sample.low), move(sample.high)))
+        peak, adverse = max(peak, best), min(adverse, worst)
     if not used:
-        result['notes'] = ['No recorded prices after exit in this window. Keep the study running, '
-                           'or supply matching history.']
+        result['termination'] = 'not-over' if through < end else 'unavailable'
         return result
-    bars = any(s.resolution_seconds for s in used)
-    simulated = is_simulated(source)
-    precision = ('replay-simulated' if simulated else 'proxy-estimate' if any(s.proxy for s in used)
-                 else 'estimated-bars' if bars else 'observed-ticks')
-    peak = max(path, key=lambda p: p['high']) if path else None
-    earliest = instant(used[0].ts)
-    latest = instant(used[-1].ts) + dt.timedelta(seconds=used[-1].resolution_seconds)
-    tolerance = dt.timedelta(seconds=60 if bars else 1)
-    covers = earliest <= start + tolerance and (hit is not None or through >= horizon and latest >= horizon - tolerance)
-    if bars:
-        cursor = earliest
-        for sample in used:
-            if instant(sample.ts) > cursor:
-                covers = False
-            cursor = max(cursor, instant(sample.ts) + dt.timedelta(seconds=sample.resolution_seconds))
-    if gaps:
-        covers = False
-    extra_mfe = max(0., peak['high']) if peak else 0.
-    adverse = [p['low'] for p in path]
-    if hit is not None:
-        adverse.append((stop_price - exit_price) * sign * quantity * trade.point_value)
-    extra_mae = max(0., -min(adverse)) if adverse else 0.
-    notes = ['Hindsight potential on the FINAL exit quantity only. Earlier partial exits stay unchanged. '
-             'Last-traded prices, gross of additional costs. Stop TOUCH is observed, not a guaranteed stop fill; '
-             'spread, slippage, order latency and dynamic stop changes are not simulated.',
-             'Window endpoints are observed, but tick completeness is not guaranteed.']
-    if bars:
-        notes.append('OHLC estimate: boundary bars are excluded; the peak time is a bar window, not an exact tick.')
-    if simulated:
-        notes.append('Simulated replay prices, not a historical tick-accurate continuation.')
-    if not covers:
-        notes.append('Partial or gapped horizon: excluded from default tag comparisons.')
-    if ambiguous_upper is not None:
-        notes.append('Stop and potential peak share an OHLC bar: their order is unknown. '
-                     'Report a conservative/possible peak range, and exclude it from default runner comparisons.')
-    if stop_price is None:
-        notes.append('No stop rule applied: this is unrestricted hindsight potential, not a stop-surviving runner.')
-    risk = initial_risk if initial_risk is not None and initial_risk > 0 else None
-    result.update(precision=precision, extra_mfe=extra_mfe, extra_mae=extra_mae,
-                  horizon_extra=path[-1]['close'] if covers and hit is None and path else None,
-                  minutes_to_peak=(instant(peak['ts']) - start).total_seconds() / 60 if peak and extra_mfe else None,
-                  extra_mfe_r=extra_mfe / risk if risk else None, extra_mae_r=extra_mae / risk if risk else None,
-                  coverage=('ambiguous-stop-bar' if ambiguous_upper is not None else
-                            'stop-observed' if covers and hit is not None else
-                            'window-observed' if covers else 'partial-window'), observations=len(used),
+    result['precision'] = ('replay-simulated' if is_simulated(source) else
+                           'proxy-estimate' if any(s.proxy for s in used) else
+                           'estimated-bars' if any(s.resolution_seconds for s in used) else 'observed-ticks')
+    if result['precision'] != 'observed-ticks':
+        return result                              # only recorded ticks say what the price did
+    recorded_from_exit = instant(window[0].ts) <= start + TOLERANCE
+    to_the_end = through >= end and instant(window[-1].ts) >= end - TOLERANCE
+    covers = recorded_from_exit and not gaps and (hit is not None or to_the_end)
+    at_risk = initial_risk if initial_risk is not None and initial_risk > 0 else None
+    against = max(0., -adverse)
+    result.update(extra_mfe=peak, extra_mae=against, observations=len(used),
+                  extra_mfe_r=peak / at_risk if at_risk else None, extra_mae_r=against / at_risk if at_risk else None,
+                  coverage=('stop-observed' if covers and hit is not None else 'window-observed' if covers
+                            else 'partial-window'),
                   stop_touched=hit is not None, stop_ts=hit.ts if hit else None,
-                  extra_mfe_upper=ambiguous_upper if ambiguous_upper is not None else extra_mfe,
-                  termination='stop-touch' if hit is not None else 'still-running-at-cutoff' if covers else 'awaiting-prices',
-                  exit_qty=quantity, exit_price=exit_price, through=latest.isoformat(), path=path, notes=notes)
+                  termination=('stop-touch' if hit is not None else 'still-running-at-cutoff' if covers else
+                               'not-over' if through < end else 'awaiting-prices'))
     return result
 
 
-def resolve_stop(journal, trade, mode='original'):
-    if mode == 'breakeven':
-        return trade.entry_price, 'Breakeven · your average entry, before fees'
-    if mode == 'original':
-        # The stop the trade's R uses, by the one rule in risk.py.
-        plan = risk.plan_for(journal, trade)
-        labels = {'saved': 'Your saved stop · the one R uses',
-                  'order': f'Your stop order {risk.STOP_SETTLES} seconds after entry · the one R uses'}
-        return plan.stop, labels.get(plan.source, '')
-    events = [p for p in journal.protection_events(trade) if p.role == 'stop'
-              and instant(p.ts) <= instant(trade.closed)]
-    if mode == 'at-exit':
-        last = {}
-        for event in events:
-            last[event.order_id] = event
-        working = [p for p in last.values() if p.state == 'working' and p.price is not None]
-        if len(working) == 1:
-            return working[0].price, 'Your stop order when you exited'
-        return None, 'No single stop order was working when you exited. Choose another runner stop.'
-    raise ValueError('Unknown stop hypothesis.')
+def resolve_stop(journal, trade):
+    """The price the minutes after `trade`'s exit are held to, and which it is: ('stop') the stop R uses, the one saved
+    for the trade, else its stop order as it stood risk.STOP_SETTLES seconds after entry; else ('breakeven') the
+    trade's average entry, before fees."""
+    stop = risk.plan_for(journal, trade).stop
+    return (stop, 'stop') if stop is not None else (trade.entry_price, 'breakeven')
 
 
-def best_post_exit(journal, trade, minutes=15, initial_risk=None, *, stop_mode=None):
+def best_post_exit(journal, trade, initial_risk=None):
+    """post_exit of a closed `trade`, held to resolve_stop's price, from the source of recorded ticks that covers the
+    minutes after its exit best, with 'held_to' saying which price that was ('stop' or 'breakeven'). As for MAE / MFE,
+    candles, another contract's prices and simulated replay prints are never used, and ticks with a gap the study
+    reported never cover the minutes."""
     if not trade.closed or not trade.complete:
-        return post_exit(trade, [], '', minutes=minutes)
-    end = (instant(trade.closed) + dt.timedelta(minutes=minutes)).isoformat()
-    stop, stop_source = resolve_stop(journal, trade, stop_mode) if stop_mode else (None, '')
-    options = []
-    for source in journal.price_sources(trade.symbol, trade):
-        samples = journal.prices(trade.symbol, source, start=trade.closed, end=end)
-        options.append(post_exit(trade, samples, source, minutes=minutes, now=journal.trade_clock(trade),
-                                 initial_risk=initial_risk,
-                                 stop_price=stop, stop_source=stop_source, require_stop=stop_mode is not None,
-                                 gaps=journal.capture_gaps(source, start=trade.closed, end=end, symbol=trade.symbol)))
-    # Recorded ticks only, as for MAE / MFE: candles, proxies and simulated prints are not used.
-    options = [p for p in options if p['precision'] == 'observed-ticks'
-               and not journal.capture_gaps(p['source'], start=trade.closed, end=end, symbol=trade.symbol)]
-    return max(options, key=lambda p: (p['coverage'] in ('window-observed', 'stop-observed'), p['observations'])) \
-        if options else post_exit(trade, [], '', minutes=minutes, stop_price=stop,
-                                 stop_source=stop_source, require_stop=stop_mode is not None)
+        return {**post_exit(trade, [], '', None), 'held_to': None}
+    stop, held_to = resolve_stop(journal, trade)
+    # A replay trade's minutes go by as the replay plays them, not on the wall clock.
+    now = journal.replay_clock(trade)
+    best = post_exit(trade, [], '', stop, now=now, initial_risk=initial_risk)
+    if best['termination'] == 'stop-already-touched-at-exit':
+        return {**best, 'held_to': held_to}         # nothing left to hold: no prices to read
+    end = (instant(trade.closed) + dt.timedelta(minutes=AFTER_EXIT_MINUTES)).isoformat()
+    options = [post_exit(trade, journal.prices(trade.symbol, source, start=trade.closed, end=end), source, stop,
+                         now=now, initial_risk=initial_risk,
+                         gaps=journal.capture_gaps(source, start=trade.closed, end=end, symbol=trade.symbol))
+               for source in journal.price_sources(trade.symbol, trade)]
+    options = [p for p in options if p['precision'] == 'observed-ticks']
+    if options:
+        best = max(options, key=lambda p: (p['coverage'] in COMPLETE, p['observations']))
+    return {**best, 'held_to': held_to}
 
 
 def runner_groups(rows, field='tags'):
+    """The after-exit results in `rows` (best_post_exit, all in one unit) averaged by each value of `field`, a row
+    counting under each of its values. Only results whose minutes after the exit were all recorded count: a partial
+    window is never averaged in as if it were whole."""
     if len({r.get('currency', 'USD') for r in rows}) > 1:
-        raise ValueError('Runner comparisons require one currency.')
+        raise ValueError('After-exit comparisons need one currency.')
     groups = defaultdict(list)
     for row in rows:
-        if (row.get('coverage') not in ('window-observed', 'stop-observed') or row.get('extra_mfe') is None
-                or row.get('stop_price') is None):
-            continue  # partial windows are not cherry-picked into group averages
-        values = row.get(field) or ['Untagged' if field == 'tags' else 'Uncategorized']
-        for value in set(values):
-            groups[(value, row['precision'])].append(row)
+        if row.get('coverage') not in COMPLETE or row.get('extra_mfe') is None:
+            continue
+        for value in set(row.get(field) or ['Untagged' if field == 'tags' else 'Uncategorized']):
+            groups[value].append(row)
     result = []
-    for (name, quality), values in sorted(groups.items()):
+    for name, values in sorted(groups.items()):
         risk = [r for r in values if r.get('extra_mfe_r') is not None]
-        result.append({'group': name, 'quality': quality, 'trades': len(values),
+        result.append({'group': name, 'trades': len(values),
                        'avg_extra_peak': sum(r['extra_mfe'] for r in values) / len(values),
                        'avg_adverse_after_exit': sum(r['extra_mae'] for r in values) / len(values),
                        'avg_extra_peak_R': sum(r['extra_mfe_r'] for r in risk) / len(risk) if risk else None,

@@ -282,17 +282,16 @@ def test_a_merged_trade_risks_what_its_trades_risked_together(home):
     assert common.rows_for(merging.ReviewJournal(journal))[0]['r'] is None
 
 
-def test_the_runner_original_stop_is_the_stop_r_uses(home):
+def test_after_exit_holds_to_the_stop_r_uses(home):
     journal = Journal()
     t = long_one(journal)
     journal.ingest_protection([order(0, 4996), order(30, 5003)])     # trailed above entry later
-    stop, label = resolve_stop(journal, t, 'original')
-    assert stop == 4996 and f'{STOP_SETTLES} seconds after entry' in label
+    assert resolve_stop(journal, t) == (4996, 'stop')
     journal.ingest_prices([PriceSample('ESZ6', at(60 + s), 'ticks', p, p) for s, p in [(5, 5005), (60, 4997)]])
-    result = best_post_exit(journal, t, 5, plan_for(journal, t).risk, stop_mode='original')
+    result = best_post_exit(journal, t, plan_for(journal, t).risk)
     assert result['stop_price'] == 4996 and result['extra_mfe_r'] == pytest.approx(result['extra_mfe'] / 200)
     journal.update_annotation(t.id, {'planned_stop': 4994})
-    assert resolve_stop(journal, t, 'original')[0] == 4994
+    assert resolve_stop(journal, t) == (4994, 'stop')
 
 
 def test_the_chart_draws_the_stop_and_never_a_take_profit(home):

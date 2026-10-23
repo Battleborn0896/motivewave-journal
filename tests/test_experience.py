@@ -152,7 +152,7 @@ def test_dashboard_preferences_persist_per_environment_and_empty_selection_is_re
     press(app, 'Save Tabs')
     assert [t.label for t in app.tabs] == ['Compare', 'Overview', 'Dashboards']        # Dashboards is always last
     assert Journal().display_settings()['dashboard_sections'] == ['Compare', 'Overview']
-    assert Journal(dataset='replay').display_settings()['dashboard_sections'] == ['Overview', 'Compare', 'MAE / MFE', 'Runners']
+    assert Journal(dataset='replay').display_settings()['dashboard_sections'] == ['Overview', 'Compare', 'MAE / MFE', 'After Exit']
     widget(app.multiselect, 'Tabs, in order').set_value([])
     press(app, 'Save Tabs')
     assert said(app.error, 'at least one')
@@ -176,10 +176,10 @@ def test_include_any_exclude_filters_and_renamed_aliases_keep_their_identity(hom
     assert said(app.info, 'Statistics need')
 
 
-def test_the_runner_never_uses_bar_hindsight(home):
+def test_after_exit_never_uses_candles(home):
     journal = seed_preview(home)
     trade = journal.trades()[0]
-    result = best_post_exit(journal, trade, minutes=5)
+    result = best_post_exit(journal, trade)
     assert result['precision'] == 'pending' and result['extra_mfe'] is None
 
 
