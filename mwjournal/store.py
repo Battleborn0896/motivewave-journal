@@ -5,6 +5,7 @@ from __future__ import annotations
 import datetime as dt
 import json
 import os
+import shutil
 import sqlite3
 import tempfile
 from contextlib import contextmanager
@@ -27,6 +28,11 @@ SCHEMA_VERSION = 3
 # 2: dollar MAE / MFE are the moves of the contracts held (banked profit no longer counts, metrics.py), and
 #    the bid / ask ('liquidation') measurement is gone: its stored rows are removed when this pass ends.
 MEASUREMENT_RULES = 2
+# The prints a trade uses: from 2 minutes before its first fill to 120 minutes after its last, the longest
+# post-exit horizon (post_exit.py); an open trade's run on to now, unless it is incomplete: nothing measures
+# one, so its window ends as a closed one's would. Prints outside every trade's window are removed once
+# (Journal._trim_prices): MotiveWave keeps that history itself, and charts draw its candles.
+PRINTS_BEFORE, PRINTS_AFTER = dt.timedelta(minutes=2), dt.timedelta(minutes=120)
 # What a writer may say differently about a fill it already sent, without it being another fill.
 LABELS = ('quality', *NATIVE)
 SCHEMA = '''
@@ -136,6 +142,45 @@ def _stops_from_risks(db) -> int:
     return converted
 
 
+def _prints_away_from_trades(db) -> int:
+    """Removes the prints the study recorded outside every trade's window (PRINTS_BEFORE, PRINTS_AFTER) and returns
+    how many, inside the caller's transaction. Only the study's prints go: its candles, imported prices and every
+    print inside a window stay. MAE / MFE and post-exit read prints inside a window only, so no measurement changes."""
+    instruments = {r['symbol']: r['point_value'] for r in db.execute('SELECT * FROM instruments')}
+    fills = [Execution(**json.loads(r['payload'])) for r in db.execute('SELECT payload FROM executions ORDER BY rowid')]
+    windows = []                                   # [start, end] in time order, overlaps joined; end None runs on
+    for trade in sorted(match(fills, instruments), key=lambda t: instant(t.opened)):
+        start = instant(trade.opened) - PRINTS_BEFORE
+        # An incomplete trade is never measured. A fill the platform gave no price leaves one open for good, months
+        # on: running on to now, its window would keep every print recorded since.
+        last = trade.closed or (trade.fills[-1]['ts'] if trade.incomplete else None)
+        end = instant(last) + PRINTS_AFTER if last else None
+        if windows and (windows[-1][1] is None or start <= windows[-1][1]):
+            windows[-1][1] = None if windows[-1][1] is None or end is None else max(windows[-1][1], end)
+        else:
+            windows.append([start, end])
+    db.execute('CREATE TEMP TABLE kept_windows (start TEXT PRIMARY KEY, until TEXT)')
+    db.executemany('INSERT INTO kept_windows VALUES(?,?)',
+                   [(timestamp(start), timestamp(end) if end else None) for start, end in windows])
+    # What stays is set aside and copied back: twice as quick as deleting most of a long tape row by row, and each
+    # row keeps its rowid, the order prices sharing a time were stored in (prices()). Stored times are UTC ISO
+    # text, so they compare as text in time order: a print is inside a window when the last window starting at or
+    # before it has not ended by then, one index step per print.
+    db.execute('CREATE TEMP TABLE kept_prices AS SELECT rowid AS stored, key, symbol, source, ts, payload FROM prices '
+               "WHERE source NOT GLOB 'motivewave-*' OR coalesce((SELECT until IS NULL OR until >= prices.ts "
+               'FROM kept_windows WHERE start <= prices.ts ORDER BY start DESC LIMIT 1), 0) '
+               "OR json_extract(payload, '$.resolution_seconds') IS NOT 0")
+    removed = (db.execute('SELECT count(*) FROM prices').fetchone()[0]
+               - db.execute('SELECT count(*) FROM kept_prices').fetchone()[0])
+    if removed:
+        db.execute('DELETE FROM prices')
+        db.execute('INSERT INTO prices(rowid, key, symbol, source, ts, payload) '
+                   'SELECT stored, key, symbol, source, ts, payload FROM kept_prices ORDER BY stored')
+    db.execute('DROP TABLE kept_prices')
+    db.execute('DROP TABLE kept_windows')
+    return removed
+
+
 class ImportConflict(ValueError):
     pass
 
@@ -170,6 +215,7 @@ class Journal(Workspace):
             db.execute("INSERT OR IGNORE INTO journal_meta VALUES('dataset',?)", (dataset,))
             if not existing:                       # a new journal: nothing in it was measured under older rules
                 db.execute("INSERT OR IGNORE INTO journal_meta VALUES('measurement_rules',?)", (str(MEASUREMENT_RULES),))
+                db.execute("INSERT OR IGNORE INTO journal_meta VALUES('prices_trimmed','0')")    # nor recorded all day
             version = db.execute('PRAGMA user_version').fetchone()[0]
             if version > SCHEMA_VERSION:
                 raise ValueError(newer)
@@ -187,6 +233,9 @@ class Journal(Workspace):
                 db.execute('PRAGMA user_version = %d' % SCHEMA_VERSION)
             if not db.execute("SELECT 1 FROM journal_meta WHERE key='stops_from_risks'").fetchone():
                 _stops_from_risks(db)
+            trim = not db.execute("SELECT 1 FROM journal_meta WHERE key='prices_trimmed'").fetchone()
+        if trim:
+            self._trim_prices()
         if os.name != 'nt':
             try:
                 self.path.chmod(0o600)
@@ -242,8 +291,62 @@ class Journal(Workspace):
         finally:
             partial.unlink(missing_ok=True)
 
+    def _trim_prices(self):
+        """Once per journal, when 0.4.14 first opens it. Until then the study recorded every print of its charts all
+        day, about 475 bytes each in the journal: one day of NQ took over 300 MB. The prints away from every trade
+        are removed (_prints_away_from_trades) in one transaction with the record that this ran, so an interruption
+        leaves the journal as it was, to be trimmed at the next open. Then the file is compacted (VACUUM) so it
+        shrinks on disk, and the upgrade note says in plain words what was freed. Compacting writes a second copy of
+        what is kept, so it needs that much free disk twice, and it waits for another writer no longer than any
+        write does. When it cannot run the file keeps its size, and new prices fill the space freed inside it."""
+        try:
+            size = sum(path.stat().st_size for path in (self.path, Path(f'{self.path}-wal')) if path.exists())
+            if shutil.disk_usage(self.path.parent).free < size:
+                return                             # the deletion is logged before it commits: next open, with room
+            with self.connect() as db:
+                # 64 MB of cache rather than 2: the copied-back prints land all over their indexes, and on a
+                # day of NQ this takes a third off the few seconds others wait for the journal.
+                db.execute('PRAGMA cache_size=-65536')
+                db.execute('BEGIN IMMEDIATE')
+                if db.execute("SELECT 1 FROM journal_meta WHERE key='prices_trimmed'").fetchone():
+                    return                         # another opener has just done it
+                page = db.execute('PRAGMA page_size').fetchone()[0]
+                before = db.execute('PRAGMA page_count').fetchone()[0] * page
+                removed = _prints_away_from_trades(db)
+                db.execute("INSERT INTO journal_meta VALUES('prices_trimmed',?)", (str(removed),))
+        except (sqlite3.OperationalError, OSError):
+            return                                 # busy or out of room: as it was, trimmed at the next open
+        if not removed:
+            return
+        try:
+            with self.connect() as db:
+                kept = (db.execute('PRAGMA page_count').fetchone()[0] - db.execute('PRAGMA freelist_count').fetchone()[0]) * page
+                compacted = shutil.disk_usage(self.path.parent).free >= 2 * kept
+                if compacted:
+                    try:
+                        db.execute('VACUUM')
+                        db.execute('PRAGMA wal_checkpoint(TRUNCATE)').fetchall()
+                    except sqlite3.OperationalError:
+                        compacted = False      # another writer held on, or the disk filled: left as it was
+                after = db.execute('PRAGMA page_count').fetchone()[0] * page if compacted else kept
+                freed = max(before - after, 0)
+                amount = f'{freed / 1e6:,.0f} MB' if freed >= 1e6 else 'under 1 MB'
+                words = (f'Freed {amount} of price data recorded away from your trades.' if compacted else
+                         f'Removed {amount} of price data recorded away from your trades. The file keeps its size, as it '
+                         'was in use or the disk was nearly full; new prices fill that space first.')
+                db.execute('BEGIN IMMEDIATE')
+                row = db.execute("SELECT value FROM journal_meta WHERE key='schema_upgrade'").fetchone()
+                note = {**(json.loads(row[0]) if row else {}),
+                        'prices': {'removed': removed, 'freed': freed, 'compacted': compacted, 'note': words,
+                                   'at': dt.datetime.now(dt.timezone.utc).isoformat()}}
+                db.execute("INSERT OR REPLACE INTO journal_meta VALUES('schema_upgrade',?)", (encode(note),))
+        except (sqlite3.OperationalError, OSError):
+            pass                                   # the prints are gone either way; only the note is missing
+
     def upgrade_note(self) -> dict | None:
-        """What the last schema upgrade of this journal did and where its backup is, or None."""
+        """What upgrading this journal did, or None: the last schema upgrade (from, to, its backup) and, under
+        'prices', the prints recorded away from trades that were removed once (_trim_prices), with a note in
+        plain words."""
         with self.connect() as db:
             row = db.execute("SELECT value FROM journal_meta WHERE key='schema_upgrade'").fetchone()
         return json.loads(row[0]) if row else None
