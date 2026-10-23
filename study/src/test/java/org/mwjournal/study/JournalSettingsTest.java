@@ -80,6 +80,9 @@ public final class JournalSettingsTest {
         && byKey.get(JournalSettings.POST_EXIT).tip().contains("tick history, not recorded live")
         && byKey.get(JournalSettings.BACKFILL).tip().contains("After Exit")
         && byKey.get(JournalSettings.RECORD).tip().contains("The minutes after the exit come from MotiveWave's tick history");
+    // A continuous chart loads no tick history, so both say where those minutes come from there.
+    assert byKey.get(JournalSettings.POST_EXIT).tip().contains("on a chart of the exact contract only")
+        && byKey.get(JournalSettings.RECORD).tip().contains("on a continuous chart, choose Always While Study Runs");
     // Bounds unchanged.
     assert bounds(byKey, JournalSettings.DAYS).equals(List.of(0, 14)) && bounds(byKey, JournalSettings.TICKS).equals(List.of(0, 120));
     assert bounds(byKey, JournalSettings.BACKFILL).equals(List.of(0, JournalBackfill.MAX_DAYS))

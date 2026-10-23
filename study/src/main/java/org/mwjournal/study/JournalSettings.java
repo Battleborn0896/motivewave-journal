@@ -56,11 +56,12 @@ final class JournalSettings {
                 new Choice("Never", JournalTicks.NEVER)),
                 "During Trades Only (default): every trade print from a few seconds before the entry to a few "
                 + "seconds after the exit, live and replay. The minutes after the exit come from MotiveWave's tick "
-                + "history instead (After Exit, under History). Always While Study Runs: every print delivered to "
-                + "this chart, all day; the file gets far larger. Never: no prints, so in replay the journal has no "
-                + "replay time and an open replay trade's chart stops at its entry. One-minute bars are written in "
-                + "every mode. During Trades Only relies on Capture Fills: when fills cannot be read, every print "
-                + "is recorded.")),
+                + "history instead (After Exit, under History), which needs a chart of the exact contract: on a "
+                + "continuous chart, choose Always While Study Runs to keep them. Always While Study Runs: every "
+                + "print delivered to this chart, all day; the file gets far larger. Never: no prints, so in replay "
+                + "the journal has no replay time and an open replay trade's chart stops at its entry. One-minute "
+                + "bars are written in every mode. During Trades Only relies on Capture Fills: when fills cannot be "
+                + "read, every print is recorded.")),
         List.of(text(SYMBOL, "Symbol", "", 110, "The symbol written with each price. Blank uses the chart's active "
                 + "contract. Set it only when this chart stands in for the contract that is traded, and name that "
                 + "contract. Trade tick backfill is then off for this chart."),
@@ -86,10 +87,10 @@ final class JournalSettings {
                 + "is flat, closed in the N days before the replay's current time, and never past that time. "
                 + "0 = off. Needs Capture Fills, a chart of the exact contract, and tick history from the data service."),
             whole(POST_EXIT, "After Exit (Minutes)", POST_EXIT_DEFAULT, 0, POST_EXIT_MAX,
-                "How long after each exit the runner analysis looks: these minutes of real trades are loaded from "
-                + "the same tick history, not recorded live. Live: once those minutes and five more have passed. "
-                + "Replay: as the replay plays through them, never past its current time. 0 = none. Prices only: "
-                + "no order is kept open or changed."))));
+                "Minutes of real trades after each exit, for the runner analysis, loaded from the same tick history, "
+                + "not recorded live, so on a chart of the exact contract only. A longer runner window in the app "
+                + "needs more. Live: once those minutes and five more have passed. Replay: as the replay plays "
+                + "through them, never past its current time. 0 = none. Prices only: no order is kept open or changed."))));
     var replay = new Group("Replay", List.of(List.of(
         toggle(REPLAY, "Record Prices", REPLAY_DEFAULT, "Records replay prices, and backfills replay trades with "
             + "real ticks, in a file of their own beside the live one."),

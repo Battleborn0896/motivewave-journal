@@ -44,10 +44,11 @@ a trade is measured with the prices of its product (`NQZ6`, `NQ` and a continuou
 Since version 0.3.8 the study defaults to **During Trades Only**: it records the prints of each trade,
 from a few seconds before the entry to a few seconds after the exit, and loads the minutes after each exit
 (**After Exit (Minutes)**, 30 by default) from MotiveWave's own tick history once they are over, on a chart
-of the exact contract. This supports 5/15/30-minute runner comparisons by individual tag, tag category or
-setup without writing every print of the day. Studies 0.3.2 to 0.3.7 defaulted to **Always While Study
-Runs**, which keeps every print MotiveWave sends to the chart and remains a choice; version 0.3.3 is the
-first that MotiveWave actually sends them to, because it requires bar updates.
+of the exact contract (on a continuous chart, choose **Always While Study Runs** to keep them). This
+supports 5/15/30-minute runner comparisons by individual tag, tag category or setup without writing every
+print of the day; longer runner windows need a longer **After Exit (Minutes)**. Studies 0.3.2 to 0.3.7
+defaulted to **Always While Study Runs**, which keeps every print MotiveWave sends to the chart and remains
+a choice; version 0.3.3 is the first that MotiveWave actually sends them to, because it requires bar updates.
 
 Replay records the events the replay actually emits. Its own prints count as real ticks by default;
 switch off **Advanced → Real Tick Data** when the replay is generated from bars, and they are labelled

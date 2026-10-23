@@ -139,12 +139,14 @@ Study 0.3.8 changes no event's shape; it changes which prints are recorded. Its 
 a trade is open, from the few seconds before the entry fill is seen (a 15-second pre-roll held in memory) to
 a few seconds after the exit; **Always While Study Runs** records every print the chart receives, the
 default of studies 0.3.2 to 0.3.7; **Never** records none. The setting is stored under a new key,
-`recordTicksV3`, so charts saved with the old default take the new one. When fills cannot be read, every
-print is recorded, whatever the setting. One-minute bars are written in every mode. The minutes after each
-exit, which earlier studies recorded live (every print, or the **After Exit** minutes in the position-gated
-mode), are instead loaded from MotiveWave's tick history with the holding window, as the same history
-providers (see **History ticks** below). **After Exit (Minutes)** (Advanced, History; 30 by default,
-0–120, the key `postExitMinutes` as before) says how many.
+`recordTicksV3`, so every chart saved by an earlier study takes the new default, whatever it was set to
+(MotiveWave saves a default like any other choice). When fills cannot be read, During Trades Only records
+every print. One-minute bars are written in every mode. The minutes after each exit, which earlier studies
+recorded live (every print, or the **After Exit** minutes in the position-gated mode), are instead loaded
+from MotiveWave's tick history with the holding window, as the same history providers (see **History
+ticks** below). **After Exit (Minutes)** (Advanced, History; 30 by default, 0–120, the key
+`postExitMinutes` as before) says how many. Like the holding window, they are loaded only on a chart of the
+exact contract: on a continuous chart, only **Always While Study Runs** keeps them.
 
 Study 0.3.5 changes no event's shape. It writes stop orders only (no take-profit orders), links them by
 the [stop link rule](#stops-protection), adds the stop part of the heartbeat's `warnings`, builds a fill's
