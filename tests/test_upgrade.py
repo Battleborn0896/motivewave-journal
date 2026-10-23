@@ -404,7 +404,7 @@ def test_a_schema_3_journal_keeps_one_day_per_date_in_its_time_zone_and_its_tick
                              'risk_limits': False, 'stops': False, 'rating': 2, 'notes': 'Waited for the open.'},
         f'2026-10-07:{LA}': {'date': '2026-10-07', 'timezone': LA, 'day_tag_ids': [FOMO], 'stops': True, 'rating': 4,
                              'notes': 'Chased the first push.'},
-        f'2026-10-08:{NY}': {'date': '2026-10-08', 'timezone': NY, 'day_tag_ids': [PATIENT], 'planned': False,
+        f'2026-10-08:{NY}': {'date': '2026-10-08', 'timezone': NY, 'day_tag_ids': [PATIENT, FOMO], 'planned': False,
                              'notes': ''}})
     before = rows(path, 'SELECT key, payload FROM sessions ORDER BY key')
     upgraded = Journal(path)
@@ -413,10 +413,11 @@ def test_a_schema_3_journal_keeps_one_day_per_date_in_its_time_zone_and_its_tick
     assert rows(backup, 'SELECT key, payload FROM sessions ORDER BY key') == before
     # One row per date. In Mindset, one choice at a time, the Time Zone's FOMO wins; the Settings-zone review wins and
     # the other fills its blanks; the two notes are joined; ticked boxes are Day tags; unticked ones leave nothing.
+    # Oct 8's Patient and FOMO, chosen before Mindset became one choice, both stay: only another day's choice yields.
     assert upgraded.get('sessions') == {
         '2026-10-07': {'date': '2026-10-07', 'day_tag_ids': sorted([FOMO, PLAN, STOP]), 'rating': 4,
                        'notes': 'Chased the first push.\n\nWaited for the open.'},
-        '2026-10-08': {'date': '2026-10-08', 'day_tag_ids': [PATIENT], 'notes': ''}}
+        '2026-10-08': {'date': '2026-10-08', 'day_tag_ids': sorted([PATIENT, FOMO]), 'notes': ''}}
     library = upgraded.tag_library()
     assert 'session_timezone' not in library and not library.get('removed')
     assert [(t['name'], t['levels']) for t in tagging.ordered_groups(library, level='day')['Day']] == [

@@ -248,11 +248,12 @@ def _schema_4(db) -> dict:
         merged, chosen, notes = {}, [], []
         for *_, day in found:
             tags = [*day.get('day_tag_ids', []), *(day_tags[name] for box, name in DAY_BOXES.items() if day.get(box))]
+            # A one-choice category an earlier day of this date chose in keeps that choice. Within one day nothing
+            # is dropped: conflicting choices made before the category became one-choice stay, as they do on a trade.
+            taken = {library['tags'].get(id, {}).get('group') for id in chosen}
             for id in tags:
                 group = library['tags'].get(id, {}).get('group')
-                taken = library['groups'].get(group, {}).get('exclusive') and any(
-                    library['tags'].get(other, {}).get('group') == group for other in chosen)
-                if id not in chosen and not taken:
+                if id not in chosen and not (group in taken and library['groups'].get(group, {}).get('exclusive')):
                     chosen.append(id)
             if isinstance(day.get('notes'), str) and day['notes'].strip() and day['notes'].strip() not in notes:
                 notes.append(day['notes'].strip())
