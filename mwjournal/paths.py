@@ -23,7 +23,7 @@ from pathlib import Path
 APP_NAME = 'MotiveWave Journal'
 # The app's version. pyproject.toml, desktop/macos/Info.plist and desktop/macos/Main.swift say the same;
 # tests/test_version.py checks. The study has its own version (study/.../JournalPaths.java).
-VERSION = '0.4.15'
+VERSION = '0.4.16'
 # The study this app bundles; Settings asks an older one to update, as older studies miss ticks, stops or runners.
 STUDY_VERSION = '0.3.10'
 STUDY_CONNECTOR = 'motivewave-journal-study'

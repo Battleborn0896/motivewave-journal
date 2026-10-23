@@ -7,6 +7,35 @@ Live/paper and replay have separate databases. No routine CSV export/import is r
 MotiveWave Journal is an independent open-source project. It is not affiliated with, endorsed by or
 supported by MotiveWave Software.
 
+## What's new in 0.4.16: a small journal, one backup file, and a study with nothing to set
+
+This release comes with study **0.3.10**.
+
+- **Every tick is kept, packed small.** An hour or two after a tick is recorded, each minute's ticks are
+  packed into one entry, about 100 times smaller. Charts, MAE / MFE, the full trade path and "Could I have
+  let it run" read exactly the same ticks, including with a stop you type days later. The first time 0.4.16
+  opens your journal it packs what is already there and shrinks the file, in seconds (a 222 MB journal
+  became 17 MB).
+- **The bridge file empties itself.** Once the app has read and stored everything the study wrote, the
+  study empties its file, so it no longer grows by hundreds of megabytes. While the app is closed the file
+  keeps everything until the app reads it.
+- **Back Up Journal and Restore From Backup** (Settings → Data → Export & Backup). One zip holds Live,
+  Replay and your named journals, and is safe to take while trades are recording. Restore puts it back and
+  first saves the journal it replaces. Since the bridge file empties, this backup is how a journal is
+  recovered. The JSON and per-journal database downloads are gone; Export Trades CSV stays.
+- **The study has nothing to set.** Its 12 settings are gone, and old values saved in a chart no longer do
+  anything. A continuous chart (NQ rather than NQZ6) now loads the 30 minutes after each exit by itself, so
+  "Could I have let it run" works there too.
+- **Settings, not Setup.** The page is called Settings, as in Trade Craft and SCS.
+- **The study is Recording, Not recording or Needs attention**, with one line saying what to do when it is
+  not recording. Closing MotiveWave no longer turns anything yellow. Replay says **No replay trades yet**
+  until your first replay trade.
+- **Reading trades from MotiveWave is always on**; its switch is gone.
+
+**What to do:** open the app (the first open packs your journal), then Settings → **Install MotiveWave
+Study**. MotiveWave switches to 0.3.10 by itself within a few seconds. Do not go back to 0.4.15 or older
+afterwards: older versions cannot read packed ticks.
+
 ## What's new in 0.4.15: the study stops recording when you are flat
 
 This release comes with study **0.3.9**.
