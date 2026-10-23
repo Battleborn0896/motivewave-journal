@@ -13,9 +13,11 @@ be saved as a playbook.
 
 from __future__ import annotations
 
+import datetime as dt
 import hashlib
 import html
 import itertools
+from zoneinfo import ZoneInfo
 
 import pandas as pd
 import plotly.express as px
@@ -47,6 +49,8 @@ TABLE_WIDTH = 360          # pixels a tag table needs at least: three to a row o
 SMALL_SAMPLE = 10          # fewer trades in a row than this is too few to judge (and 100 to 150 for the whole journal)
 LIST_LIMIT = 50            # trades listed at once under the Compare tables; Show More Trades lists the next ones
 RATING = 'Process rating'  # a trade's 1 to 5 stars (Trades, the tag panel): one more group of chips and a table
+# The period above Stats: the month under review first, as a monthly review reads (docs/research, 'Sample size first').
+PERIODS = ('This Month', 'Last Month', 'Last 3 Months', 'All')
 RATINGS = (5, 4, 3, 2, 1)  # best first
 NEXT = {None: 'with', 'with': 'without', 'without': None}           # a chip's state after a click
 # Material icons, like the star on a rating chip: IBM Plex Sans has no cross to go with its check mark.
@@ -118,6 +122,7 @@ def render(journal, rows) -> None:
         rows = preferences.filter_menu(journal, rows)
     with custom_col.popover('Customize', width='stretch', help='Choose which tabs Stats shows, and their order.'):
         customize(journal)
+    rows = period_rows(journal, rows)
     closed = [r for r in rows if r['status'] == 'closed' and r['net'] is not None]
     with heading:
         count = f'{len(closed)} closed trade{"" if len(closed) == 1 else "s"}'
@@ -658,6 +663,30 @@ def open_trade(journal, id) -> None:
     st.session_state.update(common.navigation('Trades'))
     st.session_state[common.key(journal, 'selected-trade')] = id
     st.session_state[common.key(journal, REPORT)] = False
+
+
+def period_rows(journal, rows) -> list[dict]:
+    """The trades of the period chosen above the stats, by their entry day in the display time zone: this month,
+    last month, the last three months (this one and the two before) or all. Every tab of Stats follows it."""
+    key = common.key(journal, 'stats-period')
+    remember = common.keep({key: 'All'})            # still chosen after Trades or Setup was open
+    choice = st.segmented_control('Period', PERIODS, key=key, on_change=remember, required=True,
+                                  label_visibility='collapsed',
+                                  help='Which trades Stats counts, by the day each was entered. A monthly review '
+                                       'starts with Last Month.')
+    if choice in (None, 'All'):
+        return rows
+    first = dt.datetime.now(ZoneInfo(common.display_zone(journal))).date().replace(day=1)
+    if choice == 'This Month':
+        start, end = first, None
+    elif choice == 'Last Month':
+        start, end = (first - dt.timedelta(days=1)).replace(day=1), first
+    else:                                                       # this month and the two before
+        start = first
+        for _ in range(2):
+            start = (start - dt.timedelta(days=1)).replace(day=1)
+        end = None
+    return [r for r in rows if r['entry_day'] >= start.isoformat() and (end is None or r['entry_day'] < end.isoformat())]
 
 
 def compare_table(grouped_rows, field, currency):

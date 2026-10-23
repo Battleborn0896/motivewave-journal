@@ -401,3 +401,33 @@ def test_compare_says_so_when_no_trade_has_a_tag():
     assert listed_trades(app)                                 # the trades and their curve are still there
     widget(app.selectbox, 'Compare by').set_value('Weekday').run()
     assert next(d.value for d in app.dataframe if 'Weekday' in d.value.columns)['Trades'].sum() == 3
+
+
+def test_the_period_above_stats_keeps_this_month_last_month_or_the_last_three_and_stays_chosen():
+    """A monthly review starts with Last Month: the period chosen above Stats is what every number counts."""
+    import datetime as dt
+    from zoneinfo import ZoneInfo
+    first = dt.datetime.now(ZoneInfo(NY)).date().replace(day=1)
+    months = [first]
+    for _ in range(5):
+        months.append((months[-1] - dt.timedelta(days=1)).replace(day=1))
+    journal = Journal()
+    for n, month in enumerate([months[0], months[1], months[2], months[5]]):      # this month, last, 2 back, 5 back
+        opened = dt.datetime.combine(month, dt.time(14, 30), dt.timezone.utc)
+        journal.ingest([(Execution('motivewave', 'paper', 'ESZ6', 'buy', 1, 5000, opened.isoformat(),
+                                   execution_id=f'p{n}a', commission=2), {}),
+                        (Execution('motivewave', 'paper', 'ESZ6', 'sell', 1, 5000 + n + 1,
+                                   (opened + dt.timedelta(minutes=5)).isoformat(), execution_id=f'p{n}b',
+                                   commission=2), {})])
+    app = open_app('Edge')
+    period = app.get('button_group')[0]
+    assert list(period.options) == ['This Month', 'Last Month', 'Last 3 Months', 'All'] and period.value == 'All'
+    assert said(app.markdown, '4 closed trades')
+    expected = {'This Month': '1 of 4 closed trades', 'Last Month': '1 of 4 closed trades',
+                'Last 3 Months': '3 of 4 closed trades'}
+    for choice, line in expected.items():
+        app.get('button_group')[0].set_value(choice).run()
+        assert not app.exception and said(app.markdown, line), choice
+    show(app, 'Trades')
+    show(app, 'Edge')
+    assert app.get('button_group')[0].value == 'Last 3 Months'                      # still chosen

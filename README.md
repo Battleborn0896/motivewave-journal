@@ -7,6 +7,31 @@ Live/paper and replay have separate databases. No routine CSV export/import is r
 MotiveWave Journal is an independent open-source project. It is not affiliated with, endorsed by or
 supported by MotiveWave Software.
 
+## What's new in 0.4.14: find your edge the way Trade Craft teaches it, and a journal that stays small
+
+This release comes with study **0.3.8**.
+
+- **Find your edge on Stats → Compare, without the Filters menu.** Click a tag once to keep only trades *with*
+  it, again for trades *without* it, again to clear it; star ratings are chips too, so leaving out your 1-star
+  trades is one click. A line says what is applied ("With HTF Favor, without 1 star · 24 of 150 closed
+  trades"). Beside it: a Totals table (all trades, wins, losses), one table per tag category with every tag as
+  a row (faded at 0 trades), a star-rating table, grey numbers where a row has under 10 trades, then the equity
+  curve of those trades and the trades themselves (click one to open it). **Save as Playbook** turns the kept
+  tags into a playbook with a name and a colour.
+- **A period above Stats:** This Month, Last Month, Last 3 Months or All. A monthly review starts with Last
+  Month.
+- **The study records ticks only while you are in a trade,** from a few seconds before entry to just after the
+  exit. What comes after the exit (30 minutes, for "could I have let it run") and each trade's exact ticks are
+  loaded afterwards from MotiveWave's own tick history, and charts come from MotiveWave's 1-minute bars as
+  before. A day with MotiveWave open no longer adds hundreds of megabytes.
+- **A one-time clean-up:** the first time 0.4.14 opens your journal it removes the prints recorded away from
+  every trade and compacts the file (about 10 to 15 seconds once). Your trades' numbers do not change.
+
+**What to do:** open the app (wait for the clean-up), then Setup → **Install MotiveWave Study**. A study from
+0.3.6 on switches to 0.3.8 by itself within a few seconds; an older one needs MotiveWave quit and opened again.
+On a continuous chart (NQ rather than NQZ6), "could I have let it run" needs Record Ticks set to Always While
+Study Runs.
+
 ## What's new in 0.4.13: find your edge by tag, Sierra-style fills, a calendar in colour
 
 - **Find your edge by tag (Stats → Compare).** Click tags under *Only trades with* to keep just the trades that
