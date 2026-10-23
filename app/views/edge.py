@@ -355,8 +355,8 @@ def comparisons(journal, closed):
     segment = common.key(journal, 'edge-segment')
     remember = common.keep({segment: 'Tags'})          # still chosen after another tab has been open
     field = st.columns([1, 2])[0].selectbox('Compare by', options, key=segment, on_change=remember,
-                                            help='Tags shows a table for each tag category and for your Rating. '
-                                                 'Times use your display time zone.')
+                                            help='Tags shows a table for each tag category and for your Rating; '
+                                                 'times use your display time zone.')
     if not narrowed:
         st.info('No closed trade matches these chips. Click one again to change it, or Clear All.')
         return
@@ -499,9 +499,8 @@ def chips_in(groups) -> list[dict]:
 def playbook_saver(journal, tags) -> None:
     """Save as Playbook: the tags kept (✓), as (category, chip), become a playbook with a name and a colour.
     A playbook takes any one of its tags in a category, so it takes one kept tag per category here."""
-    with st.popover('Save as Playbook', help='Saves the tags you keep (✓) as a playbook, to apply to a trade on '
-                                             'Trades and to compare under Compare by Playbooks. Tags you leave out '
-                                             '(×) and Rating chips are not part of a playbook.'):
+    with st.popover('Save as Playbook', help='Saves the kept tags (✓) as a playbook for Trades and Compare by '
+                                             'Playbooks; left-out tags (×) and Rating chips are not part of a playbook.'):
         rules = {}
         for group, chip in tags:
             rules.setdefault(group, []).append(chip['id'])

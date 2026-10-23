@@ -1,4 +1,4 @@
-"""Settings: is the study recording, the two settings, and the three pages of real setup.
+"""Settings: is the study recording, the two settings, and the two pages of real setup.
 
 The first page reads top to bottom: one status line, Recording, Not recording or Needs attention, green and alone
 when the study records; under it, one line saying the one thing to do when there is something (install the study,
