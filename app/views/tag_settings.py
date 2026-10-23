@@ -81,6 +81,8 @@ def playbooks(journal, library):
                              help='Choose the tags that fit within each category: any one of them will do. '
                                   'Every category with a chosen tag must match; other categories are free. This '
                                   'describes a setup, not a claim that it makes money.')
+        color = st.color_picker('Playbook color', old.get('color', '#65CA98'),
+                                help='Its name is drawn in this color where Stats compares playbooks.')
         retired = st.checkbox('Retire playbook · keep its definition', value=old.get('retired', False))
         rules = {}
         for group, tags in tagging.ordered_groups(library, include_retired=True).items():
@@ -92,7 +94,7 @@ def playbooks(journal, library):
                 rules[group] = selected
         if st.form_submit_button('Save Playbook', type='primary'):
             try:
-                journal.save_playbook(name, rules, id=choice if choice in books else None, retired=retired)
+                journal.save_playbook(name, rules, id=choice if choice in books else None, retired=retired, color=color)
                 st.rerun()
             except ValueError as exc:
                 st.error(str(exc))

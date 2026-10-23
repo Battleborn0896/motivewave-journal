@@ -605,7 +605,9 @@ class Journal(Workspace):
                     'day_tag_ids': sorted(other | chosen)}
             db.execute('INSERT OR REPLACE INTO sessions VALUES(?,?)', (key, encode(data)))
 
-    def save_playbook(self, name, rules, *, id=None, retired=False):
+    def save_playbook(self, name, rules, *, id=None, retired=False, color=None):
+        """`color` is the playbook's own colour, six-digit hex; None keeps the one it has, if any."""
+        import re
         from . import tagging
         name = name.strip()
         if not name or len(name) > 64:
@@ -626,7 +628,11 @@ class Journal(Workspace):
             if any(p['name'] == name and key != id for key, p in state['playbooks'].items()):
                 raise ValueError('That playbook name already exists.')
             id = id or tagging.identity('playbook:' + name)
-            state['playbooks'][id] = {'id': id, 'name': name, 'rules': normalized, 'retired': bool(retired)}
+            color = state['playbooks'].get(id, {}).get('color') if color is None else color
+            if color is not None and not re.fullmatch(r'#[0-9a-fA-F]{6}', str(color)):
+                raise ValueError('Use a six-digit hex color.')
+            state['playbooks'][id] = {'id': id, 'name': name, 'rules': normalized, 'retired': bool(retired),
+                                      **({'color': color} if color else {})}
             tagging.save(db, state)
         return id
 

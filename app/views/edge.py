@@ -3,12 +3,18 @@
 One row holds the page title, Filters (with the saved filter every page uses) and Customize; the numbers
 come straight after it, then a tab each for Overview, Compare, MAE / MFE and Runners, and Dashboards, your
 own pages of widgets, always last. The equity curve counts trades along the bottom (1, 2, 3, ...) so nights
-and weekends take no room; a toggle puts it on the clock instead, in the display time zone. Compare opens on
-tag chips that keep only the trades with every chosen tag, then a table for each tag category.
+and weekends take no room; a toggle puts it on the clock instead, in the display time zone.
+
+Compare finds an edge by tag, the way a trader drills down: chips for every tag category and the star ratings
+keep or leave out trades, then Totals and a table for each category side by side, every tag listed even at 0
+trades, then the equity curve of the trades left and those trades, each opening on Trades. The tags kept can
+be saved as a playbook.
 """
 
 from __future__ import annotations
 
+import hashlib
+import html
 import itertools
 
 import pandas as pd
@@ -21,6 +27,7 @@ import theme
 import runner_controls
 import tag_controls
 from views import preferences
+from views.trades import REPORT
 from common import money
 from mwjournal.analytics import cost_summary, grouped, summary
 from mwjournal.model import instrument_market
@@ -33,10 +40,70 @@ AXES = {'trade': 'By Trade', 'time': 'By Date'}
 LABELS = {'closed': 'Exit', 'net': 'Net P&L', 'mae': 'MAE', 'mfe': 'MFE', 'max_qty': 'Size',
           'precision': 'Measured from', 'symbol': 'Instrument', 'setup': 'Setup'}
 COMPARE_HELP = ('Start with Trades, the sample size, then Average Trade, the net result per trade after recorded '
-                'fees. A trade with several tags counts in each, so tag rows overlap; Untagged is the trades with '
-                'no tag in that category. Average R uses only trades with a stop. These describe your recorded '
+                'fees. A trade with several tags counts in each, so tag rows overlap; "No Setup tag" is the trades '
+                'with no tag in that category. Average R uses only trades with a stop. These describe your recorded '
                 'trades, not proof of an edge: small samples mislead.')
-TAG_COLUMNS = ['Tag', 'Trades', 'Net P&L', 'Win %', 'Average Trade', 'Average R']    # the tag tables show these
+TABLE_WIDTH = 360          # pixels a tag table needs at least: three to a row on a laptop screen, more on a wider one
+SMALL_SAMPLE = 10          # fewer trades in a row than this is too few to judge (and 100 to 150 for the whole journal)
+LIST_LIMIT = 50            # trades listed at once under the Compare tables; Show More Trades lists the next ones
+RATING = 'Process rating'  # a trade's 1 to 5 stars (Trades, the tag panel): one more group of chips and a table
+RATINGS = (5, 4, 3, 2, 1)  # best first
+NEXT = {None: 'with', 'with': 'without', 'without': None}           # a chip's state after a click
+# Material icons, like the star on a rating chip: IBM Plex Sans has no cross to go with its check mark.
+ICONS = {'with': ':material/check:', 'without': ':material/close:'}
+COMPARE_CSS = f"""<style>
+[class*="st-key-edge-chip-"] button {{ min-height:30px; padding:2px 10px; gap:4px; background:transparent;
+    border:1px solid {theme.BASELINE}; }}
+[class*="st-key-edge-chip-"] button p {{ color:inherit !important; font-size:12.5px; }}
+.st-key-edge-tag-chips .mwj-card-title {{ font-family:{theme.FONT}; font-size:12.5px; font-weight:650; }}
+.st-key-edge-narrowed [data-testid="stCaptionContainer"] p {{ color:{theme.INK_2}; font-size:13px; }}
+/* The tag tables share a row, each at least TABLE_WIDTH wide; one that does not fit moves to the next row. */
+.st-key-edge-tables {{ gap:14px !important; }}
+.st-key-edge-tables > [data-testid="stElementContainer"] {{ flex:1 1 {TABLE_WIDTH}px !important;
+    min-width:min({TABLE_WIDTH}px, 100%) !important; }}
+.mwj-edge-table {{ width:100%; border-collapse:collapse; background:{theme.SURFACE}; border:1px solid {theme.BORDER};
+    font-family:{theme.FONT}; font-size:12.5px; line-height:1.3; color:{theme.INK}; {theme.TABULAR}; margin:0; }}
+.mwj-edge-table th, .mwj-edge-table td {{ padding:5px 8px; text-align:right; white-space:nowrap;
+    border:0; border-bottom:1px solid {theme.HAIRLINE}; }}
+.mwj-edge-table th {{ color:{theme.MUTED}; font-size:11.5px; font-weight:500; }}
+.mwj-edge-table th.t {{ font-size:12.5px; font-weight:650; white-space:nowrap; }}
+.mwj-edge-table .t {{ text-align:left; white-space:normal; }}
+.mwj-edge-table tbody tr:last-child td {{ border-bottom:0; }}
+.mwj-edge-table .up {{ color:{theme.UP}; }}
+.mwj-edge-table .down {{ color:{theme.DOWN}; }}
+.mwj-edge-table tr.small td.n, .mwj-edge-table tr.none td.n {{ color:{theme.MUTED}; }}
+.mwj-edge-table tr.none td.t {{ opacity:.4; }}
+</style>"""
+# The trade list under the tables, as on Trades: an invisible button lies over each row and opens the trade.
+LIST_CSS = f"""<style>
+.st-key-edge-list {{ gap:2px !important; }}
+[class*="st-key-edge-row-"] {{ position:relative; gap:0 !important; }}
+.st-key-edge-list [data-testid="stMarkdownContainer"] {{ margin-bottom:0 !important; }}
+[class*="st-key-edge-row-"] [data-testid="stElementContainer"]:has(.stButton) {{ position:absolute !important;
+    inset:0; z-index:2; margin:0 !important; }}
+[class*="st-key-edge-row-"] .stButton, [class*="st-key-edge-row-"] .stButton button {{ width:100%; height:100%;
+    min-height:0 !important; padding:0; opacity:0; cursor:pointer; }}
+[class*="st-key-edge-row-"] .stButton :has(button) {{ height:100%; }}
+[class*="st-key-edge-row-"]:hover .mwj-edge-trade {{ background:{theme.SURFACE_2}; }}
+[class*="st-key-edge-row-"]:has(button:focus-visible) .mwj-edge-trade {{ outline:2px solid {theme.ACCENT}; }}
+.mwj-edge-trade {{ display:flex; flex-wrap:wrap; align-items:center; column-gap:12px; row-gap:3px; padding:5px 8px;
+    border-radius:4px; border-bottom:1px solid {theme.HAIRLINE}; font-family:{theme.FONT}; font-size:12.5px;
+    line-height:1.35; color:{theme.INK}; {theme.TABULAR}; }}
+.mwj-edge-trade .w {{ min-width:9.6em; color:{theme.INK_2}; white-space:nowrap; }}
+.mwj-edge-trade .c {{ min-width:4.4em; font-weight:600; white-space:nowrap; }}
+.mwj-edge-trade .s {{ min-width:4.4em; color:{theme.INK_2}; white-space:nowrap; }}
+.mwj-edge-trade .s b {{ font-weight:600; }}
+.mwj-edge-trade .s .long {{ color:{theme.SERIES[0]}; }}
+.mwj-edge-trade .s .short {{ color:{theme.SERIES[1]}; }}
+.mwj-edge-trade .p {{ min-width:6.6em; text-align:right; font-weight:600; white-space:nowrap; }}
+.mwj-edge-trade .r {{ min-width:5.2em; color:{theme.MUTED}; white-space:nowrap; }}
+.mwj-edge-trade .g {{ display:flex; flex-wrap:wrap; gap:4px; }}
+.mwj-edge-trade .tag {{ padding:0 7px; border-radius:3px; font-size:11.5px; line-height:18px; white-space:nowrap;
+    background:{theme.SURFACE_2}; color:{theme.INK_2}; }}
+.mwj-edge-trade .mwj-win {{ color:{theme.UP}; }}
+.mwj-edge-trade .mwj-loss {{ color:{theme.DOWN}; }}
+.mwj-edge-trade .mwj-flat {{ color:{theme.INK_2}; }}
+</style>"""
 
 
 def render(journal, rows) -> None:
@@ -272,115 +339,322 @@ def excursion(journal, closed):
 
 
 def comparisons(journal, closed):
+    st.markdown(COMPARE_CSS, unsafe_allow_html=True)
     st.markdown('### What Worked Best?', help=COMPARE_HELP)
     currency = closed[0]['currency']
-    categories = tag_categories(journal.tag_library(), closed)
-    closed = only_trades_with(journal, closed, categories)
+    library = journal.tag_library()
+    groups = chip_groups(library, closed)
+    narrowed = narrow(journal, closed, groups)
     options = [*SEGMENTS, 'Tags', 'Setups', 'Playbooks']
     segment = common.key(journal, 'edge-segment')
     remember = common.keep({segment: 'Tags'})          # still chosen after another tab has been open
     field = st.columns([1, 2])[0].selectbox('Compare by', options, key=segment, on_change=remember,
-                                            help='Tags shows a table for each tag category. Times use your display '
-                                                 'time zone.')
-    if not closed:
-        st.info('No closed trade has all of the chosen tags.')
+                                            help='Tags shows a table for each tag category and for your star '
+                                                 'ratings. Times use your display time zone.')
+    if not narrowed:
+        st.info('No closed trade matches these chips. Click one again to change it, or Clear All.')
         return
     if field == 'Tags':
-        tag_tables(closed, categories, currency)
-        return
-    if field in ('Setups', 'Playbooks'):
-        grouped_rows = grouped(closed, {'Setups': 'setup', 'Playbooks': 'playbooks'}[field])
+        tag_tables(narrowed, groups, currency)
     else:
-        timezone = common.display_zone(journal)
-        segmented = []
-        for row in closed:
-            opened = pd.Timestamp(row['opened']).tz_convert(timezone)
-            value = {'Entry hour': f'{opened.hour:02d}:00', 'Weekday': opened.day_name(),
-                     'Market': instrument_market(row['symbol']), 'Exact contract': row['symbol'], 'Direction': row['direction'],
-                     'Followed my plan': row.get('adherence', 'Unreviewed'),
-                     'Process rating': str(row.get('rating', 'Unreviewed'))}[field]
-            segmented.append({**row, 'segment': value})
-        grouped_rows = grouped(segmented, 'segment')
-    table = compare_table(grouped_rows, field, currency)
-    # placeholder: the grid writes an empty number itself, as 'None', whatever the table's own '—' says.
-    st.dataframe(table, hide_index=True, width='stretch', height=min(430, 36 + 35 * len(table.data)), placeholder='—')
+        if field in ('Setups', 'Playbooks'):
+            grouped_rows = grouped(narrowed, {'Setups': 'setup', 'Playbooks': 'playbooks'}[field])
+        else:
+            timezone = common.display_zone(journal)
+            segmented = []
+            for row in narrowed:
+                opened = pd.Timestamp(row['opened']).tz_convert(timezone)
+                value = {'Entry hour': f'{opened.hour:02d}:00', 'Weekday': opened.day_name(),
+                         'Market': instrument_market(row['symbol']), 'Exact contract': row['symbol'],
+                         'Direction': row['direction'], 'Followed my plan': row.get('adherence', 'Unreviewed'),
+                         'Process rating': str(row.get('rating', 'Unreviewed'))}[field]
+                segmented.append({**row, 'segment': value})
+            grouped_rows = grouped(segmented, 'segment')
+        # A playbook's name in its own colour, as a tag's is.
+        colours = {book['name']: book.get('color') for book in library['playbooks'].values()} if field == 'Playbooks' else {}
+        grouped_rows = [{**row, 'color': colours.get(row['group'])} for row in grouped_rows]
+        # placeholder: the grid writes an empty number itself, as 'None', whatever the table's own '—' says.
+        st.dataframe(painted(grouped_rows, field, currency), hide_index=True, width='stretch',
+                     height=min(430, 36 + 35 * len(grouped_rows)), placeholder='—')
+        small_sample_note()
+    these_trades(journal, narrowed, groups)
 
 
-def tag_categories(library, closed) -> dict:
-    """Each tag category, in the library's order, with those of its tags that at least one of these trades
-    carries, in order: what the chips offer and the tag tables list. A category no trade uses is left out."""
-    carried = {id for row in closed for id in row['tag_ids']}
-    categories = {}
+def marks(row) -> set:
+    """What a trade's chips can match: its tags' ids, and its process rating as 'rating-5' to 'rating-1'."""
+    rating = row.get('rating')
+    return {*row['tag_ids'], *([f'rating-{rating}'] if rating in RATINGS else [])}
+
+
+def chip_groups(library, closed) -> dict:
+    """What Compare narrows by and lists, in order: each tag category in the library's order, then Process
+    rating, as {group: [chip]}, a chip being {'id', 'name', 'label', 'color', 'retired'} (a rating's id is
+    'rating-5' and so on, as marks() gives it). A category holds every active tag, and any retired one these
+    trades carry, in its order; it is left out when none of these trades has one of its tags, as Process
+    rating is when none of them is rated."""
+    carried = set().union(*(marks(row) for row in closed))
+    groups = {}
     for group in sorted(library['groups'], key=lambda g: library['groups'][g]['order']):
-        tags = sorted((t for t in library['tags'].values() if t['group'] == group and t['id'] in carried),
-                      key=lambda t: t['order'])
-        if tags:
-            categories[group] = tags
-    return categories
+        tags = sorted((t for t in library['tags'].values() if t['group'] == group
+                       and (not t['retired'] or t['id'] in carried)), key=lambda t: t['order'])
+        if any(t['id'] in carried for t in tags):
+            groups[group] = [{'id': t['id'], 'name': t['name'], 'label': t['name'], 'color': t['color'],
+                              'retired': t['retired']} for t in tags]
+    if any(f'rating-{n}' in carried for n in RATINGS):
+        # A Material star icon on the chip: IBM Plex Sans has no '★', so the browser drew it in another font.
+        groups[RATING] = [{'id': f'rating-{n}', 'name': stars(n), 'label': f'{n} :material/star:',
+                           'color': theme.RATING_COLOURS[n], 'retired': False} for n in RATINGS]
+    return groups
 
 
-def only_trades_with(journal, closed, categories) -> list[dict]:
-    """'Only trades with': a row of chips for each tag category, active tags only. The chosen chips keep the
-    trades that have all of them, for everything below on this tab; Filters have already narrowed the page."""
-    chips = {group: [t for t in tags if not t['retired']] for group, tags in categories.items()}
-    chips = {group: tags for group, tags in chips.items() if tags}
-    if not chips:
+def stars(n) -> str:
+    return f'{n} star' + ('' if n == 1 else 's')
+
+
+def listing(names) -> str:
+    """'A', 'A and B', 'A, B and C'."""
+    return ' and '.join(names) if len(names) < 3 else ', '.join(names[:-1]) + ' and ' + names[-1]
+
+
+def narrow(journal, closed, groups) -> list[dict]:
+    """'Narrow the trades': a row of chips for each group, the active tags and ratings these trades carry. A
+    click keeps only the trades with that chip (✓), the next leaves those trades out (×), the third stops using
+    it. Returns the trades with every kept chip and no left-out one, for everything below on this tab; Filters
+    have already narrowed the page. A sentence under the chips says what is applied."""
+    marked = [(row, marks(row)) for row in closed]
+    carried = set().union(*(mine for _, mine in marked))
+    offered = {group: [c for c in chips if c['id'] in carried and not c['retired']] for group, chips in groups.items()}
+    offered = {group: chips for group, chips in offered.items() if chips}
+    if not offered:
         return closed
-    names = {t['id']: t['name'] for tags in chips.values() for t in tags}
-    keys = {group: common.key(journal, 'edge-only-' + group) for group in chips}
-    remember = common.keep({key: [] for key in keys.values()})      # still chosen after another tab
-    # A chosen chip in its tag's colour, as on Trades; its words take the chip's own readable text colour. Joined
-    # into one stylesheet: only an element holding a lone <style> takes no room on the page (theme.CSS).
-    css = (theme.tag_group_css(chips) + theme.tag_colors_css(chips)
-           + tag_controls.headers_css({g: tag_controls.group_colour(g, tags) for g, tags in chips.items()})
-           + '<style>.st-key-edge-tag-chips [data-testid="stButtonGroup"] button p {color:inherit !important;}</style>')
-    st.markdown(css.replace('</style><style>', ''), unsafe_allow_html=True)
-    theme.subsection('Only trades with', help='Click tags to look only at the trades that have all of them: every '
-                                              'table below then uses just those trades. Click a tag again to remove '
-                                              'it. Filters still apply first.')
-    chosen = set()
+    state = common.key(journal, 'edge-chips')                  # {chip id: 'with' or 'without'}
+    known = {c['id'] for chips in offered.values() for c in chips}
+    # A chip the page no longer offers (the Filters changed) stops counting: nothing stays applied unseen.
+    chosen = st.session_state[state] = {id: s for id, s in st.session_state.get(state, {}).items() if id in known}
+    keys = {id: common.key(journal, 'edge-chip-' + hashlib.sha256(id.encode()).hexdigest()[:12]) for id in known}
+
+    def click(id):
+        before = st.session_state.get(state, {})
+        after = {**before, id: NEXT[before.get(id)]}
+        st.session_state[state] = {k: v for k, v in after.items() if v}
+
+    def clear():
+        st.session_state[state] = {}
+
+    colours = {group: theme.INK_2 if group == RATING else tag_controls.group_colour(group, chips)
+               for group, chips in offered.items()}
+    css = [tag_controls.headers_css(colours)]
+    for chips in offered.values():
+        for chip in chips:
+            ink, colour, selector = theme.ink_on(chip['color']), chip['color'], f'.st-key-{keys[chip["id"]]} button'
+            if ink is None:
+                continue
+            css.append({'with': f'<style>{selector} {{background:{colour} !important; border-color:{colour} !important; '
+                                f'color:{ink} !important; font-weight:600;}}</style>',
+                        'without': f'<style>{selector} {{border:1px dashed {colour} !important; color:{theme.INK_2} '
+                                   f'!important;}} {selector} p {{text-decoration:line-through;}}</style>',
+                        None: f'<style>{selector}:hover {{border-color:{colour} !important;}}</style>'}[chosen.get(chip['id'])])
+    # One stylesheet: only an element holding a lone <style> takes no room on the page (theme.CSS).
+    st.markdown(''.join(css).replace('</style><style>', ''), unsafe_allow_html=True)
+    theme.subsection('Narrow the trades', help='Click a chip once to keep only the trades with it (✓), again to '
+                                               'leave those trades out (×), and a third time to stop using it. Every '
+                                               'table, the equity curve and the trade list below then use the trades '
+                                               'left. Leaving out is how to drop, say, your 1-star trades: a trade '
+                                               'has one rating. Filters still apply first.')
     with st.container(key='edge-tag-chips', horizontal=True, gap='medium'):
-        for group, tags in chips.items():
-            with st.container(key=theme.tag_group_key(group), width='content'):
-                chosen.update(st.pills(group, [t['id'] for t in tags], selection_mode='multi', format_func=names.get,
-                                       key=keys[group], on_change=remember))
+        for group, chips in offered.items():
+            with st.container(key=theme.tag_group_key(group), width='content', gap='small'):
+                st.markdown(f"<div class='mwj-card-title'>{html.escape(group)}</div>", unsafe_allow_html=True)
+                with st.container(horizontal=True, gap='small'):
+                    for chip in chips:
+                        st.button(chip['label'], key=keys[chip['id']], on_click=click, args=(chip['id'],),
+                                  icon=ICONS.get(chosen.get(chip['id'])))
     if not chosen:
         return closed
-    shown = [row for row in closed if chosen <= set(row['tag_ids'])]
-    st.caption(f'{len(shown)} of {len(closed)} closed trades')
+    kept = {c['id'] for c in chips_in(offered) if chosen.get(c['id']) == 'with'}
+    left_out = {c['id'] for c in chips_in(offered) if chosen.get(c['id']) == 'without'}
+    shown = [row for row, mine in marked if kept <= mine and not left_out & mine]
+    applied = ', '.join(f'{word} {listing([c["name"] for c in chips_in(offered) if c["id"] in ids])}'
+                        for word, ids in (('with', kept), ('without', left_out)) if ids)
+    with st.container(horizontal=True, vertical_alignment='center', gap='small', key='edge-narrowed'):
+        st.caption(common.md(f'{applied[0].upper()}{applied[1:]} · {len(shown)} of {len(closed)} closed trades'),
+                   width='content')
+        st.button('Clear All', key=common.key(journal, 'edge-chips-clear'), on_click=clear, type='tertiary',
+                  help='Stops using every chip: back to all the trades Filters keep.')
+        tags = [(group, c) for group, chips in offered.items() if group != RATING for c in chips if c['id'] in kept]
+        if tags:
+            playbook_saver(journal, tags)
     return shown
 
 
-def tag_rows(closed, tags) -> list[dict]:
-    """One tag category's comparison: a row for each of `tags` that a trade here carries, in order and with the
-    tag's colour, then Untagged, the trades with none of them. A trade with two of them counts in both."""
-    ids = {t['id'] for t in tags}
-    trades = {id: [] for id in ids}
-    untagged = []
-    for row in closed:
-        mine = ids.intersection(row['tag_ids'])
-        for id in mine:
-            trades[id].append(row)
-        if not mine:
-            untagged.append(row)
-    rows = [{'group': t['name'], 'color': t['color'], **summary(trades[t['id']])} for t in tags if trades[t['id']]]
-    return rows + ([{'group': 'Untagged', 'color': None, **summary(untagged)}] if untagged else [])
+def chips_in(groups) -> list[dict]:
+    return [chip for chips in groups.values() for chip in chips]
 
 
-def tag_tables(closed, categories, currency) -> None:
-    """A table for each tag category, in the library's order, each tag's name in its colour. Tags no trade
-    here has are left out."""
-    if not categories:
-        st.info('None of these trades has a tag yet. Tag trades on Trades, then compare the tags here.')
+def playbook_saver(journal, tags) -> None:
+    """Save as Playbook: the tags kept (✓), as (category, chip), become a playbook with a name and a colour.
+    A playbook takes any one of its tags in a category, so it takes one kept tag per category here."""
+    with st.popover('Save as Playbook', help='Saves the tags you keep (✓) as a playbook, to apply to a trade on '
+                                             'Trades and to compare under Compare by Playbooks. Tags you leave out '
+                                             '(×) and star ratings are not part of a playbook.'):
+        rules = {}
+        for group, chip in tags:
+            rules.setdefault(group, []).append(chip['id'])
+        crowded = next((group for group, ids in rules.items() if len(ids) > 1), None)
+        if crowded:
+            st.info(f'Keep one {crowded} tag to save a playbook: a playbook takes any one of its tags in a '
+                    'category, not all of them.')
+            return
+        with st.form(common.key(journal, 'edge-save-playbook'), border=False):
+            name = st.text_input('Playbook name', max_chars=64, placeholder='A+')
+            colour = st.color_picker('Playbook color', tags[0][1]['color'])
+            if st.form_submit_button('Save Playbook', type='primary'):
+                try:
+                    journal.save_playbook(name, rules, color=colour)
+                    st.success(f'Saved {name.strip()}. Apply it to a trade under its tags, or compare it under '
+                               'Compare by Playbooks.')
+                except ValueError as exc:
+                    st.error(str(exc))
+
+
+def line(name, colour, trades) -> dict:
+    """One row of a Compare table: `name` (in `colour`, if any) and the summary of `trades`, empty at 0."""
+    stat = summary(trades)
+    return {'group': name, 'color': colour, **stat, 'net': stat['net'] if trades else None}
+
+
+def tag_tables(narrowed, groups, currency) -> None:
+    """Totals (all, wins and losses), then a table for each group: every tag of a category in order, even at 0
+    trades, then the trades with none of them; Process rating from 5 stars to 1, then Not rated. A trade with
+    two tags of a category counts in both. Side by side on a wide window, fewer to a row on a narrow one."""
+    if not groups:
+        st.info('None of these trades has a tag or a rating yet. Tag and rate trades on Trades, then compare them here.')
         return
-    for group, tags in categories.items():
-        rows = tag_rows(closed, tags)
-        theme.subsection(group)
-        inks = [theme.ink_on(row['color']) for row in rows]
-        styles = [f'background-color: {row["color"]}; color: {ink}' if ink else '' for row, ink in zip(rows, inks)]
-        table = compare_table(rows, 'Tags', currency).apply(lambda _: styles, subset=['Tag'])
-        st.dataframe(table, hide_index=True, width='stretch', column_order=TAG_COLUMNS,
-                     height=min(430, 36 + 35 * len(rows)), placeholder='—')
+    tables = [('Totals', theme.INK, [line('All trades', None, narrowed),
+                                     line('Wins', theme.UP, [r for r in narrowed if r['net'] > 0]),
+                                     line('Losses', theme.DOWN, [r for r in narrowed if r['net'] < 0])])]
+    marked = [(row, marks(row)) for row in narrowed]
+    for group, chips in groups.items():
+        trades = {c['id']: [] for c in chips}
+        none = []
+        for row, mine in marked:
+            hit = mine.intersection(trades)
+            for id in hit:
+                trades[id].append(row)
+            if not hit:
+                none.append(row)
+        rows = [line(c['name'], c['color'], trades[c['id']]) for c in chips]
+        if none:
+            rows.append(line('Not rated' if group == RATING else f'No {group} tag', None, none))
+        tables.append((group, theme.INK_2 if group == RATING else tag_controls.group_colour(group, chips), rows))
+    with st.container(key='edge-tables', horizontal=True):
+        for title, colour, rows in tables:
+            st.markdown(table_html(title, colour, rows, currency), unsafe_allow_html=True)
+    small_sample_note()
+
+
+def table_html(title, colour, rows, currency) -> str:
+    """One compact table, the way a trader reads it down a page: the title over the names, then Trades, Net
+    P&L, Win % and Average Trade in whole amounts. Each name in its colour, faded when no trade has it; a
+    result green or red; the numbers of a row with fewer than SMALL_SAMPLE trades grey."""
+    def amount(value):
+        if value is None:
+            return "<td class='n'>—</td>"
+        tone = ' up' if value > 0 else ' down' if value < 0 else ''
+        return f"<td class='n{tone}'>{html.escape(money(value, currency, decimals=0)).replace('$', '&#36;')}</td>"
+
+    body = []
+    for row in rows:
+        ink = theme.ink_on(row['color'])
+        style = f" style='background:{row['color']};color:{ink}'" if ink else ''
+        state, tip = (('none', 'None of these trades') if not row['count'] else
+                      ('small', f'Fewer than {SMALL_SAMPLE} trades: too few to judge') if row['count'] < SMALL_SAMPLE
+                      else ('', ''))
+        body.append(f"<tr class='{state}'{f' title=\"{tip}\"' if tip else ''}><td class='t'{style}>"
+                    f"{html.escape(row['group'])}</td><td class='n'>{row['count']}</td>{amount(row['net'])}"
+                    f"<td class='n'>{'—' if row['win_rate'] is None else format(row['win_rate'], '.1f') + '%'}</td>"
+                    f"{amount(row['expectancy'])}</tr>")
+    return (f"<table class='mwj-edge-table'><thead><tr><th class='t' style='color:{colour}'>{html.escape(title)}</th>"
+            "<th>Trades</th><th>Net P&amp;L</th><th>Win %</th><th>Average Trade</th></tr></thead>"
+            f"<tbody>{''.join(body)}</tbody></table>")
+
+
+def painted(rows, field, currency):
+    """compare_table() with a name that has a colour (a playbook's) in it, in a text colour that reads on it,
+    and the numbers of a row with fewer than SMALL_SAMPLE trades in grey, as in the tag tables."""
+    def paint(frame):
+        styles = pd.DataFrame('', index=frame.index, columns=frame.columns)
+        for index, row in enumerate(rows):
+            ink = theme.ink_on(row.get('color'))
+            if ink:
+                styles.iloc[index, 0] = f'background-color: {row["color"]}; color: {ink}'
+            if row['count'] < SMALL_SAMPLE:
+                styles.iloc[index, 1:] = f'color: {theme.MUTED}'
+        return styles
+    return compare_table(rows, field, currency).apply(paint, axis=None)
+
+
+def small_sample_note() -> None:
+    st.caption(f'Grey numbers: fewer than {SMALL_SAMPLE} trades, too few to judge.',
+               help=f'A row needs about {SMALL_SAMPLE} trades before its numbers mean much, and your journal 100 to '
+                    '150 trades in all before you judge what works. A faded tag has none of these trades: every tag '
+                    'stays listed, so you see what narrowing leaves out.')
+
+
+def these_trades(journal, narrowed, groups) -> None:
+    """Under the tables: the equity curve of the trades the chips leave, then those trades, newest first, each
+    opening on Trades."""
+    zone = common.display_zone(journal)
+    currency = narrowed[0]['currency']
+    ordered = sorted(narrowed, key=lambda r: r['closed'])
+    st.markdown('### Equity Curve of These Trades',
+                help='The running total of the trades the chips leave, after recorded fees, in exit order. As you '
+                     'take away what does not work, it should rise more steadily.')
+    chart(journal, progress_chart(ordered, [('Net total', list(itertools.accumulate(r['net'] for r in ordered)),
+                                             theme.SERIES[0])], zone, currency=currency, height=260),
+          'compare-equity', keep_layout=True)
+    limit_key = common.key(journal, 'edge-list-limit')
+    limit = st.session_state.get(limit_key, LIST_LIMIT)
+    newest = ordered[::-1]
+    st.markdown('### These Trades', help='Newest first. Click a trade to open it on Trades.')
+    chips = {c['id']: c for c in chips_in(groups) if not c['id'].startswith('rating-')}
+    st.markdown(LIST_CSS, unsafe_allow_html=True)
+    with st.container(key='edge-list', gap=None):
+        for row in newest[:limit]:
+            with st.container(key='edge-row-' + hashlib.sha256(row['id'].encode()).hexdigest()[:16], gap=None):
+                st.markdown(trade_html(row, chips, zone), unsafe_allow_html=True)
+                st.button(common.md(f'{common.moment(row["opened"], zone, seconds=False)} {row["symbol"]} '
+                                    f'{row["direction"].title()} {row["max_qty"]:g} {money(row["net"], row["currency"])}'),
+                          key=common.key(journal, 'edge-open-' + row['id']), on_click=open_trade,
+                          args=(journal, row['id']), width='stretch')
+    if len(newest) > limit:
+        st.button('Show More Trades', key=common.key(journal, 'edge-list-more'),
+                  on_click=lambda: st.session_state.update({limit_key: limit + LIST_LIMIT}))
+
+
+def trade_html(row, chips, zone) -> str:
+    """One trade of the list: when, contract, side and size, net P&L, rating, then its tags in their colours."""
+    mine = set(row['tag_ids'])
+    tags = ''.join(f"<span class='tag' style='background:{c['color']};color:{theme.ink_on(c['color'])}'>"
+                   f"{html.escape(c['name'])}</span>" if theme.ink_on(c['color']) else
+                   f"<span class='tag'>{html.escape(c['name'])}</span>" for id, c in chips.items() if id in mine)
+    rating = row.get('rating')
+    rated = (f"<span class='r' style='color:{theme.RATING_COLOURS[rating]}'>{stars(rating)}</span>"
+             if rating in RATINGS else "<span class='r'>Not rated</span>")
+    tone = 'mwj-win' if row['net'] > 0 else 'mwj-loss' if row['net'] < 0 else 'mwj-flat'
+    side = 'Long' if row['direction'] == 'long' else 'Short'
+    return (f"<div class='mwj-edge-trade'><span class='w'>{common.moment(row['opened'], zone, seconds=False)}</span>"
+            f"<span class='c'>{html.escape(row['symbol'])}</span>"
+            f"<span class='s'><b class='{row['direction']}'>{side}</b> {row['max_qty']:g}</span>"
+            f"<span class='p {tone}'>{html.escape(money(row['net'], row['currency'])).replace('$', '&#36;')}</span>"
+            f"{rated}<span class='g'>{tags}</span></div>")
+
+
+def open_trade(journal, id) -> None:
+    """Shows this trade on Trades, as a click on its row there does: not a Daily Report Card."""
+    st.session_state.update(common.navigation('Trades'))
+    st.session_state[common.key(journal, 'selected-trade')] = id
+    st.session_state[common.key(journal, REPORT)] = False
 
 
 def compare_table(grouped_rows, field, currency):
