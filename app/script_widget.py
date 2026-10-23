@@ -12,7 +12,7 @@ import streamlit as st
 import streamlit.components.v1 as components
 
 import common
-from mwjournal import fonts
+from mwjournal import fonts, tagging
 
 FONT_FILE = Path(__file__).resolve().parent / 'static' / fonts.FOLDER / fonts.FACES[0][0]    # Regular
 
@@ -31,8 +31,11 @@ def font_face() -> str:
             f'src:url(data:font/woff2;base64,{data}) format("woff2")}}')
 
 
-def document(rows, tags, code):
-    fields = ('id', 'symbol', 'market', 'direction', 'opened', 'closed', 'net', 'gross', 'r', 'tags', 'tag_ids', 'tag_score', 'ratings')
+def document(rows, library, code):
+    """The page a Script widget runs `code` in, given `rows` and the tags of `library`. Each trade has its Rating
+    (1 to 5 stars), and its Tag score once a tag has a score (tagging.scored)."""
+    fields = ('id', 'symbol', 'market', 'direction', 'opened', 'closed', 'net', 'gross', 'r', 'rating', 'tags', 'tag_ids',
+              *(('tag_score',) if tagging.scored(library) else ()))
     safe_rows = [{key: row.get(key) for key in fields} for row in rows]
     def data(value):
         return json.dumps(value, allow_nan=False).replace('<', '\\u003c').replace('>', '\\u003e').replace('&', '\\u0026')
@@ -45,7 +48,7 @@ def document(rows, tags, code):
             '<style>' + font_face() + 'body{background:#1d1e1f;color:#e8e8e5;font:13px ' + fonts.STACK +
             ';margin:12px}canvas{width:100%;height:230px}</style>'
             '<div id="root">Calculating…</div><canvas id="chart" hidden></canvas><script>const input=' +
-            data({'rows': safe_rows, 'tags': tags, 'code': code, 'font': fonts.STACK}) + ';' + RENDERER + '</script>')
+            data({'rows': safe_rows, 'tags': library['tags'], 'code': code, 'font': fonts.STACK}) + ';' + RENDERER + '</script>')
 
 
 RENDERER = r"""
@@ -87,8 +90,8 @@ def render(journal, rows, widget, key):
         st.session_state[armed] = signature
     if st.session_state.get(armed) == signature:
         if hasattr(st, 'iframe'):
-            st.iframe(document(rows, journal.tag_library()['tags'], widget.get('code') or STARTER), height=280)
+            st.iframe(document(rows, journal.tag_library(), widget.get('code') or STARTER), height=280)
         else:  # the documented >=1.49 lower bound predates st.iframe
-            components.html(document(rows, journal.tag_library()['tags'], widget.get('code') or STARTER), height=280)
+            components.html(document(rows, journal.tag_library(), widget.get('code') or STARTER), height=280)
     else:
         st.caption('Not running. Edited scripts or a changed trade sample require a fresh click. External CDN libraries are not loaded.')

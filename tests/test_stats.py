@@ -237,7 +237,7 @@ def test_compare_lists_every_tag_and_star_rating_with_totals_and_marks_small_sam
     assert widget(app.selectbox, 'Compare by').value == 'Tags'
     # The chips: each category in the library's order, the tags these trades carry, then the ratings they have.
     titles = [re.sub('<[^>]+>', '', m.value) for m in app.markdown if 'mwj-card-title' in m.value and '<style>' not in m.value]
-    assert titles == ['Setup', 'Execution', 'Mindset', 'Process rating']
+    assert titles == ['Setup', 'Execution', 'Mindset', 'Rating']
     assert chips(app) == [('Breakout', ''), ('Pullback', ''), ('Followed Plan', ''), ('Chased Entry', ''), ('Calm', ''),
                           ('FOMO', ''), ('5' + STAR, ''), ('1' + STAR, '')]
     assert narrowed(app) is None
@@ -257,13 +257,13 @@ def test_compare_lists_every_tag_and_star_rating_with_totals_and_marks_small_sam
         ('Mindset', {'Calm': ('1', '+$196', '100.0%', '+$196', small), 'Patient': ('0', '—', '—', '—', 'none'),
                      'FOMO': ('1', '-$104', '0.0%', '-$104', small), 'Hesitant': ('0', '—', '—', '—', 'none'),
                      'Tilted': ('0', '—', '—', '—', 'none'), 'No Mindset tag': ('1', '+$496', '100.0%', '+$496', small)}),
-        ('Process rating', {'5 stars': ('1', '+$196', '100.0%', '+$196', small), '4 stars': ('0', '—', '—', '—', 'none'),
+        ('Rating', {'5 stars': ('1', '+$196', '100.0%', '+$196', small), '4 stars': ('0', '—', '—', '—', 'none'),
                             '3 stars': ('0', '—', '—', '—', 'none'), '2 stars': ('0', '—', '—', '—', 'none'),
                             '1 star': ('1', '-$104', '0.0%', '-$104', small),
                             'Not rated': ('1', '+$496', '100.0%', '+$496', small)})]
     page = next(m.value for m in app.markdown if "<th class='t' style='color:#65CA98'>Setup</th>" in m.value)
     assert f"style='background:#65CA98;color:{theme.ink_on('#65CA98')}'>Breakout<" in page
-    rating = next(m.value for m in app.markdown if '>Process rating</th>' in m.value)
+    rating = next(m.value for m in app.markdown if '>Rating</th>' in m.value)
     assert f"background:{theme.RATING_COLOURS[5]}" in rating and f"background:{theme.RATING_COLOURS[1]}" in rating
     note = next(c for c in app.caption if 'fewer than 10 trades' in c.value)
     assert '100 to 150' in note.proto.help
@@ -287,7 +287,7 @@ def test_a_chip_keeps_then_leaves_out_then_stops_and_says_so_in_words():
     click(app, '1' + STAR, '1' + STAR)
     assert ('1' + STAR, 'close') in chips(app)
     assert narrowed(app) == 'With Breakout, without 1 star · 1 of 3 closed trades'
-    assert dict(tables(app))['Process rating']['1 star'] == ('0', '—', '—', '—', 'none')
+    assert dict(tables(app))['Rating']['1 star'] == ('0', '—', '—', '—', 'none')
     click(app, 'Breakout')
     assert narrowed(app) == 'Without Breakout and 1 star · 1 of 3 closed trades'
     assert dict(tables(app))['Setup']['Pullback'][0] == '1'

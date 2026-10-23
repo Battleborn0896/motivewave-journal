@@ -166,7 +166,7 @@ def stylesheets():
     yield 'theme.CSS', theme.CSS
     yield 'tag_controls.PANEL_CSS', tag_controls.PANEL_CSS
     yield 'views/trades.CSS', trades.CSS
-    yield 'script widget', script_widget.document([], {}, script_widget.STARTER)
+    yield 'script widget', script_widget.document([], {'tags': {}}, script_widget.STARTER)
     for component in sorted(COMPONENTS.glob('*/index.html')):
         yield component.parent.name, component.read_text(encoding='utf-8')
 
@@ -252,7 +252,7 @@ def test_the_chart_waits_for_the_font_before_drawing_on_its_canvas():
 
 
 def test_script_widgets_carry_plex_inside_their_network_denied_page():
-    page = script_widget.document([], {}, script_widget.STARTER)
+    page = script_widget.document([], {'tags': {}}, script_widget.STARTER)
     assert "font-src data:" in page and "connect-src 'none'" in page
     encoded = re.search(r'url\(data:font/woff2;base64,([A-Za-z0-9+/=]+)\)', page).group(1)
     assert base64.b64decode(encoded) == (FONTS / fonts.FACES[0][0]).read_bytes()

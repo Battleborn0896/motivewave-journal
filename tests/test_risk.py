@@ -320,8 +320,8 @@ def test_notes_has_one_stop_box_filled_from_the_stop_order_and_saying_its_risk(h
                    for w in [*app.text_input, *app.number_input])
     assert said(app.caption, 'From your stop order, 10 seconds after entry · risk \\$200.00')
     assert not any(b.label == 'Save Plan' for b in app.button)              # every box saves by itself
-    widget(app.selectbox, 'Followed my plan').set_value('Yes').run()       # another box saved: the stop stays the order's
-    assert journal.annotations()[t.id]['adherence'] == 'Yes'
+    widget(app.text_area, 'Review notes').set_value('Kept the order.').run()   # another box saved: the stop stays the order's
+    assert journal.annotations()[t.id]['notes'] == 'Kept the order.'
     assert 'planned_stop' not in journal.annotations()[t.id]
     widget(app.text_input, 'Stop').set_value('4990').run()
     assert journal.annotations()[t.id]['planned_stop'] == 4990

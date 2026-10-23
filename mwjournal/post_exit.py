@@ -179,10 +179,7 @@ def runner_groups(rows, field='tags'):
         if (row.get('coverage') not in ('window-observed', 'stop-observed') or row.get('extra_mfe') is None
                 or row.get('stop_price') is None):
             continue  # partial windows are not cherry-picked into group averages
-        if field in ('tags', 'tag_categories'):
-            values = row.get(field) or ['Untagged' if field == 'tags' else 'Uncategorized']
-        else:
-            values = [row.get(field) or 'Unspecified']
+        values = row.get(field) or ['Untagged' if field == 'tags' else 'Uncategorized']
         for value in set(values):
             groups[(value, row['precision'])].append(row)
     result = []

@@ -269,6 +269,27 @@ def test_starter_tags_can_be_renamed_recoloured_retired_and_deleted_and_never_co
     assert journal.annotations()[trade.id]['tags'] == ['Breakout']
 
 
+def test_a_tag_or_category_only_a_rating_system_of_0_4_16_names_can_be_deleted(tmp_path):
+    from mwjournal import workspace
+    journal = Journal(tmp_path / 'live.db')
+    chased, calm = tag_id(journal, 'Chased Entry'), tag_id(journal, 'Calm')
+    old = {'old': {'id': 'old', 'name': 'Process', 'rules': [
+        {'name': 'Patient', 'weight': 1, 'rules': {'Execution': [chased]}, 'when': {'Execution': [chased]}}]}}
+    with journal.connect() as db:                  # stored as 0.4.16 saved it; no page shows or uses it any more
+        state = workspace.read(db)
+        state['ratings'] = old
+        workspace.write(db, state)
+    journal.save_filter('Calm', {'tags_all': [calm]})
+    with pytest.raises(ValueError, match='Calm is named in a filter, checklist or draft'):
+        journal.delete_tag(calm)                                         # a filter still uses it
+    for id, tag in list(journal.tag_library()['tags'].items()):
+        if tag['group'] == 'Execution':
+            journal.delete_tag(id)
+    journal.delete_tag_group('Execution')
+    assert 'Execution' not in journal.tag_library()['groups'] and chased not in journal.tag_library()['tags']
+    assert journal.workspace()['ratings'] == old                         # left stored, unread
+
+
 def test_an_existing_library_is_never_given_the_starters_or_rewritten(tmp_path):
     journal = Journal(tmp_path / 'live.db')
     # What 0.4.0 stored, less the day-tag time zone the schema 4 upgrade took out: its hidden suggestions plus a

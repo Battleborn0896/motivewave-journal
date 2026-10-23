@@ -354,8 +354,8 @@ tags, categories and reviews are kept exactly as they are.
 
 The sidebar has three pages: **Trades**, **Stats** and **Settings**. Trades holds the session tools (the bar
 at the top), the Daily Report Card (click a day's header) and each trade's checklist; Stats holds the
-dashboards (its last tab); Settings holds tags and checklists, rating systems, and data (imports, backups,
-journals, the connection), each two clicks from the sidebar. Under the pages, the sidebar says whether the
+dashboards (its last tab); Settings holds tags and checklists, and data (imports, backups, journals, the
+connection), each two clicks from the sidebar. Under the pages, the sidebar says whether the
 study is **Recording**, **Not recording** or **Needs attention** (see *Build and connect the study*); click it
 to open Settings.
 The trade list stays on the left while the selected trade's chart and tags stay on the right.
@@ -365,9 +365,11 @@ toggle it; changes save automatically. **+ Tag** creates a reusable tag and appl
 trade; **+ Category** creates a category. **More Tagging Tools → Copy Tags From Another Trade** adds
 another trade's tags without replacing existing tags or notes. Day tags you explicitly select are
 inherited by trades opened on that date in your Time Zone; otherwise no trade is automatically tagged.
+A trade's setup is a **Setup** tag: click it, or make a new one with **+ Tag**. Under the tags, **Rating** is
+1 to 5 stars for how well you traded your plan, the one grade a trade has; Stats compares and filters by it.
+**Tag score**, the sum of scores you give tags in Settings → Tags, Playbooks & Checklists, shows only once a
+tag has a score.
 Settings → Data → Connection also lets you pick a recorded instrument instead of retyping its symbol.
-**Notes → Use saved setup** applies an existing setup/playbook name in one selection;
-new setup names can still be entered normally.
 
 **Time Zone** is on **Settings**. Every time is shown in it, and every trading day runs from midnight to
 midnight there, in Live and Replay: the trade list's days, the calendar, Stats' dates, the Daily Report Card
@@ -409,12 +411,12 @@ cannot safely be divided by an arbitrary size to invent a price path. Source qua
 replay simulation and capture-gap warnings remain visible. Points and currency can therefore select
 different measurement sources. Points remain available without a cash multiplier; currency/R do not.
 
-Stats uses in-place tabs: **Overview** for cumulative results, **Compare** for tag/setup or
-market/time comparisons, **MAE / MFE** for price/position excursions, **Runners** for the separate
+Stats uses in-place tabs: **Overview** for cumulative results, **Compare** for tag (Setup tags and
+Rating included), playbook, market and time comparisons, **MAE / MFE** for price/position excursions, **Runners** for the separate
 post-exit hypothesis, and **Dashboards**, always last. Tables lead with sample count and average net result per trade. Comparisons
 are descriptions of your recorded sample, not proof of an edge. **Customize** saves the
 visible tabs and their order per environment (Dashboards always stays). Filters support all/any selected tags, excluded
-tags, direction, process rating and playbook combinations. Required historical tag aliases still
+tags, direction, Rating and playbook combinations. Required historical tag aliases still
 resolve after a rename; unknown required names match nothing, not everything.
 
 **Settings → Tags, Playbooks & Checklists** edits names, colors, group membership, order and availability on
@@ -439,9 +441,11 @@ and [MNQ specifications](https://www.cmegroup.com/markets/equities/nasdaq/micro-
 These are not spread/option specifications; contract-specific overrides are stored separately.
 
 Use the in-place **Notes** and **Checklist** tabs and the **More** tab (MAE / MFE, Executions, Runner)
-instead of scrolling through a long stacked page. Every review box (setup, notes, Stop, Followed my plan, and
-each box of the Daily Report Card) saves when it changes or you leave it; there is no Save button, and clicking
-another trade or day keeps what was typed. **Prev / Next** reviews adjacent trades while
+instead of scrolling through a long stacked page. A trade's review is its note and its Stop. Every review box
+(the note, the Stop, and each box of the Daily Report Card) saves when it changes or you leave it; there is no
+Save button, and clicking another trade or day keeps what was typed. Opening a journal from 0.4.16 or earlier
+once turns each typed setup into a Setup tag and each Followed my plan answer into an Execution tag (Yes is
+Followed Plan, No is Broke Plan); the old answers stay stored, unread. **Prev / Next** reviews adjacent trades while
 the list remains visible. A tag edit that removes the current trade from your filters keeps it
 open until you change the filter/selection, rather than interrupting the review. Existing flat tags
 remain under **Other tags**. **+ Category** creates first-class groups such as Orderflow or Psychology,
@@ -471,18 +475,17 @@ no rollover price gaps are silently adjusted, and one expiry's ticks never subst
 
 **Stats → Dashboards → Customize Page** creates/clones/renames pages, chooses 1–3 columns, adds/edits/removes
 and reorders widgets. Summary, equity, drawdown, calendar, comparisons, distributions, MAE/MFE,
-tag scores, ratings, radar, trades and custom-statistics widgets are independently configurable.
+tag score, Rating, radar, trades and custom-statistics widgets are independently configurable.
 The default uses two independently stacked columns so the calendar doesn't push the equity curve
 below an unnecessarily tall row. Global saved filters, page filters and widget filters intersect;
 they never modify captured trades. Saved tag rules use stable identities. Calendar buttons open
 the exact day's Report Card on Trades. **Settings** sets the Time Zone the calendar's days follow, and hides
 weekends under Advanced.
 
-Tag scores are signed values configured on each tag. A trade's score is the sum of its selected
-tag scores; a widget can restrict the contributing tags. **Settings → Rating Systems** creates
-weighted tag criteria, optionally applicable only when a playbook matches. Ratings are satisfied
-weight / applicable weight × 100, or unavailable when no criterion applies. Manual stars stay
-independent. These are process measures, not P&L, forecasts, or claims of Tradecraft's exact formula.
+A **Rating** widget charts each trade's stars, 1 to 5. Tag scores are signed values configured on each tag; a
+trade's score is the sum of its selected tag scores, and a widget can restrict the contributing tags. The Tag
+score widget, measure and filter appear once a tag has a score; a widget saved before then still draws. These
+are process measures, not P&L, forecasts, or claims of Tradecraft's exact formula.
 
 **Settings → Tags, Playbooks & Checklists → Checklists** contains an offline drag-and-connect node canvas: questions, answers, pass-through
 and counter nodes; selection, duplication, color/text/tag edits, alignment, start-node choice,
@@ -553,7 +556,7 @@ In Trades, open **More → Runner** and expand **Could I Have Let This Trade Run
 **Runners** and expand **Which Tags Have Room for Runners?**. Choose a fixed 5/15/30/60/120-minute horizon. Analysis reports extra peak gross profit,
 adverse movement, the observed fixed-horizon result, and approximate time to the peak. The
 hypothesis retains only the final exit fill's quantity; earlier partial exits remain unchanged.
-R statistics need the trade's stop. Compare winners or exits near 1R by tag/setup.
+R statistics need the trade's stop. Compare winners or exits near 1R by tag or tag category.
 Choose an explicit frozen stop: your stop (the one R uses), recorded working
 stop at exit, or entry-average gross breakeven. Missing/ambiguous stop levels stay unavailable.
 Tracking ends at the FIRST observed stop touch or the pre-selected horizon. Peaks after a stop

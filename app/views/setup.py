@@ -1,10 +1,10 @@
-"""Settings: is the study recording, the two settings, and the three pages of real setup.
+"""Settings: is the study recording, the two settings, and the two pages of real setup.
 
 The first page reads top to bottom: one status line, Recording, Not recording or Needs attention, green and alone
 when the study records; under it, one line saying the one thing to do when there is something (install the study,
 add it to a chart, open MotiveWave, or update an older study); Time Zone and MAE / MFE Units, with hide weekends
-under a small Advanced heading; a tile each for Tags, Playbooks & Checklists, Rating Systems and Data, with a link
-to each of their tabs; and one About line. Bridge paths and raw errors are on Data → Connection. The other pages
+under a small Advanced heading; a tile each for Tags, Playbooks & Checklists and Data, with a link to each of
+their tabs; and one About line. Bridge paths and raw errors are on Data → Connection. The other pages
 are drawn by the parent through ``tool``, under a button back to this one.
 
 Everything that was its own page before 0.4.5 is still at most two clicks from the sidebar: Settings, then a
@@ -29,17 +29,15 @@ PageRenderer = Callable[[str], None]
 DisplayRenderer = Callable[[Any, list[dict]], None]
 
 HOME = 'Settings'
-PAGES = (HOME, 'Tags', 'Ratings', 'Data')
-LABELS = {HOME: 'Settings', 'Tags': 'Tags, Playbooks & Checklists', 'Ratings': 'Rating Systems', 'Data': 'Data'}
+PAGES = (HOME, 'Tags', 'Data')
+LABELS = {HOME: 'Settings', 'Tags': 'Tags, Playbooks & Checklists', 'Data': 'Data'}
 PAGE_HELP = {
     'Tags': 'Tag categories, tags, playbooks and day tags, and the branching checklists you run on a trade.',
-    'Ratings': 'Weighted process ratings built from your tags, for dashboard widgets.',
     'Data': 'Import trades, export and back up, named journals and account names, and the connection to MotiveWave.',
 }
 # The tabs of each page, linked one by one from its tile so every one is two clicks from the sidebar.
 TABS = {'Tags': ('Tags', 'Categories', 'Playbooks', 'Checklists'),
         'Data': ('Import Trades', 'Export & Backup', 'Journals & Accounts', 'Connection')}
-BLURB = {'Ratings': 'Score how well a trade followed your rules, from its tags.'}
 
 # One line per state: what it means, first in the status line's ?. Needs attention also says it under the status;
 # Not recording has the one step to take there instead (STEPS). Never a path or a raw error.
@@ -244,18 +242,15 @@ def step(link) -> None:
 
 
 def pages() -> None:
-    """Tags, Playbooks & Checklists; Rating Systems; Data: a tile each, with a link to each of its tabs."""
+    """Tags, Playbooks & Checklists; Data: a tile each, with a link to each of its tabs."""
     theme.section('More Settings')
     for column, page in zip(st.columns(len(PAGES) - 1), PAGES[1:]):
         with column.container(border=True, height='stretch', key='setup-page-' + page.lower()):
             st.button(LABELS[page] + ' ›', key='setup-open-' + page, type='tertiary', on_click=open_page(page),
                       help=PAGE_HELP[page])
-            if page in TABS:
-                with st.container(horizontal=True, gap='small'):
-                    for tab in TABS[page]:
-                        st.button(tab, key=f'setup-tab-{page}-{tab}', type='tertiary', on_click=open_page(page, tab))
-            else:
-                st.caption(BLURB[page])
+            with st.container(horizontal=True, gap='small'):
+                for tab in TABS[page]:
+                    st.button(tab, key=f'setup-tab-{page}-{tab}', type='tertiary', on_click=open_page(page, tab))
 
 
 def about(link=None) -> None:

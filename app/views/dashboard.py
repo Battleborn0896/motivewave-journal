@@ -63,6 +63,8 @@ def filter_editor(journal, rows, prefix, old=None):
                 result.update(start=period[0].isoformat(), end=period[1].isoformat())
         choices = {'score': 'Signed tag score', 'net': 'Net P&L', 'r': 'Result in R', 'mae': 'MAE · currency',
                    'mfe': 'MFE · currency', 'quantity': 'Peak quantity', 'duration': 'Duration · minutes'}
+        if not tagging.scored(library) and old.get('score_min') is None and old.get('score_max') is None:
+            del choices['score']
         ranges = st.multiselect('Numbers to limit', list(choices),
                                 default=[name for name in choices if old.get(name + '_min') is not None or old.get(name + '_max') is not None],
                                 format_func=choices.get, key=key('numeric-fields'),
@@ -130,28 +132,29 @@ def customize(journal, rows, page_id, page):
                              format_func=lambda i: '+ Add a widget' if i == 'new' else widgets[i]['title'],
                              key=common.key(journal, 'widget-edit-' + page_id))
     old = widgets[selected] if selected != 'new' else {}
+    # Tag score is offered once a tag has a score (tagging.scored); a widget saved with it keeps it.
+    scored = tagging.scored(journal.tag_library())
+    kinds = [k for k in WIDGETS if k != 'Tag score' or scored or old.get('kind') == k]
+    metrics = [m for m in METRICS if m != 'Tag score' or scored or old.get('metric') == m]
     with st.form(common.key(journal, 'widget-form-' + page_id + '-' + str(selected))):
-        kind = st.selectbox('Widget type', WIDGETS, index=WIDGETS.index(old.get('kind', 'Equity')))
+        kind = st.selectbox('Widget type', kinds, index=kinds.index(old.get('kind', 'Equity')))
         title = st.text_input('Widget title', old.get('title', ''), max_chars=80)
-        metric = st.selectbox('Series metric', METRICS, index=METRICS.index(old.get('metric', 'Net P&L')))
+        metric = st.selectbox('Series metric', metrics, index=metrics.index(old.get('metric', 'Net P&L')))
         group = st.selectbox('Compare by', GROUPS, index=GROUPS.index(old.get('group', 'Market')))
         axis = st.selectbox('Along the bottom', list(AXES), format_func=AXES.get,
                             index=list(AXES).index(old.get('axis', 'trade')) if old.get('axis', 'trade') in AXES else 0,
                             help='For line widgets. Trade number puts trades side by side, so nights and weekends '
                                  'take no room; date and time uses your display time zone.')
-        ratings = journal.workspace()['ratings']
-        rating_id = st.selectbox('Rating definition', [None, *ratings],
-                                 format_func=lambda id: ratings[id]['name'] if id else 'No rating model',
-                                 index=([None, *ratings].index(old.get('rating_id')) if old.get('rating_id') in ratings else 0))
-        included = st.multiselect('Score only these tags · empty means all', list(journal.tag_library()['tags']),
-                                  default=old.get('score_tags', []),
-                                  format_func=lambda id: journal.tag_library()['tags'][id]['name'])
+        included = old.get('score_tags', [])
+        if scored:
+            included = st.multiselect('Score only these tags · empty means all', list(journal.tag_library()['tags']),
+                                      default=included, format_func=lambda id: journal.tag_library()['tags'][id]['name'])
         code = st.text_area('Local script · Script widgets only', value=old.get('code', script_widget.STARTER),
                             height=110, max_chars=30000)
         filters = filter_editor(journal, rows, f'widget-{page_id}-{selected}', old.get('filters'))
         if st.form_submit_button('Save Widget', type='primary'):
             updated = {'kind': kind, 'title': title or kind, 'metric': metric, 'group': group, 'axis': axis,
-                       'rating_id': rating_id, 'score_tags': included, 'filters': filters, 'code': code}
+                       'score_tags': included, 'filters': filters, 'code': code}
             new = [dict(w) for w in widgets]
             if selected == 'new':
                 new.append(updated)
@@ -184,8 +187,8 @@ def values(journal, rows, widget):
     library = journal.tag_library()
     result = []
     for row in rows:
-        val = (row.get('ratings', {}).get(widget.get('rating_id')) if field == 'rating' else
-               tag_score(library, row['tag_ids'], widget['score_tags']) if field == 'tag_score' and widget.get('score_tags') else row.get(field))
+        val = (tag_score(library, row['tag_ids'], widget['score_tags']) if field == 'tag_score' and widget.get('score_tags')
+               else row.get(field))
         if row['status'] == 'closed' and val is not None:
             result.append({**row, 'value': val})
     return sorted(result, key=lambda r: r['closed'])
@@ -244,11 +247,11 @@ def draw(journal, rows, widget, page_id):
         fig = go.Figure(go.Scatterpolar(r=vals + vals[:1], theta=axes + axes[:1], fill='toself', name='Tagged trades %'))
         fig.update_layout(polar=dict(radialaxis=dict(range=[0, 100])))
     else:
-        # Score/rating widgets select their own metric, not the default P&L.
+        # Tag score and Rating widgets chart their own measure, not the default P&L: a Rating widget the trade's stars.
         widget = {**widget, 'metric': 'Tag score' if kind == 'Tag score' else 'Rating' if kind == 'Rating' else widget.get('metric', 'Net P&L')}
         data = values(journal, closed, widget)
         if not data:
-            st.info('No closed values to show. A rating needs a rating system chosen in the widget; R needs a stop.')
+            st.info('No closed values to show. A Rating needs stars clicked on the trade; R needs a stop.')
             return
         frame = pd.DataFrame(data)
         money = widget['metric'] in ('Net P&L', 'Gross P&L')
@@ -293,6 +296,8 @@ def formatter(metric, currency):
         return lambda v: common.money(v, currency)
     if metric == 'R':
         return lambda v: '—' if v is None else f'{v:+.2f}R'
+    if metric == 'Rating':
+        return lambda v: '—' if v is None else f'{v:g} star' + ('' if v == 1 else 's')
     return lambda v: '—' if v is None else f'{v:+,.2f}'.rstrip('0').rstrip('.')
 
 

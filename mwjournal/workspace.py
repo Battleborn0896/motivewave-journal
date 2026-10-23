@@ -34,7 +34,7 @@ def label(value, limit=80):
 
 def read(db):
     row = db.execute("SELECT value FROM journal_meta WHERE key='workspace'").fetchone()
-    return {**{'version': 1, 'dashboards': {}, 'filters': {}, 'ratings': {}, 'checklists': {},
+    return {**{'version': 1, 'dashboards': {}, 'filters': {}, 'checklists': {},
                'runs': {}, 'checkins': {}, 'drafts': {}, 'videos': {}, 'preferences': {}},
             **(json.loads(row[0]) if row else {})}
 
@@ -54,7 +54,7 @@ def time_zone(db) -> str:
 
 
 # Saved-filter fields a trade passes by having any one of the values listed: its account, exact contract,
-# market, direction, status (closed, open or incomplete) and process rating (1 to 5).
+# market, direction, status (closed, open or incomplete) and Rating (1 to 5 stars).
 CHOICES = ('accounts', 'symbols', 'markets', 'directions', 'status', 'ratings')
 # Number limits, each as name_min and name_max: signed tag score, net P&L, R, MAE and MFE in account currency,
 # peak quantity and minutes held.
@@ -77,7 +77,7 @@ def validate_filter(value, library):
         result[field] = sorted(set(values))
     ratings = value.get('ratings', [])
     if not isinstance(ratings, list) or any(type(v) is not int or not 1 <= v <= 5 for v in ratings):
-        raise ValueError('Process ratings must be whole numbers from 1 to 5.')
+        raise ValueError('Ratings must be whole numbers from 1 to 5.')
     result['ratings'] = sorted(set(ratings))
     if value.get('playbook') is not None:
         if not isinstance(value['playbook'], str) or value['playbook'] not in library['playbooks']:
@@ -167,15 +167,6 @@ def tag_score(library, chosen, included=None):
     if included is not None:
         chosen &= set(included)
     return sum(library['tags'][id].get('score', 0) for id in chosen if id in library['tags'])
-
-
-def rating(library, chosen, definition):
-    """Weighted satisfaction (0–100), not a P&L score or prediction."""
-    eligible = [r for r in definition.get('rules', []) if not r.get('when') or
-                tagging.matches(library, chosen, {'rules': r['when']})]
-    total = sum(r['weight'] for r in eligible)
-    return (100 * sum(r['weight'] for r in eligible if tagging.matches(library, chosen, r)) / total
-            if total else None)
 
 
 def validate_graph(graph, library):
@@ -301,35 +292,6 @@ class Workspace:
         name = label(name)
         self._workspace_edit(lambda s, lib: s['filters'].update({name: validate_filter(filters, lib)}))
         return name
-
-    def save_rating(self, name, rules, *, id=None):
-        name = label(name)
-        if not rules or len(rules) > 100:
-            raise ValueError('A rating needs 1–100 weighted criteria.')
-        def save(state, library):
-            normalized = []
-            for rule in rules:
-                def validate(combination):
-                    valid = {}
-                    for group, tags in combination.items():
-                        choices = tagging.ids(library, tags)
-                        if group not in library['groups'] or not choices or len(choices) != len(set(tags)) or any(
-                                library['tags'][t]['group'] != group for t in choices):
-                            raise ValueError('Rating rules need known tags in their groups.')
-                        valid[group] = sorted(choices)
-                    return valid
-                combination = validate(rule.get('rules', {}))
-                if not combination:
-                    raise ValueError('Each rating criterion needs a tag rule.')
-                normalized.append({'name': label(rule.get('name') or 'Criterion'),
-                                   'weight': finite(rule.get('weight', 1), 'Weight', True),
-                                   'rules': combination, 'when': validate(rule.get('when', {}))})
-            key = id or identifier()
-            if id and id not in state['ratings']:
-                raise ValueError('Unknown rating definition.')
-            state['ratings'][key] = {'id': key, 'name': name, 'rules': normalized}
-            return key
-        return self._workspace_edit(save)
 
     def save_checklist(self, name, graph, *, id=None, hidden=False):
         def save(state, library):

@@ -15,6 +15,8 @@ from zoneinfo import ZoneInfo
 from .model import instant
 from .tags import DAY, LEGACY_CATALOG, STARTER_VERSION, STARTERS
 
+COLOURS = {group: colour for group, colour, _ in STARTERS}     # the colour of each category the app offers
+
 
 def identity(name):
     return hashlib.sha256(name.encode()).hexdigest()[:24]
@@ -134,9 +136,19 @@ def _plural(count, word):
     return f'{count} {word}' + ('' if count == 1 else 's')
 
 
+def _settings(db):
+    """The stored text of every setting that can name a tag or a category: each journal_meta entry but the tag
+    library. The workspace's rating systems of 0.4.16 and earlier stay stored but are read nowhere, so they are left
+    out: a tag only they name can be deleted."""
+    for key, value in db.execute("SELECT key, value FROM journal_meta WHERE key != 'tag_library'"):
+        if key == 'workspace':
+            value = json.dumps({name: part for name, part in json.loads(value).items() if name != 'ratings'})
+        yield value
+
+
 def tag_uses(db, state, id):
     """Why a tag cannot be deleted, as phrases ('is on 3 trades'); empty when nothing uses it. A
-    used tag is retired instead, so no review, day, playbook, rating, filter, checklist or draft is
+    used tag is retired instead, so no review, day, playbook, filter, checklist or draft is
     left pointing at nothing."""
     names = set(state['tags'][id]['aliases'])
     trades = days = 0
@@ -151,9 +163,8 @@ def tag_uses(db, state, id):
     if any(id in choices for book in state['playbooks'].values() for choices in book['rules'].values()):
         uses.append('is part of a playbook')
     quoted = [json.dumps(name) for name in names]
-    if any(id in value or any(q in value for q in quoted)
-           for (value,) in db.execute("SELECT value FROM journal_meta WHERE key != 'tag_library'")):
-        uses.append('is named in a rating, filter, checklist or draft')
+    if any(id in value or any(q in value for q in quoted) for value in _settings(db)):
+        uses.append('is named in a filter, checklist or draft')
     return uses
 
 
@@ -164,8 +175,8 @@ def group_uses(db, state, group):
     if any(group in book['rules'] for book in state['playbooks'].values()):
         uses.append('is part of a playbook')
     quoted = json.dumps(group)
-    if any(quoted in value for (value,) in db.execute("SELECT value FROM journal_meta WHERE key != 'tag_library'")):
-        uses.append('is named in a rating, timer or checklist')
+    if any(quoted in value for value in _settings(db)):
+        uses.append('is named in a timer or checklist')
     return uses
 
 
@@ -217,6 +228,31 @@ def ensure_names(state, values, group='Other tags'):
         # Only a category that now holds a new tag. Saving a note, or clicking a tag that already
         # exists, must not leave an empty 'Other tags' card in the tag panel.
         state['groups'].setdefault(group, {'exclusive': False, 'order': len(state['groups'])})
+
+
+def file_under(state, review, name, group):
+    """`review` with the tag `name` added to its tags, as update_annotation adds one, for an upgrade that turns an
+    old answer into a tag. The tag whose name or a former name is `name`, in any case, is used wherever it is, retired
+    or not; else it is made in `group`, in the colour the app gives that category (tags.STARTERS) when it has no tags
+    yet. Nothing is removed, even in a one-choice category: the tag panel shows the conflict, and a click resolves
+    it. `state` gains any new tag; the caller saves it."""
+    folded = name.casefold()
+    id = next(iter(ids(state, [name])), None) or next(
+        (id for id, tag in state['tags'].items() if folded in {alias.casefold() for alias in tag['aliases']}), None)
+    if id is None:
+        empty = not any(tag['group'] == group for tag in state['tags'].values())
+        ensure_names(state, [name], group)
+        id = next(iter(ids(state, [name])))
+        if empty and group in COLOURS:
+            state['tags'][id]['color'] = COLOURS[group]
+    chosen = selected(state, review) | {id}
+    return {**review, 'tags': names(state, chosen), 'tag_ids': sorted(chosen)}
+
+
+def scored(state) -> bool:
+    """Whether any tag has a score (Settings → Tags). Until one does, Tag score is not offered anywhere: not on a
+    trade, in Filters, as a dashboard widget or measure, nor to a script."""
+    return any(tag.get('score') for tag in state['tags'].values())
 
 
 def selected(state, annotation):

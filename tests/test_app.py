@@ -335,7 +335,6 @@ def test_empty_journal_then_a_review_is_saved():
                               execution_id='a'), {})])
     app.run()
     open_review(app)
-    widget(app.text_input, 'Setup / playbook').set_value('Failed breakout')
     widget(app.text_area, 'Review notes').set_value('Waited for the retest.').run()
     widget(app.text_input, 'Category name').set_value('Psychology')
     press(app, 'Create Category')
@@ -346,9 +345,12 @@ def test_empty_journal_then_a_review_is_saved():
     widget(app.text_input, 'Tag name').set_value('A+')
     press(app, 'Create and Apply Tag')
     annotation = journal.annotations()[journal.trades()[0].id]
-    assert annotation['setup'] == 'Failed breakout' and annotation['tags'] == ['A+', 'Steady']
+    assert annotation['tags'] == ['A+', 'Steady']
     assert annotation['notes'] == 'Waited for the retest.' and annotation.get('initial_risk') is None
-    assert widget(app.text_input, 'Setup / playbook').value == 'Failed breakout'
+    assert widget(app.text_area, 'Review notes').value == 'Waited for the retest.'
+    # The review is the note and the Stop: a setup is a Setup tag, and how well the plan was traded its Rating.
+    assert [w.label for w in app.text_input if w.key and w.key.startswith(('notes-', 'stop-', 'setup-'))] == ['Stop']
+    assert not any(w.label in ('Use saved setup', 'Followed my plan') for w in app.selectbox)
 
 
 def test_full_recorded_path_and_runner_controls_render_without_claiming_missing_data(home):
@@ -371,8 +373,7 @@ def test_full_recorded_path_and_runner_controls_render_without_claiming_missing_
     widget(app.selectbox, 'Runner comparison horizon').set_value(120)
     press(app, 'Compare Runners')
     assert said(app.info, 'No comparable completed windows')
-    assert widget(app.selectbox, 'Compare runners by').options == [
-        'Individual tags', 'Tag categories', 'Setup / playbook']
+    assert widget(app.selectbox, 'Compare runners by').options == ['Individual tags', 'Tag categories']
     assert not any(b.label in ('Analyze recorded post-exit prices', 'Calculate post-exit tag analysis')
                    for b in app.checkbox)
 
@@ -383,7 +384,7 @@ def test_measured_trade_risk_renders_from_the_traded_price_alone():
                     (Execution('test', 'paper', 'ESZ6', 'sell', 1, 5002, '2026-10-07T14:03:00Z', execution_id='b'), {})])
     trade = journal.trades()[0]
     samples = [PriceSample('ESZ6', '2026-10-07T14:00:30Z', 'test-prices', 4999, 4999, bid=4998.75, ask=4999.25)]
-    journal.annotate(trade.id, {'setup': 'Failed breakout', 'planned_stop': 4999, 'adherence': 'Yes'})
+    journal.annotate(trade.id, {'planned_stop': 4999})
     for metric in measurements(trade, samples, 'test-prices'):
         journal.record_metric(trade, metric)
     # One measurement, from the traded price: the bid of 4998.75 plays no part, and there is nothing to choose.
@@ -392,7 +393,10 @@ def test_measured_trade_risk_renders_from_the_traded_price_alone():
     assert widget(app.metric, 'MAE / risk').value == '1.00R'
     assert not any(s.label == 'Measurement' for s in app.selectbox)
     open_tab(show(app, 'Edge'), 'Compare')
-    widget(app.selectbox, 'Compare by').set_value('Followed my plan').run()
+    # The stars have a table under Tags, and a setup is a Setup tag: neither is a Compare by choice of its own.
+    assert widget(app.selectbox, 'Compare by').options == [
+        'Market', 'Exact contract', 'Entry hour', 'Weekday', 'Direction', 'Tags', 'Playbooks']
+    widget(app.selectbox, 'Compare by').set_value('Direction').run()
     assert not app.exception
 
 
@@ -425,9 +429,9 @@ def test_changing_trade_switches_chart_and_review_without_mixing_annotations(hom
     assert chosen(app) == trades[-1].id and listed(app) == [trades[-1].id, trades[0].id]   # newest first
     pick(app, trades[0].id)
     assert chosen(app) == trades[0].id
-    assert widget(app.text_input, 'Setup / playbook').value == 'VISUAL TEST ONLY'
+    assert widget(app.text_area, 'Review notes').value == 'Synthetic fixture, not an actual account trade.'
     pick(app, trades[-1].id)
-    assert widget(app.text_input, 'Setup / playbook').value == ''
+    assert widget(app.text_area, 'Review notes').value == ''
 
 
 def test_filters_narrow_the_list_and_say_so_when_nothing_matches(home):
@@ -744,7 +748,7 @@ def test_the_backup_holds_both_environments_and_the_csv_this_one(home):
     journal = seed_preview(home)
     table = export.trades_csv(common.rows_for(journal), 'UTC')
     assert table.splitlines()[0].startswith('id,account,symbol') and len(table.splitlines()) == 2
-    assert 'VISUAL TEST ONLY' in table.splitlines()[1]
+    assert 'setup' not in table.splitlines()[0].split(',') and 'PAPER FIXTURE' in table.splitlines()[1]
     zipped = export.backup_zip()                                   # built only when Back Up Journal is pressed
     assert backup.read(io.BytesIO(zipped))['trades'] == {'live': 1, 'replay': 0}
     app = open_app('Export', 'Replay')
@@ -1145,22 +1149,6 @@ def test_reuse_tag_groups_and_instruments_with_no_extra_name_typing(home):
     widget(app.number_input, 'Currency per price point').set_value(2)
     press(app, 'Set Multiplier and Recalculate')
     assert 'CUSTOM' not in journal.display_settings()['tick_sizes']
-
-
-def test_saved_setup_picker_applies_without_retyping_or_overwriting_review(home):
-    journal = seed_preview(home)
-    journal.ingest([(Execution('test', 'paper', 'NQZ6', 'buy', 1, 20000,
-                              '2026-10-08T14:00:00Z', execution_id='new-setup-target'), {})])
-    target = journal.trades()[-1]
-    journal.annotate(target.id, {'notes': 'Keep this review', 'tags': ['Patient'], 'initial_risk': 100})
-    app = open_app()
-    widget(app.selectbox, 'Use saved setup').set_value('VISUAL TEST ONLY').run()
-    assert not app.exception
-    saved = journal.annotations()[target.id]
-    assert saved['setup'] == 'VISUAL TEST ONLY' and saved['notes'] == 'Keep this review'
-    assert saved['tags'] == ['Patient'] and saved['initial_risk'] == 100
-    assert widget(app.text_input, 'Setup / playbook').value == 'VISUAL TEST ONLY'
-    assert widget(app.selectbox, 'Use saved setup').value is None
 
 
 # ---------------------------------------------------------------- status logic and the background readers

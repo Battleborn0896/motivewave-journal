@@ -479,3 +479,150 @@ def test_opening_an_upgraded_journal_again_changes_nothing_and_the_step_is_harml
         store._upgrade(db, 3)                                             # the step itself, once more
     db.close()
     assert everything() == after
+
+
+# ---------------------------------------------------------------- typed setups and 'Followed my plan' become tags
+
+SETUP, EXECUTION = (colour for group, colour, _ in STARTERS if group in ('Setup', 'Execution'))
+
+
+def as_0_4_16(path, reviews, *, library=None):
+    """Put reviews back as 0.4.16 stored them, a typed setup and a 'Followed my plan' answer in any of them, with the
+    starter library (or `library`), never moved to tags."""
+    db = sqlite3.connect(path)
+    with db:
+        db.executemany('INSERT OR REPLACE INTO annotations VALUES(?,?)',
+                       [(id, json.dumps(review)) for id, review in reviews.items()])
+        db.execute("INSERT OR REPLACE INTO journal_meta VALUES('tag_library',?)",
+                   (json.dumps(library or tagging.starter_library()),))
+        db.execute("DELETE FROM journal_meta WHERE key IN ('setups_to_tags', 'adherence_to_tags')")
+    db.close()
+
+
+def stored(path, id):
+    """A review exactly as stored."""
+    return json.loads(rows(path, f"SELECT payload FROM annotations WHERE trade_id='{id}'")[0][0])
+
+
+def meta(path, key):
+    found = rows(path, f"SELECT value FROM journal_meta WHERE key='{key}'")
+    return found[0][0] if found else None
+
+
+def test_typed_setups_become_one_setup_tag_per_spelling_named_as_typed_most_often(tmp_path):
+    path = tmp_path / 'trades.sqlite3'
+    Journal(path)
+    as_0_4_16(path, {'a': {'setup': 'ORB break', 'notes': 'Kept'}, 'b': {'setup': '  ORB break '},
+                     'c': {'setup': 'orb  Break', 'tags': ['Calm']}, 'd': {'setup': '   '}, 'e': {'notes': 'No setup'},
+                     'f': {'setup': 'Opening drive ' + 'x' * 60}, 'g': {'setup': 'pullback'}})
+    journal = Journal(path)
+    library = journal.tag_library()
+    orb, = (id for id, tag in library['tags'].items() if tag['name'].casefold() == 'orb break')
+    long, = (id for id, tag in library['tags'].items() if tag['name'].startswith('Opening drive'))
+    assert library['tags'][orb]['name'] == 'ORB break' and library['tags'][orb]['group'] == 'Setup'
+    assert library['tags'][orb]['color'] == SETUP and library['tags'][orb]['levels'] == ['trade']
+    assert library['tags'][long]['name'] == ('Opening drive ' + 'x' * 60)[:64]
+    reviews = journal.annotations()
+    assert [reviews[id]['tags'] for id in 'abcfg'] == [['ORB break'], ['ORB break'], ['Calm', 'ORB break'],
+                                                      [library['tags'][long]['name']], ['Pullback']]
+    assert reviews['a']['notes'] == 'Kept' and not reviews['d']['tags'] and not reviews['e']['tags']
+    assert stored(path, 'b')['setup'] == '  ORB break '                   # left stored, no longer read
+    assert stored(path, 'g')['tag_ids'] == [tagging.identity('Pullback')]  # the starter tag, not a second one
+    assert (meta(path, 'setups_to_tags'), meta(path, 'adherence_to_tags')) == ('5', '0')
+    assert journal.upgrade_note()['answers']['note'] == 'Typed setups became Setup tags on 5 trades.'
+    assert not backups(tmp_path)                                          # nothing rewritten that a backup must keep
+
+
+def test_a_typed_setup_reuses_a_tag_of_that_name_in_any_case_category_or_former_name_even_retired(tmp_path):
+    path = tmp_path / 'trades.sqlite3'
+    Journal(path)
+    library = tagging.starter_library()
+    hesitant, range_ = tagging.identity('Hesitant'), tagging.identity('Range')
+    library['tags'][hesitant]['retired'] = True
+    library = tagging.edit_tag(library, range_, name='Range day')        # Range is now a former name
+    as_0_4_16(path, {'a': {'setup': 'patient'}, 'b': {'setup': 'HESITANT'}, 'c': {'setup': 'range'},
+                     'd': {'setup': ' range   DAY '}}, library=library)
+    journal = Journal(path)
+    reviews = journal.annotations()
+    assert [reviews[id]['tags'] for id in 'abcd'] == [['Patient'], ['Hesitant'], ['Range day'], ['Range day']]
+    after = journal.tag_library()
+    assert len(after['tags']) == len(library['tags'])                     # no tag made
+    assert after['tags'][PATIENT]['group'] == 'Mindset' and after['tags'][hesitant]['retired']
+
+
+def test_a_typed_setup_is_added_beside_a_one_choice_setup_already_chosen(tmp_path):
+    path = tmp_path / 'trades.sqlite3'
+    journal = Journal(path)
+    trade = round_trip(journal)
+    library = tagging.starter_library()
+    library['groups']['Setup']['exclusive'] = True
+    as_0_4_16(path, {trade.id: {'tags': ['Pullback'], 'tag_ids': [tagging.identity('Pullback')], 'setup': 'Breakout'}},
+              library=library)
+    journal = Journal(path)
+    assert journal.annotations()[trade.id]['tags'] == ['Breakout', 'Pullback']    # nothing removed: both stay
+    assert next(r for r in common.rows_for(journal) if r['id'] == trade.id)['tags'] == ['Breakout', 'Pullback']
+    journal.set_trade_tag_group(trade, 'Setup', ['Breakout'])           # one click on the panel resolves it
+    assert journal.annotations()[trade.id]['tags'] == ['Breakout']
+
+
+def test_followed_my_plan_yes_and_no_become_execution_tags(tmp_path):
+    path = tmp_path / 'trades.sqlite3'
+    Journal(path)
+    library = tagging.starter_library()
+    followed = tagging.identity('Followed Plan')
+    library = tagging.edit_tag(library, followed, name='Followed plan')   # matched in any case
+    as_0_4_16(path, {'a': {'adherence': 'Yes'}, 'b': {'adherence': 'No', 'tags': ['Calm']},
+                     'c': {'adherence': 'Unreviewed'}, 'd': {'adherence': 'No', 'setup': 'Fade'}}, library=library)
+    journal = Journal(path)
+    reviews, library = journal.annotations(), journal.tag_library()
+    assert [reviews[id]['tags'] for id in 'abcd'] == [['Followed plan'], ['Broke Plan', 'Calm'], [],
+                                                     ['Broke Plan', 'Fade']]
+    broke = library['tags'][tagging.identity('Broke Plan')]
+    assert (broke['group'], broke['color'], broke['levels']) == ('Execution', EXECUTION, ['trade'])
+    assert (meta(path, 'setups_to_tags'), meta(path, 'adherence_to_tags')) == ('1', '3')
+    assert journal.upgrade_note()['answers']['note'] == (
+        'Typed setups became Setup tags on 1 trade; Followed my plan answers became Execution tags on 3 trades.')
+
+
+def test_a_missing_execution_category_is_made_in_its_own_colour(tmp_path):
+    path = tmp_path / 'trades.sqlite3'
+    Journal(path)
+    library = tagging.starter_library()
+    library['tags'] = {id: tag for id, tag in library['tags'].items() if tag['group'] != 'Execution'}
+    del library['groups']['Execution']
+    as_0_4_16(path, {'a': {'adherence': 'Yes'}}, library=library)
+    after = Journal(path).tag_library()
+    tag = after['tags'][tagging.identity('Followed Plan')]
+    assert (tag['group'], tag['color']) == ('Execution', EXECUTION) and 'Execution' in after['groups']
+
+
+def test_a_replay_journal_moves_its_own_answers(tmp_path):
+    path = tmp_path / 'replay.sqlite3'
+    Journal(path, dataset='replay')
+    as_0_4_16(path, {'a': {'setup': 'Fade', 'adherence': 'Yes'}})
+    journal = Journal(path, dataset='replay')
+    assert journal.annotations()['a']['tags'] == ['Fade', 'Followed Plan']
+    assert journal.tag_library()['tags'][tagging.identity('Fade')]['group'] == 'Setup'
+
+
+def test_each_move_runs_once_and_a_new_journal_has_nothing_to_move(tmp_path):
+    path = tmp_path / 'trades.sqlite3'
+    Journal(path)
+    as_0_4_16(path, {'a': {'setup': 'Fade', 'adherence': 'No'}})
+    Journal(path)
+
+    def everything():
+        return [rows(path, f'SELECT * FROM {table} ORDER BY 1') for table in ('annotations', 'journal_meta')]
+    after = everything()
+    Journal(path)
+    assert everything() == after
+    db = sqlite3.connect(path)
+    with db:                                       # an answer stored again in a field no version shows any more
+        db.execute("INSERT INTO annotations VALUES('b', ?)", (json.dumps({'setup': 'Late', 'adherence': 'Yes'}),))
+    db.close()
+    journal = Journal(path)
+    assert not journal.annotations()['b']['tags'] and 'Late' not in journal.tag_catalog()
+    assert (meta(path, 'setups_to_tags'), meta(path, 'adherence_to_tags')) == ('1', '1')
+    new = Journal(tmp_path / 'new.sqlite3')
+    assert (meta(new.path, 'setups_to_tags'), meta(new.path, 'adherence_to_tags')) == ('0', '0')
+    assert new.upgrade_note() is None and meta(new.path, 'tag_library') is None   # the starters still come at first read

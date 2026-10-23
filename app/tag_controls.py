@@ -50,7 +50,7 @@ def stars(value, **widget):
     saves it."""
     # A Material star icon: IBM Plex Sans has no '★', so the browser drew it in another font.
     st.pills('Rating', [1, 2, 3, 4, 5], default=value, format_func=lambda n: f'{n} :material/star:',
-             help='How well you followed your process, 1 to 5.', **widget)
+             help='How well you traded your plan, 1 to 5.', **widget)
 
 
 def _starter_ids(library):
@@ -173,12 +173,10 @@ def render(journal, trade):
                             st.rerun()
                         except ValueError as exc:
                             st.error(str(exc))
-            from mwjournal.workspace import tag_score, rating
-            st.caption(f'Tag score {tag_score(library, chosen):+g}',
-                       help='The sum of the scores set on each chosen tag in Settings → Tags, Playbooks & Checklists, separate from P&L and stars.')
-            for definition in journal.workspace()['ratings'].values():
-                value = rating(library, chosen, definition)
-                st.caption(definition['name'] + ': ' + (f'{value:.0f}/100' if value is not None else 'Not applicable'))
+            if tagging.scored(library):
+                from mwjournal.workspace import tag_score
+                st.caption(f'Tag score {tag_score(library, chosen):+g}',
+                           help='The sum of the scores set on each chosen tag in Settings → Tags, Playbooks & Checklists, separate from P&L and Rating.')
             retired = [library['tags'][id]['name'] for id in chosen if library['tags'][id]['retired']]
             if retired:
                 st.caption('Retired tags kept on this trade: ' + ', '.join(retired))

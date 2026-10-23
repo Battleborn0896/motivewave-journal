@@ -80,7 +80,7 @@ def test_the_first_page_reads_status_then_the_missing_step_then_two_settings_the
     assert not app.main.expander and not app.main.get('popover')         # a plain heading, nothing that folds
     assert not any('filter' in s.label.lower() for s in app.main.selectbox)  # the saved filter lives in Filters
     assert [b.label for b in app.main.button if b.key and b.key.startswith('setup-open-')] == [
-        'Tags, Playbooks & Checklists ›', 'Rating Systems ›', 'Data ›']
+        'Tags, Playbooks & Checklists ›', 'Data ›']
     assert common.NAV_LABELS['Settings'] == 'Settings' and setup.LABELS[setup.HOME] == 'Settings'
 
 
@@ -380,7 +380,6 @@ def test_every_tab_of_a_settings_page_has_its_own_link_on_the_first_page(page, t
 
 LANDMARKS = {
     'Tags': lambda app: any(t.label == 'New tag name' for t in app.text_input),
-    'Ratings': lambda app: any(s.label == 'Rating system' for s in app.selectbox),
     'Checklists': lambda app: any(s.label == 'Checklist' for s in app.selectbox),
     'Dashboard': lambda app: any(s.label == 'Dashboard page' for s in app.selectbox),
     'Daily review': lambda app: any(t.label.startswith('What I learned') for t in app.text_area),
@@ -411,9 +410,10 @@ def test_every_name_the_app_routes_by_has_a_place():
         if route[common.VIEW_KEY] == 'Settings':
             assert route[common.TOOL_KEY] in setup.PAGES and setup.page_for(view) == route[common.TOOL_KEY]
             assert route[common.TAB_KEY] is None or route[common.TAB_KEY] in setup.TABS[route[common.TOOL_KEY]]
-    # One name for the first page. A page kept under a name it no longer has (Setup, General) opens the first.
+    # One name for the first page. A page kept under a name it no longer has (Setup, General), or a page that is gone
+    # (Ratings, the Rating Systems of 0.4.16), opens the first.
     assert [view for view, (page, _) in common.SETTINGS_ROUTES.items() if page == setup.HOME] == ['Settings']
-    assert setup.page_for('Setup') == setup.page_for('General') == setup.page_for(None) == setup.HOME
+    assert setup.page_for('Setup') == setup.page_for('General') == setup.page_for('Ratings') == setup.page_for(None) == setup.HOME
     assert setup.page_for('Unknown') == setup.HOME
     assert set(setup.LABELS) == set(setup.PAGES) == {setup.HOME, *setup.PAGE_HELP}
     assert common.navigation('Dashboard') == {common.VIEW_KEY: 'Analytics', common.TAB_KEY: 'Dashboards'}
@@ -628,7 +628,7 @@ def test_the_filters_menu_is_one_editor_with_short_title_case_labels(home):
     labels = {w.label for kind in kinds for w in getattr(app, kind)
               if w.key and w.key.startswith(('filter-', 'save-filter', 'global-saved-filter'))}
     assert labels == {'Saved Filter on Every Page', 'Markets', 'Entry Dates', 'Accounts', 'Exact Contracts', 'Tags',
-                      'Tag Match', 'Exclude Tags', 'Playbook', 'Trade Status', 'Directions', 'Process Ratings',
+                      'Tag Match', 'Exclude Tags', 'Playbook', 'Trade Status', 'Directions', 'Rating',
                       'Number Ranges', 'Min Net P&L', 'Max Net P&L', 'Filter Name'}
     assert all(title_case(label) for label in labels) and any(b.label == 'Save Filter' for b in app.button)
 
@@ -651,7 +651,7 @@ def title_case(label):
     return all(w[0].isupper() or w in SMALL for w in words)
 
 
-@pytest.mark.parametrize('view', ['Settings', 'Tags', 'Checklists', 'Ratings', 'Import', 'Export', 'Journals', 'Connection'])
+@pytest.mark.parametrize('view', ['Settings', 'Tags', 'Checklists', 'Import', 'Export', 'Journals', 'Connection'])
 def test_buttons_menus_tabs_and_settings_on_every_setup_page_are_title_case(home, view):
     seed_preview(home)
     app = open_app(view)

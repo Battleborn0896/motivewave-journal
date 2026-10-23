@@ -78,7 +78,8 @@ Run this with a simulation account:
 2. Confirm the journal creates one flat-to-flat trade with four fills and the correct maximum size.
 3. Confirm the chart shows the entry and exit markers and that an observed tick path exists.
 4. Save a planned stop, then inspect the 5-, 15- and 30-minute Runner views.
-5. Create `Orderflow` and `Psychology` tag categories, add tags and apply them to the trade.
+5. Create `Orderflow` and `Psychology` tag categories, add tags and apply them to the trade. Pick its Setup
+   tag and give it a Rating, 1 to 5 stars.
 6. Click the trade's day header in the list: on its Daily Report Card choose Day tags and a Rating, then
    confirm the trade wears those Day tags. Days follow **Settings → Time Zone**, midnight to midnight.
 7. Open **Stats → Runners** and compare by **Tag categories**.

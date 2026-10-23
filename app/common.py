@@ -29,7 +29,7 @@ NAV_LABELS = {'Trades': 'Trades', 'Analytics': 'Stats', 'Settings': 'Settings'}
 # Every page that is not one of the three, by the name navigation() takes: (its Settings page, the tab it opens).
 # The Daily Report Card, the session tools and running a checklist are on Trades; dashboards are a Stats tab.
 SETTINGS_ROUTES = {'Settings': ('Settings', None),
-                   'Tags': ('Tags', None), 'Checklists': ('Tags', 'Checklists'), 'Ratings': ('Ratings', None),
+                   'Tags': ('Tags', None), 'Checklists': ('Tags', 'Checklists'),
                    'Data': ('Data', None), 'Import': ('Data', 'Import Trades'), 'Export': ('Data', 'Export & Backup'),
                    'Journals': ('Data', 'Journals & Accounts'), 'Connection': ('Data', 'Connection')}
 TOOLS = tuple(view for view in SETTINGS_ROUTES if view != 'Settings')
@@ -455,14 +455,14 @@ def excursion_help(journal, trade, metric, at_risk):
 
 
 # What the trade rows show besides fills, measurements, linked orders and multipliers (changes()): the journal_meta
-# entries holding the tag library, ratings, display time zone and settings, and merged trades.
+# entries holding the tag library, display time zone and settings, and merged trades.
 ROW_SETTINGS = ('workspace', 'tag_library', 'tag_catalog', 'display_settings', 'trade_merges')
 
 
 def rows_signature(journal) -> tuple | None:
     """(what changes whenever a trade row could, the newest measurement of each trade), or None when the journal
     cannot be read. The first: changes() (a fill, a trade's first measurement, a linked order, a multiplier), a
-    review, a day's tags, the tag library, a rating, a setting, a merge or an account's name. The second, by trade
+    review, a day's tags, the tag library, a setting, a merge or an account's name. The second, by trade
     id: a measurement stored again (prices that came in late, a gap the study reported) leaves changes() as it
     was, but it replaces its row, and the new row has a higher rowid."""
     capture = getattr(journal, 'capture_journal', journal)
@@ -513,8 +513,7 @@ def rows_for(journal) -> list[dict]:
     annotations = journal.annotations()
     library = journal.tag_library()
     sessions = journal.get('sessions')
-    from mwjournal.workspace import tag_score, rating
-    workspace = journal.workspace()
+    from mwjournal.workspace import tag_score
     from mwjournal import journals
     aliases = journals.registry(getattr(journal, 'capture_journal', journal))['account_aliases']
     import json
@@ -530,8 +529,7 @@ def rows_for(journal) -> list[dict]:
         tag_ids = tagging.effective(library, a, sessions.get(day, {}))
         # The risk to the trade's stop (risk.py): every R the app shows divides by it.
         at_risk = plans[trade.id].risk
-        # setup is always present: a captured trade nobody has reviewed yet still has to chart and group.
-        rows.append({**trade.row(), 'setup': '', **a, 'initial_risk': at_risk, 'stop': plans[trade.id].stop,
+        rows.append({**trade.row(), **a, 'initial_risk': at_risk, 'stop': plans[trade.id].stop,
                      'market': instrument_market(trade.symbol),
                      'merge_leg_ids': getattr(trade, 'merge_leg_ids', []),
                      'merge_overlapping': getattr(trade, 'merge_overlapping', False),
@@ -542,7 +540,6 @@ def rows_for(journal) -> list[dict]:
                      'playbook_ids': [id for id, book in library['playbooks'].items()
                                       if tagging.matches(library, tag_ids, book)],
                      'tag_score': tag_score(library, tag_ids),
-                     'ratings': {id: rating(library, tag_ids, definition) for id, definition in workspace['ratings'].items()},
                      'mae': m.get('mae'), 'mfe': m.get('mfe'),
                      'precision': PRECISION.get(m.get('precision'), 'Waiting for data'),
                      # An open trade's net is only its fees so far: it has no R until it is closed.
@@ -633,8 +630,9 @@ def filter_rule(journal, rows: list[dict]) -> dict:
                                 key=key(journal, 'filter-status' + fresh))
         directions = c2.multiselect('Directions', ['long', 'short'], format_func=str.title,
                                     key=key(journal, 'filter-directions' + fresh))
-        ratings = c2.multiselect('Process Ratings', [1, 2, 3, 4, 5], key=key(journal, 'filter-ratings' + fresh))
-        numbers = st.multiselect('Number Ranges', list(NUMBER_LIMITS), format_func=NUMBER_LIMITS.get,
+        ratings = c2.multiselect('Rating', [1, 2, 3, 4, 5], key=key(journal, 'filter-ratings' + fresh))
+        offered = [name for name in NUMBER_LIMITS if name != 'score' or tagging.scored(library)]
+        numbers = st.multiselect('Number Ranges', offered, format_func=NUMBER_LIMITS.get,
                                  key=key(journal, 'filter-numbers' + fresh),
                                  help='Each one adds a minimum and a maximum; an empty box is no limit. MAE and MFE are '
                                       'in account currency, not the display unit. A trade without a value never '

@@ -15,7 +15,7 @@ import theme
 from mwjournal import Execution, Journal
 from mwjournal import backup, tagging
 from mwjournal import workspace
-from mwjournal.workspace import (validate_graph, replay_run, tag_score, rating, filter_sample, combine_filters,
+from mwjournal.workspace import (validate_graph, replay_run, tag_score, filter_sample, combine_filters,
                                  validate_filter)
 from test_app import open_app, show, press, widget, said
 from test_chart import seed_preview
@@ -44,26 +44,22 @@ def test_workspace_reads_do_not_save_definitions_or_rearm_anything(home):
     assert stored() == made
 
 
-def test_signed_tag_scores_and_conditional_weighted_ratings_preserve_raw_trade(home):
+def test_signed_tag_scores_preserve_raw_trade(home):
     journal = seed_preview(home)
     trade = journal.trades()[0]
     before = journal.executions()
     lib = journal.tag_library()
+    assert not tagging.scored(lib)
     patient = next(iter(tagging.ids(lib, ['Patient'])))
     fomo = next(iter(tagging.ids(lib, ['FOMO'])))
     journal.edit_tag(patient, score=2)
     journal.edit_tag(fomo, score=-3)
     lib = journal.tag_library()
+    assert tagging.scored(lib)
     assert tag_score(lib, [patient, fomo]) == -1
     assert tag_score(lib, [patient, fomo], [patient]) == 2
-    model = journal.save_rating('Process', [
-        {'name': 'Calm', 'weight': 2, 'rules': {'Mindset': ['Patient']}},
-        {'name': 'Setup', 'weight': 1, 'rules': {'Setup': ['Pullback']}, 'when': {'Mindset': ['Patient']}}])
-    definition = journal.workspace()['ratings'][model]
-    assert rating(lib, [], definition) == 0
-    assert rating(lib, [patient], definition) == pytest.approx(200 / 3)
     journal.set_trade_tag_group(trade, 'Mindset', ['Patient'])
-    assert common.rows_for(journal)[0]['ratings'][model] == pytest.approx(200 / 3)
+    assert common.rows_for(journal)[0]['tag_score'] == 2
     assert journal.executions() == before
     with pytest.raises(ValueError):
         journal.edit_tag(patient, score=float('nan'))
@@ -115,7 +111,7 @@ def test_saved_filters_keep_trades_by_playbook_process_rating_and_status(home):
     with pytest.raises(ValueError, match='unknown playbook'):
         journal.save_filter('Bad', {'playbook': 'not a playbook'})
     for ratings in ([0], [6], ['4'], [True], [4.5], 4):
-        with pytest.raises(ValueError, match='Process ratings'):
+        with pytest.raises(ValueError, match='Ratings must be whole numbers from 1 to 5'):
             journal.save_filter('Bad', {'ratings': ratings})
     assert 'Bad' not in journal.workspace()['filters']
 
@@ -354,7 +350,7 @@ def test_pretrade_draft_never_silently_retags_a_trade_already_in_the_journal(hom
     assert 'Patient' not in journal.annotations()[trade.id]['tags']
 
 
-@pytest.mark.parametrize('view', ['Dashboard', 'Checklists', 'Live session', 'Ratings', 'Settings'])
+@pytest.mark.parametrize('view', ['Dashboard', 'Checklists', 'Live session', 'Settings'])
 def test_new_views_render_without_recording_orders_or_raw_trade_changes(home, view):
     journal = seed_preview(home)
     before = journal.executions()
@@ -385,14 +381,58 @@ def test_dashboard_calendar_navigation_and_widget_save(home):
     widget(app.text_input, 'Page name').set_value('My dashboard')
     press(app, 'Save Page Layout')
     assert widget(app.selectbox, 'Dashboard page').value in journal.workspace()['dashboards']
-    widget(app.selectbox, 'Widget type').set_value('Tag score')
+    widget(app.selectbox, 'Widget type').set_value('Rating')
     press(app, 'Save Widget')
     page = journal.workspace()['dashboards'][widget(app.selectbox, 'Dashboard page').value]
-    assert page['widgets'][-1]['kind'] == 'Tag score'
+    assert page['widgets'][-1]['kind'] == 'Rating' and 'rating_id' not in page['widgets'][-1]
     button = next(b for b in app.button if b.label.startswith('7  \n'))
     button.click().run()
     assert not app.exception
     assert widget(app.date_input, 'Trading day').value == dt.date(2026, 10, 7)
+
+
+def test_tag_score_is_offered_nowhere_until_a_tag_has_a_score(home):
+    import script_widget
+    journal = seed_preview(home)
+    stored = journal.save_dashboard('Scores', [{'kind': 'Tag score', 'title': 'Old score'}])
+
+    def offered():
+        """Where Tag score shows: the tag panel, Filters, a widget's type, measure and tags, a script's trades."""
+        app = open_app()
+        found = {'panel': said(app.caption, 'Tag score'),
+                 'filters': 'Tag Score' in widget(app.multiselect, 'Number Ranges').options}
+        show(app, 'Dashboard')
+        widget(app.selectbox, 'Dashboard page').set_value(stored).run()
+        assert not app.exception and said(app.markdown, '### Old score')     # a widget of that kind still draws
+        found.update(kind='Tag score' in widget(app.selectbox, 'Widget type').options,
+                     measure='Tag score' in widget(app.selectbox, 'Series metric').options,
+                     tags=any(m.label.startswith('Score only these tags') for m in app.multiselect),
+                     limit='Signed tag score' in widget(app.multiselect, 'Numbers to limit').options,
+                     script='"tag_score"' in script_widget.document(common.rows_for(journal), journal.tag_library(), ''))
+        return found
+    assert not any(offered().values())
+    journal.edit_tag(next(iter(tagging.ids(journal.tag_library(), ['Patient']))), score=1)
+    assert all(offered().values())
+
+
+def test_a_rating_widget_charts_the_trades_stars_and_old_rating_systems_are_ignored(home):
+    from views import dashboard
+    journal = seed_preview(home)
+    trade = journal.trades()[0]
+    with journal.connect() as db:                  # a rating system and a widget that used one, as 0.4.16 saved them
+        state = workspace.read(db)
+        state['ratings'] = {'old': {'id': 'old', 'name': 'Process', 'rules': []}}
+        workspace.write(db, state)
+    id = journal.save_dashboard('Stars', [{'kind': 'Rating', 'title': 'My stars', 'rating_id': 'old'}])
+    widget_ = journal.workspace()['dashboards'][id]['widgets'][0]
+    assert dashboard.values(journal, common.rows_for(journal), widget_ | {'metric': 'Rating'}) == []
+    journal.update_annotation(trade.id, {'rating': 4})
+    assert [r['value'] for r in dashboard.values(journal, common.rows_for(journal), widget_ | {'metric': 'Rating'})] == [4]
+    assert 'ratings' not in common.rows_for(journal)[0]
+    app = open_app('Dashboard')
+    widget(app.selectbox, 'Dashboard page').set_value(id).run()
+    assert not app.exception and said(app.markdown, '### My stars')
+    assert not any(s.label == 'Rating definition' for s in app.selectbox)
 
 
 def trade_on(journal, day, points, n=0):
@@ -498,7 +538,7 @@ def test_the_backup_includes_workflow_definitions_and_run_history(home):
 def test_custom_visualization_scripts_are_opt_in_network_denied_and_do_not_get_account_or_fill_data(home):
     import script_widget
     journal = seed_preview(home)
-    rendered = script_widget.document(common.rows_for(journal), journal.tag_library()['tags'], script_widget.STARTER)
+    rendered = script_widget.document(common.rows_for(journal), journal.tag_library(), script_widget.STARTER)
     assert 'new Worker' in rendered and 'worker.terminate()' in rendered and 'worker-src blob:' in rendered
     assert 'connect-src' in rendered and 'none' in rendered
     assert 'paper' not in rendered and 'execution_id' not in rendered
