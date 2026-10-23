@@ -232,6 +232,18 @@ def test_a_new_journal_opens_on_three_editable_starter_categories_and_day_tags_s
     assert Journal(journal.path).tag_library() == library
 
 
+def test_a_tag_made_in_day_is_a_day_tag_and_one_made_in_setup_a_trade_tag(tmp_path):
+    journal = Journal(tmp_path / 'live.db')
+    journal.add_tag('Slept Well', 'Day')
+    journal.add_tag('Gap Fill', 'Setup')
+    library = journal.tag_library()
+    made = {name: library['tags'][tag_id(journal, name)] for name in ('Slept Well', 'Gap Fill')}
+    assert made['Slept Well']['levels'] == ['day'] and made['Slept Well']['color'] == '#E48DB9'
+    assert made['Gap Fill']['levels'] == ['trade']
+    assert 'Slept Well' in [t['name'] for t in tagging.ordered_groups(library, level='day')['Day']]
+    assert 'Day' not in tagging.ordered_groups(library)              # never offered on a trade
+
+
 def test_starter_tags_can_be_renamed_recoloured_retired_and_deleted_and_never_come_back(tmp_path):
     journal = Journal(tmp_path / 'live.db')
     trade = round_trip(journal)
