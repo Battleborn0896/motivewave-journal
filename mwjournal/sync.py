@@ -201,7 +201,11 @@ class SyncWorker:
                                'status': 'needs attention', 'error': 'The watched file does not exist.'}
                 self.journal.put('sync_status', name, {'checked': now, **waiting})
             except (OSError, ValueError, UnicodeError) as exc:
-                self.journal.put('sync_status', name, {'status': 'needs attention', 'checked': now, 'error': str(exc)})
+                # A file that cannot be read does not undo the study's last report: Settings still knows it was
+                # heard from, and does not ask to install the study or add it to a chart again.
+                heard = self.journal.get('sync_status').get(name, {}).get('heartbeat')
+                self.journal.put('sync_status', name, {'status': 'needs attention', 'checked': now, 'error': str(exc),
+                                                       **({'heartbeat': heard} if heard else {})})
         # Drafts are matched at every poll, as cancelling one can settle another; from the kept trades.
         self.journal.reconcile_drafts(self.trades())
         self.recalculate()

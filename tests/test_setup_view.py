@@ -175,6 +175,22 @@ def test_a_study_that_has_gone_quiet_is_asked_to_open_motivewave():
     assert not any(b.label == setup.INSTALL for b in app.button)
 
 
+def test_a_bridge_file_the_app_cannot_read_needs_attention_and_never_asks_to_install_the_study_again():
+    """A failed read keeps the study's last report, so Settings says what is wrong and does not send a study that is
+    on its chart back to Install or to adding it to a chart."""
+    study_writes([heartbeat()])
+    app = open_app('Settings')
+    wait_until(lambda: status_of().get('heartbeat'))
+    app.run()
+    assert states(app.main) == ['Recording'] and steps_shown(app) == []
+    study_writes([{'version': 1, 'type': 'tick', 'mode': 'live'}])          # a line the reader cannot take
+    wait_until(lambda: status_of().get('error'))
+    assert status_of().get('heartbeat')                                     # what the study said last is kept
+    app.run()
+    assert states(app.main) == ['Needs attention'] and said(app.main.markdown, 'Open Data → Connection')
+    assert steps_shown(app) == [] and not any(b.label == setup.INSTALL for b in app.button)
+
+
 @pytest.mark.parametrize('version', ['0.3.6', '0.3.5', '0.3.2', '0.1.0'])
 def test_a_study_older_than_the_bundled_one_gets_only_the_update_step(version):
     study_writes([heartbeat(version=version)])

@@ -2,9 +2,8 @@
 
 Import Trades, Export & Backup (one zip that backs up the whole journal and puts it back, and this
 environment's trades as a CSV), Journals & Accounts, and Connection (what the study reports, installing it
-again, the bridge file, other watched files, multipliers, and under Advanced whether trades are read from
-MotiveWave at all). Only the open tab is drawn: reading a chosen backup is not free. Settings links each tab
-from its tile, and common.navigation opens any of them by its old name.
+again, the bridge file, other watched files and multipliers). Only the open tab is drawn: reading a chosen backup
+is not free. Settings links each tab from its tile, and common.navigation opens any of them by its old name.
 """
 
 from __future__ import annotations

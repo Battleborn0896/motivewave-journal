@@ -326,9 +326,9 @@ tags, categories and reviews are kept exactly as they are.
 The sidebar has three pages: **Trades**, **Stats** and **Settings**. Trades holds the session tools (the bar
 at the top), the Daily Report Card (click a day's header) and each trade's checklist; Stats holds the
 dashboards (its last tab); Settings holds tags and checklists, rating systems, and data (imports, backups,
-journals, the connection), each two clicks from the sidebar. Under the pages, one word says whether the study
-is **Recording**, **Not recording** or **Needs attention** (see *Build and connect the study*); click it to
-open Settings.
+journals, the connection), each two clicks from the sidebar. Under the pages, the sidebar says whether the
+study is **Recording**, **Not recording** or **Needs attention** (see *Build and connect the study*); click it
+to open Settings.
 The trade list stays on the left while the selected trade's chart and tags stay on the right.
 Click a row, or use Prev / Next; no separate opening/back-navigation step is needed.
 **Chart & Tags** puts the chart and a grouped, clickable tagging panel side by side. Click a tag to
