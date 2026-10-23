@@ -1,6 +1,7 @@
 """The schema step that gives a 0.3.0 journal the platform's position ids, on invented fills only."""
 import json
 import sqlite3
+import traceback
 
 import pytest
 
@@ -134,8 +135,8 @@ def test_openers_racing_on_an_old_journal_upgrade_it_once_and_none_of_them_fails
         start.wait()
         try:
             opened.append(len(Journal(path).trades()))
-        except Exception as exc:                           # reported by the assertion below
-            opened.append(exc)
+        except Exception as exc:                           # reported by the assertion below, with where it was raised
+            opened.append(''.join(traceback.format_exception(exc)))
     threads = [threading.Thread(target=open_it) for _ in range(6)]
     for thread in threads:
         thread.start()
