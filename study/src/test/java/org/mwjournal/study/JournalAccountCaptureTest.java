@@ -59,7 +59,7 @@ public final class JournalAccountCaptureTest {
       var beats = lines.stream().filter(s -> s.contains("\"type\":\"heartbeat\"")).toList();
       assert !beats.isEmpty() : "Each environment gets its own heartbeat";
       assert beats.stream().allMatch(s -> s.contains("\"connector\":\"motivewave-journal-study\"")
-          && s.contains("\"connector_version\":\"0.3.8\"") && s.contains("\"provider\":\"motivewave-native\"")
+          && s.contains("\"connector_version\":\"0.3.9\"") && s.contains("\"provider\":\"motivewave-native\"")
           && s.endsWith("}")) : "Heartbeats name the writer and its version";
     }
 

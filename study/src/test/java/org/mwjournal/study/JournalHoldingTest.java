@@ -88,6 +88,28 @@ public final class JournalHoldingTest {
     assert !capture.holding("BTCUSD", false);
     assert capture.failure == null : capture.failure;
 
+    // MotiveWave's position ids, as on a SIM account. Its oldest kept fill is the exit of a position whose
+    // entry it no longer keeps: netting every fill would leave the contract short for good, and the gate
+    // would record it all day while flat. Inside its own position that exit opens nothing.
+    fills.add(fill("sim", "MNQZ6", false, 1, false, "SIM-1", false));
+    capture.poll();
+    assert !capture.holding("MNQZ6", false) : "An exit whose entry is not kept is not a position";
+    fills.add(fill("sim", "MNQZ6", true, 1, false, "SIM-2", true));
+    capture.poll();
+    assert capture.holding("MNQZ6", false) : "A new position is held";
+    fills.add(fill("sim", "MNQZ6", false, 1, false, "SIM-2", false));
+    capture.poll();
+    assert !capture.holding("MNQZ6", false) : "Flat within its own position, whatever the older one left";
+    // A position whose exit MotiveWave did not keep is over once a newer position id appears.
+    fills.add(fill("sim", "MNQZ6", true, 1, false, "SIM-3", true));
+    fills.add(fill("sim", "MNQZ6", false, 1, false, "SIM-4", true));
+    capture.poll();
+    assert capture.holding("MNQZ6", false) : "The newest position is short";
+    fills.add(fill("sim", "MNQZ6", true, 1, false, "SIM-4", false));
+    capture.poll();
+    assert !capture.holding("MNQZ6", false) : "Covered; the replaced long is not held";
+    assert capture.failure == null : capture.failure;
+
     // The reader throws: positions are unknown again, so everything records until a poll succeeds.
     broken.set(new NoSuchMethodException("Fixture: MotiveWave update"));
     capture.poll();
@@ -210,13 +232,18 @@ public final class JournalHoldingTest {
       for (var path : left.sorted(java.util.Comparator.reverseOrder()).toList()) Files.delete(path);
     }
     System.out.println("Journal holding passed: flat, long, scale-out, reversal, two accounts, live versus replay, "
-        + "fractions, replay runs apart, a trade between two polls, the tail after an exit, and failing open "
+        + "fractions, MotiveWave position ids, replay runs apart, a trade between two polls, the tail after an exit, and failing open "
         + "before the first poll, on a broken, partial or stalled reader.");
   }
 
   private static JournalNativeAccess.Fill fill(String account, String symbol, boolean buy, double qty, boolean replay) {
+    return fill(account, symbol, buy, qty, replay, "", buy);
+  }
+  /** position is MotiveWave's position id ("" for none) and entry whether it calls the fill an entry of it. */
+  private static JournalNativeAccess.Fill fill(String account, String symbol, boolean buy, double qty, boolean replay,
+                                               String position, boolean entry) {
     String id = "fill-" + next++;
     return new JournalNativeAccess.Fill(id, account, symbol, buy, qty, 5000, TIME + next * 1000L, 2, 50, "USD",
-        "order-" + id, "", buy, replay);
+        "order-" + id, position, entry, replay);
   }
 }

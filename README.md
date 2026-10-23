@@ -7,6 +7,19 @@ Live/paper and replay have separate databases. No routine CSV export/import is r
 MotiveWave Journal is an independent open-source project. It is not affiliated with, endorsed by or
 supported by MotiveWave Software.
 
+## What's new in 0.4.15: the study stops recording when you are flat
+
+This release comes with study **0.3.9**.
+
+- **Study 0.3.8 could record ticks all day while you were flat.** MotiveWave keeps only part of an account's
+  history, and on a SIM account the oldest fill it keeps is often the exit of a position whose entry it has
+  already dropped. 0.3.8 added up every fill, so that exit looked like a position still open and the
+  contract recorded every print, whatever you did. 0.3.9 groups fills by MotiveWave's own position ids, the
+  way the app groups your trades and links your stops, so it records only while you are really in a trade.
+
+**What to do:** Setup → **Install MotiveWave Study**. MotiveWave switches to 0.3.9 by itself within a few
+seconds.
+
 ## What's new in 0.4.14: find your edge the way Trade Craft teaches it, and a journal that stays small
 
 This release comes with study **0.3.8**.

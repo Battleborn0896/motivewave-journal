@@ -137,7 +137,8 @@ observed ticks, not as simulated, whatever the replay itself played.
 Study 0.3.8 changes no event's shape; it changes which prints are recorded. Its **Record Ticks** setting
 (Advanced) has three choices: **During Trades Only**, the default, records live and replay prints only while
 a trade is open, from the few seconds before the entry fill is seen (a 15-second pre-roll held in memory) to
-a few seconds after the exit; **Always While Study Runs** records every print the chart receives, the
+a few seconds after the exit (from study 0.3.9 a trade is open by the same position rules that link stops:
+fills netted inside MotiveWave's position id where they carry one); **Always While Study Runs** records every print the chart receives, the
 default of studies 0.3.2 to 0.3.7; **Never** records none. The setting is stored under a new key,
 `recordTicksV3`, so every chart saved by an earlier study takes the new default, whatever it was set to
 (MotiveWave saves a default like any other choice). When fills cannot be read, During Trades Only records

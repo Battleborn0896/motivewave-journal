@@ -22,7 +22,7 @@ body:
     id: versions
     attributes:
       label: Journal, study and MotiveWave versions
-      placeholder: "Journal 0.4.14; study 0.3.8; MotiveWave …"
+      placeholder: "Journal 0.4.15; study 0.3.9; MotiveWave …"
     validations:
       required: true
   - type: dropdown

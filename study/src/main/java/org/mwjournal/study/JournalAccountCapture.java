@@ -63,7 +63,7 @@ final class JournalAccountCapture {
   private record Side(Set<String> open, Set<String> traded) {}
   /** run is the provider a replay fill is filed under, which names its replay run, and empty for a live fill. */
   record Book(boolean replay, String account, String symbol, String run) {}
-  private static final class Tally { double net; int fills; long latest; }
+  private static final class Tally { int fills; long latest; }
   // A snapshot this old means the poller has stalled; it is younger than the tick pre-roll on purpose,
   // so the prints around an entry are still buffered when the gate falls back to recording.
   static final long HOLDINGS_STALE_NANOS = 5_000_000_000L;
@@ -253,8 +253,10 @@ final class JournalAccountCapture {
     return replay ? known.replay() : known.live();
   }
 
-  /** Net signed quantity per account and instrument, taken from the fills the capture reads anyway.
-   * It is only as complete as that list: a position whose entry fill MotiveWave no longer retains
+  /** The instruments with an open position, by the positions the stops are linked to (positions(), matching.py's
+   * rules), taken from the fills the capture reads anyway. Where MotiveWave gives fills a position id they are
+   * netted inside it, so an exit whose entry MotiveWave no longer keeps does not leave its contract open for
+   * good. It is only as complete as that list: a position whose entry fill MotiveWave no longer retains
    * is not seen as open.
    *
    * Replay fills are netted run by run. MotiveWave keeps the fills of earlier runs, so a long left open
@@ -262,12 +264,13 @@ final class JournalAccountCapture {
    * would be recorded as flat. The cost is the safe one: an abandoned position keeps its instrument
    * recording until MotiveWave forgets the fills. */
   private Holdings holdings(JournalNativeAccess.Snapshot snapshot, String replayProvider, long nowNanos) {
+    // The same rule the fill is filed under further down: the run it was first seen in, else this one.
+    Function<JournalNativeAccess.Fill, String> filed = fill -> fill.replay()
+        ? fillProviders.getOrDefault(key(snapshot.workspace(), fill), replayProvider) : "";
     var next = new HashMap<Book, Tally>();
     for (var fill : snapshot.fills()) {
-      // The same rule the fill is filed under further down: the run it was first seen in, else this one.
-      String run = fill.replay() ? fillProviders.getOrDefault(key(snapshot.workspace(), fill), replayProvider) : "";
-      Tally tally = next.computeIfAbsent(new Book(fill.replay(), fill.account(), fill.symbol(), run), book -> new Tally());
-      tally.net += fill.buy() ? fill.qty() : -fill.qty();
+      Tally tally = next.computeIfAbsent(new Book(fill.replay(), fill.account(), fill.symbol(), filed.apply(fill)),
+          book -> new Tally());
       tally.fills++;
       tally.latest = Math.max(tally.latest, fill.time());
     }
@@ -282,10 +285,11 @@ final class JournalAccountCapture {
     // is only kept out of the sets, which cannot hold a null.
     var liveOpen = new HashSet<String>();
     var replayOpen = new HashSet<String>();
-    next.forEach((book, tally) -> {
-      // Phrased so that a quantity that is not a number counts as open.
-      if (book.symbol() != null && !(Math.abs(tally.net) <= FLAT)) (book.replay() ? replayOpen : liveOpen).add(book.symbol());
-    });
+    for (var positions : positions(snapshot.fills(), filed).values())
+      for (var position : positions) {
+        Book book = position.book();
+        if (position.open() && book.symbol() != null) (book.replay() ? replayOpen : liveOpen).add(book.symbol());
+      }
     var liveTraded = new HashSet<String>();
     var replayTraded = new HashSet<String>();
     for (Book book : traded.keySet()) if (book.symbol() != null) (book.replay() ? replayTraded : liveTraded).add(book.symbol());
