@@ -15,7 +15,7 @@ from pathlib import Path
 
 from .model import instant, product, timestamp
 from .scope import allows_source
-from .store import Journal, ImportConflict, encode
+from .store import Journal, ImportConflict, drop_copies, encode, minute
 from .workspace import label
 
 KEY = 'journal_registry'
@@ -165,17 +165,22 @@ def follow(journal, trade):
                 held = db.execute('SELECT ts, payload FROM main.prices WHERE symbol=? AND source=? ORDER BY ts DESC LIMIT 1',
                                   (label, source)).fetchone()
                 # From the newest price held: a print is never written again, but the study writes the last two
-                # minutes' candles again as each minute closes. Nothing held yet: from the chart's widest context.
+                # minutes' candles again as each minute closes. A print, from the start of its minute: the capture
+                # journal may have packed that minute since, and the packed row is stored at the minute's start.
+                # Nothing held yet: from the chart's widest context.
                 if held is None:
                     start = timestamp(instant(trade.opened) - CONTEXT)
                 elif json.loads(held['payload']).get('resolution_seconds'):
                     start = timestamp(instant(held['ts']) - RECENT)
                 else:
-                    start = held['ts']
+                    start = minute(held['ts'])
                 copied = db.execute('INSERT INTO main.prices(key,symbol,source,ts,payload) SELECT key,symbol,source,ts,payload '
                                     'FROM capture.prices WHERE symbol=? AND source=? AND ts>=? AND true '
                                     'ON CONFLICT(key) DO UPDATE SET payload=excluded.payload '
-                                    'WHERE main.prices.payload != excluded.payload RETURNING ts', (label, source, start)).fetchall()
+                                    "WHERE main.prices.payload != excluded.payload RETURNING ts, "
+                                    "iif(json_extract(payload, '$.packed') IS NOT NULL, key, NULL)",
+                                    (label, source, start)).fetchall()
+                drop_copies(db, [row[1] for row in copied if row[1]])        # as mirror does
                 if copied:
                     first = instant(min(row[0] for row in copied))
                     since[source] = min(since.get(source, first), first)
@@ -261,16 +266,19 @@ def mirror(capture, target, scopes):
         traded = {product(row[0]) for row in db.execute('SELECT symbol FROM selected_symbols') if row[0]}
         db.execute('CREATE TEMP TABLE price_symbols (symbol TEXT PRIMARY KEY)')
         db.executemany('INSERT INTO price_symbols VALUES(?)', [(symbol,) for symbol in stored if product(symbol) in traded])
-        for table in ('prices', 'instruments'):
-            # Price rows are shared market observations, not account positions.
-            selection = 'price_symbols' if table == 'prices' else 'selected_symbols'
-            keys = 'key,symbol,source,ts,payload' if table == 'prices' else 'symbol,point_value'
-            update = ('payload=excluded.payload' if table == 'prices' else 'point_value=excluded.point_value')
-            difference = ('main.prices.payload != excluded.payload' if table == 'prices' else 'main.instruments.point_value != excluded.point_value')
-            conflict_key = 'key' if table == 'prices' else 'symbol'
-            db.execute(f'INSERT INTO main.{table}({keys}) SELECT ' + ','.join('incoming.' + key for key in keys.split(',')) +
-                       f' FROM capture.{table} incoming JOIN {selection} selected ON incoming.symbol=selected.symbol WHERE 1 '
-                       f'ON CONFLICT({conflict_key}) DO UPDATE SET {update} WHERE {difference}')
+        # Price rows are shared market observations, not account positions. They come as the capture journal stores
+        # them: a packed minute (Journal.pack_prices) is a row like any other, and the copies of its prints this
+        # journal holds as rows go as it comes (drop_copies). A named journal packs nothing of its own.
+        copied = db.execute('INSERT INTO main.prices(key,symbol,source,ts,payload) SELECT incoming.key,incoming.symbol,'
+                            'incoming.source,incoming.ts,incoming.payload FROM capture.prices incoming JOIN price_symbols '
+                            'selected ON incoming.symbol=selected.symbol WHERE 1 ON CONFLICT(key) DO UPDATE SET '
+                            'payload=excluded.payload WHERE main.prices.payload != excluded.payload '
+                            "RETURNING iif(json_extract(payload, '$.packed') IS NOT NULL, key, NULL)").fetchall()
+        drop_copies(db, [row[0] for row in copied if row[0]])
+        db.execute('INSERT INTO main.instruments(symbol,point_value) SELECT incoming.symbol,incoming.point_value '
+                   'FROM capture.instruments incoming JOIN selected_symbols selected ON incoming.symbol=selected.symbol '
+                   'WHERE 1 ON CONFLICT(symbol) DO UPDATE SET point_value=excluded.point_value '
+                   'WHERE main.instruments.point_value != excluded.point_value')
         db.execute('INSERT OR REPLACE INTO main.capture_events SELECT incoming.* FROM capture.capture_events incoming '
                    'WHERE incoming.source IN (SELECT DISTINCT source FROM main.prices)')
         scopes_in_target = db.execute("SELECT DISTINCT json_extract(payload,'$.provider'),json_extract(payload,'$.account') FROM main.executions").fetchall()

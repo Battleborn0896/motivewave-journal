@@ -476,7 +476,12 @@ That acceptance check is still required. The study never places, changes or canc
 The study records fills, linked order updates and prices into newline-committed local NDJSON;
 the app watches it without routine exports. This follows the platform-connector/local-app
 pattern documented by [SCS Trading Journal](https://www.scstudies.com/trading-journal), not its
-proprietary implementation. Tick prices remain stored at their original resolution. The default
+proprietary implementation. Tick prices remain stored at their original resolution. The journal keeps
+every recorded tick, packed small: an hour or two after a tick is recorded, each minute's ticks are packed
+into one entry, about 5 bytes a tick instead of about 475, and every chart, MAE / MFE, runner result and
+export reads exactly the same ticks as before. There is nothing to set or do. The first time this version
+opens a journal it packs every tick already recorded and shrinks the file (a tester's 222 MB journal became
+17 MB in 13 seconds). The default
 P&L chart is compacted for display; once a trade is closed, **Show/export full recorded trade path**
 reconstructs every available observation with held quantity and average cost. Missing prices are not
 invented.
@@ -486,7 +491,10 @@ invented.
 The desktop app contains no screen, video, audio, microphone, camera, OBS or FFmpeg recorder.
 Automatic capture comes only from the MotiveWave study: fills, partials, linked protection, ticks,
 bars and replay events are appended to the local bridge file. The app reads that file and never
-needs permission to see the desktop.
+needs permission to see the desktop. Once the app has read and stored all of the file, the study empties
+it, so it holds only what the app has not read yet (while the app is closed it keeps everything). The
+bridge file is not a backup: the journal backup (Settings → Data → Export & Backup → **Back Up Journal**) is
+how a journal is recovered.
 
 ### Post-exit runner analysis
 
@@ -607,7 +615,8 @@ Default data folders:
 | Windows | `%LOCALAPPDATA%\MotiveWave Journal` |
 | Linux | `~/.local/share/motivewave-journal` |
 
-The study writes `bridge/motivewave.ndjson` and `bridge/motivewave.replay.ndjson`; databases are
+The study writes `bridge/motivewave.ndjson` and `bridge/motivewave.replay.ndjson`, and empties each once the
+app has read it to its end (the app says how far it has read in a small `.read` file beside it); databases are
 `trades.sqlite3` and `replay/trades.sqlite3`. Set `MWJ_HOME` to override the folder, but a desktop
 MotiveWave will not necessarily inherit your terminal environment. If overriding only the app,
 copy the live bridge path shown in Data → Connection into the study's File setting (under Advanced).
@@ -618,7 +627,8 @@ too), safe to take while trades are recording. **Restore From Backup** takes suc
 and how many live and replay trades it holds, and **Restore This Backup** puts the whole journal back as
 it was. Before it does, the journal as it is now is saved to `backups/before-restore-<time>.zip` in the
 data folder, so a restore can be undone by restoring that file. A backup from an older version is brought
-up to date as it is restored; one from a newer version is refused. **Export Trades CSV** is the trades of
+up to date as it is restored; one from a newer version is refused. This zip, not the bridge file, is how a
+journal is recovered: the bridge file only holds what the app has not read yet. **Export Trades CSV** is the trades of
 the environment on screen, one row each, for a spreadsheet.
 
 ## Tick accuracy and replay

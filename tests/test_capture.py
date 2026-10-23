@@ -1,6 +1,8 @@
 """Native bridge protocol fixtures only: no brokerage requests or real trading records."""
+import base64
 import datetime as dt
 import json
+import random
 from types import SimpleNamespace
 
 import pytest
@@ -9,6 +11,7 @@ from mwjournal import Journal
 from mwjournal.chart import trade_chart
 from mwjournal.importers import apply_preview, preview_bridge
 from mwjournal.metrics import excursions
+from mwjournal import sync
 from mwjournal.sync import SyncWorker
 
 
@@ -440,3 +443,167 @@ def test_motivewave_fees_are_the_fee_even_at_zero_and_its_source_label_is_not_a_
 
     other, = match([imported('c', 'buy', 0), imported('d', 'sell', 1)])
     assert 'fees not provided' in other.flags   # an import without a fee column still says so
+
+
+# ---------------------------------------------------------------- the read receipt (docs/protocol.md)
+
+def receipt_of(path):
+    """What the study reads in `<bridge>.read`: (position, the bytes before it), or None."""
+    receipt = path.with_name(path.name + '.read')
+    if not receipt.exists():
+        return None
+    position, checkpoint = receipt.read_bytes().split(b'\n')[:2]
+    return int(position), base64.b64decode(checkpoint)
+
+
+def test_the_read_receipt_says_what_the_journal_holds_once_it_is_stored_and_only_then(tmp_path, monkeypatch):
+    journal = Journal(tmp_path / 'replay.db', dataset='replay')
+    path = tmp_path / 'motivewave.replay.ndjson'
+    path.write_text(lines([fill('a'), tick(4999)]))
+    journal.put('profiles', 'native', {'mode': 'bridge', 'path': str(path), 'enabled': True})
+    worker = SyncWorker(journal)
+    worker.poll()
+    held = receipt_of(path)
+    assert held == (path.stat().st_size, path.read_bytes()[-256:])
+    with path.open('a') as fh:
+        fh.write(lines([fill('b', 'sell', 5002, ts='2022-01-03T14:32:00Z')]))
+
+    def fails(*args):
+        raise ValueError('The disk is full.')
+    monkeypatch.setattr(sync, 'apply_preview', fails)
+    worker.poll()
+    # Not stored, so not said: the study goes on appending, and the next read takes the line.
+    assert receipt_of(path) == held and journal.get('sync_status')['native']['error'] == 'The disk is full.'
+    monkeypatch.undo()
+
+    def in_use(*args):
+        raise PermissionError('in use')
+    monkeypatch.setattr(sync.os, 'replace', in_use)
+    worker.poll()
+    # Stored, but the receipt could not be put in place: the old one stays, whole, and nothing is left beside it.
+    assert journal.trades()[0].closed and receipt_of(path) == held
+    assert sorted(p.name for p in tmp_path.iterdir() if 'ndjson' in p.name) == [
+        'motivewave.replay.ndjson', 'motivewave.replay.ndjson.read']
+    monkeypatch.undo()
+    with path.open('a') as fh:
+        fh.write(lines([tick(5001, ts='2022-01-03T14:33:00Z')]))
+    worker.poll()
+    assert receipt_of(path) == (path.stat().st_size, path.read_bytes()[-256:])
+    # A watched CSV has none: only a bridge file is ever emptied.
+    csv = tmp_path / 'fills.csv'
+    csv.write_text('Account,Instrument,Side,Quantity,Avg Price,Date,Time,Trade ID\n')
+    journal.put('profiles', 'fills', {'mode': 'executions', 'path': str(csv), 'enabled': True})
+    worker.poll()
+    assert not (tmp_path / 'fills.csv.read').exists()
+
+
+def test_a_bridge_file_emptied_once_read_loses_no_line_and_gives_none_twice(tmp_path):
+    """The study empties its file when the receipt names all of it (study 0.3.10, JournalEventWriter.emptyIfRead).
+    Here a study writes lines, sometimes half a line at a time, and empties the file whenever the receipt allows,
+    hundreds of times, with lines written between an emptying and the app's next read, fewer or more than were read
+    before: the app's own reader takes every line once, in order."""
+    journal = Journal(tmp_path / 'trades.sqlite3')
+    path = tmp_path / 'motivewave.ndjson'
+    worker, rng = SyncWorker(journal), random.Random(11)
+    written, read, emptied, rest = [], [], 0, b''
+
+    def study_writes(count):
+        nonlocal rest
+        with path.open('ab') as fh:
+            fh.write(rest)                                 # the end of a line half written before
+            rest = b''
+            for i in range(count):
+                line = json.dumps({'type': 'heartbeat', 'n': len(written), 'pad': 'x' * rng.randrange(400)}).encode()
+                written.append(line.decode())
+                line += b'\n'
+                if i == count - 1 and rng.random() < .2:
+                    cut = rng.randrange(1, len(line))
+                    line, rest = line[:cut], line[cut:]
+                fh.write(line)
+
+    def study_empties():
+        """What JournalEventWriter.emptyIfRead checks, at any size."""
+        nonlocal emptied
+        receipt, data = receipt_of(path), path.read_bytes()
+        if (receipt and receipt[0] == len(data) > 0 and len(receipt[1]) == min(receipt[0], 256)
+                and data.endswith(receipt[1])):
+            with path.open('r+b') as fh:
+                fh.truncate(0)
+            emptied += 1
+
+    def app_reads():
+        pending = worker.bridge_lines('MotiveWave', path)
+        if pending:
+            blob, _, position = pending
+            read.extend(blob.decode().splitlines())
+            journal.set_bridge_offset('MotiveWave', *position)
+            sync.write_receipt(path, *position[1:])
+
+    path.touch()
+    for _ in range(1500):
+        roll = rng.random()
+        if roll < .45:
+            study_writes(rng.randrange(1, 12))
+        elif roll < .8:
+            app_reads()
+        else:
+            study_empties()
+    with path.open('ab') as fh:
+        fh.write(rest)                                     # the study finishes its last line
+    app_reads()
+    assert emptied > 50 and read == written
+
+
+@pytest.mark.parametrize('at', (1, 2, 3))
+def test_a_file_emptied_and_written_past_the_read_position_while_it_is_read_gives_every_new_line_once(tmp_path, at):
+    """The study empties a file the receipt says is read to its end, and can write more than was there before the
+    app's read of it finishes (the app paused in between, a burst of history after a trade). Whichever read of the
+    app's the emptying lands before, the new lines come from the start of the file, each once."""
+    journal = Journal(tmp_path / 'trades.sqlite3')
+    path = tmp_path / 'motivewave.ndjson'
+    old = [json.dumps({'type': 'heartbeat', 'n': n}) for n in range(50)]
+    new = [json.dumps({'type': 'heartbeat', 'n': n, 'pad': 'y' * 40}) for n in range(100, 200)]
+    path.write_text(''.join(line + '\n' for line in old))
+    worker = SyncWorker(journal)
+    blob, _, position = worker.bridge_lines('MotiveWave', path)
+    journal.set_bridge_offset('MotiveWave', *position)
+    assert blob.decode().splitlines() == old and sum(len(line) + 1 for line in new) > position[1]
+    reads, raced = [], []
+
+    def study_empties_and_writes():
+        raced.append(True)
+        with path.open('r+b') as fh:
+            fh.truncate(0)
+            fh.write(''.join(line + '\n' for line in new).encode())
+
+    class Reading:
+        """The app's open file: the study empties it and writes the new lines just before the at-th read."""
+        def __init__(self, fh):
+            self.fh = fh
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc):
+            self.fh.close()
+
+        def __getattr__(self, name):
+            return getattr(self.fh, name)
+
+        def read(self, *args):
+            reads.append(args)
+            if len(reads) == at and not raced:
+                study_empties_and_writes()
+            return self.fh.read(*args)
+
+    watched = SimpleNamespace(open=lambda *args, **kwargs: Reading(path.open(*args, **kwargs)))
+    got = []
+    for _ in range(2):
+        pending = worker.bridge_lines('MotiveWave', watched)
+        if pending:
+            blob, start, position = pending
+            got.extend(blob.decode().splitlines())
+            journal.set_bridge_offset('MotiveWave', *position)
+        if not raced:
+            study_empties_and_writes()          # after this read: the next one starts again from the start
+    assert got == new
