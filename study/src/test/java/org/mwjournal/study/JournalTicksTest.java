@@ -4,15 +4,13 @@ import java.nio.file.Files;
 import java.util.ArrayList;
 import java.util.List;
 import org.mwjournal.study.JournalTicks.Held;
-import static org.mwjournal.study.JournalTicks.ALWAYS;
-import static org.mwjournal.study.JournalTicks.IN_POSITION;
 
 /** The whole tick path short of MotiveWave's callback: positions from fixture fills, the gate, the real
- * writer and the bridge files it leaves behind. */
+ * writer and the bridge files it leaves behind. Prints are recorded during trades only: there is no other mode. */
 public final class JournalTicksTest {
   private JournalTicksTest() {}
   private static final long TIME = 1641220200000L;
-  private static final String REPLAY_SOURCE = "motivewave-replay:run-1:simulated";
+  private static final String REPLAY_SOURCE = "motivewave-replay:run-1:ticks";
 
   public static void main(String[] args) throws Exception {
     var folder = Files.createTempDirectory("mwj-ticks-fixture-");
@@ -36,16 +34,11 @@ public final class JournalTicksTest {
       capture.poll(System.nanoTime() + ahead[0]);
     };
 
-    // What arms the gate with the default setting, During Trades Only. Anything short of a book known to be
-    // flat records.
-    assert JournalSettings.RECORD_DEFAULT.equals(IN_POSITION);
-    assert JournalTicks.armed(null, IN_POSITION, false, "ESZ6", "ESZ6", "ESZ6") : "Fill capture off records everything";
-    assert JournalTicks.armed(capture, IN_POSITION, false, "ESZ6", "ESZ6", "ESZ6") : "No poll yet records everything";
+    // What arms the gate. Anything short of a book known to be flat records.
+    assert JournalTicks.armed(null, false, "ESZ6", "ESZ6") : "Fills that cannot be read: every print is recorded";
+    assert JournalTicks.armed(capture, false, "ESZ6", "ESZ6") : "No poll yet records everything";
     poll.run();
-    assert !JournalTicks.armed(capture, IN_POSITION, false, "ESZ6", "ESZ6", "ESZ6") : "Known flat skips";
-    assert JournalTicks.armed(capture, ALWAYS, false, "ESZ6", "ESZ6", "ESZ6");
-    assert JournalTicks.armed(capture, "A_LATER_VERSIONS_CHOICE", false, "ESZ6", "ESZ6", "ESZ6")
-        : "An unknown stored value must not silently skip prices";
+    assert !JournalTicks.armed(capture, false, "ESZ6", "ESZ6") : "Known flat skips";
 
     // Flat: prints go by and nothing is written.
     for (int n = 0; n < 5; n++) live(gate, writer, capture, n);
@@ -87,18 +80,19 @@ public final class JournalTicksTest {
     poll.run();
     replay(replayGate, replayWriter, capture, 21);
     live(gate, writer, capture, 16);
-    assert !JournalTicks.armed(capture, IN_POSITION, false, "ESZ6", "ESZ6", "ESZ6");
-    assert JournalTicks.armed(capture, IN_POSITION, true, "ESZ6", "ESZ6", "ESZ6");
+    assert !JournalTicks.armed(capture, false, "ESZ6", "ESZ6");
+    assert JournalTicks.armed(capture, true, "ESZ6", "ESZ6");
 
-    // The names a position can be under: the instrument's own symbol, the active contract of a
-    // continuous chart, or the contract a proxy chart names. Anything else stays flat.
+    // The names a position can be under: the instrument's own symbol, or the active contract of a
+    // continuous chart. Anything else stays flat: a chart of another contract never records this trade.
     fills.add(fill("micro", true, false, "MESZ6"));
     poll.run();
-    assert JournalTicks.armed(capture, IN_POSITION, false, "MESZ6", "MESZ6", "MESZ6");
-    assert JournalTicks.armed(capture, IN_POSITION, false, "@MES", "MESZ6", "MESZ6") : "Continuous chart, fills on the contract";
-    assert JournalTicks.armed(capture, IN_POSITION, false, "ESZ6", "ESZ6", "MESZ6") : "ES chart standing in for MES fills";
-    assert !JournalTicks.armed(capture, IN_POSITION, false, "NQZ6", "NQZ6", "NQZ6");
-    assert !JournalTicks.armed(capture, IN_POSITION, false, null, null, "NQZ6");
+    assert JournalTicks.armed(capture, false, "MESZ6", "MESZ6");
+    assert JournalTicks.armed(capture, false, "@MES", "MESZ6") : "Continuous chart, fills on the contract";
+    assert JournalTicks.armed(capture, false, "MESZ6", null) : "A contract chart that names no active contract";
+    assert !JournalTicks.armed(capture, false, "ESZ6", "ESZ6") : "An ES chart does not record an MES trade";
+    assert !JournalTicks.armed(capture, false, "NQZ6", "NQZ6");
+    assert !JournalTicks.armed(capture, false, null, null);
     assert capture.failure == null : capture.failure;
 
     writer.release();
@@ -123,21 +117,21 @@ public final class JournalTicksTest {
     try (var left = Files.walk(folder)) {
       for (var path : left.sorted(java.util.Comparator.reverseOrder()).toList()) Files.delete(path);
     }
-    System.out.println("Journal ticks passed: skipped while flat, pre-roll on entry, tail after exit, re-arming, "
-        + "a trade between two polls, replay apart from live, symbol aliases, no gap events for skipped prints.");
+    System.out.println("Journal ticks passed: during trades only, skipped while flat, every print while fills cannot "
+        + "be read, pre-roll on entry, tail after exit, re-arming, a trade between two polls, replay apart from live, "
+        + "a continuous chart's active contract, no gap events for skipped prints.");
   }
 
   private static void live(TickGate<Held> gate, JournalEventWriter target, JournalAccountCapture capture, int n) {
-    JournalTicks.record(gate, target, held("motivewave-ticks", n), "live",
-        JournalTicks.armed(capture, IN_POSITION, false, "ESZ6", "ESZ6", "ESZ6"));
+    Held held = held("motivewave-ticks", n);
+    JournalTicks.record(gate, target, held, "live", JournalTicks.armed(capture, false, held));
   }
   private static void replay(TickGate<Held> gate, JournalEventWriter target, JournalAccountCapture capture, int n) {
-    JournalTicks.record(gate, target, held(REPLAY_SOURCE, n), "replay",
-        JournalTicks.armed(capture, IN_POSITION, true, "ESZ6", "ESZ6", "ESZ6"));
+    Held held = held(REPLAY_SOURCE, n);
+    JournalTicks.record(gate, target, held, "replay", JournalTicks.armed(capture, true, held));
   }
   private static Held held(String source, int n) {
-    return new Held("ESZ6", false, source,
-        new JournalPriceEvents.Print(TIME + n * 250L, 5000 + n, 4999.75f + n, 5000.25f + n, 1));
+    return new Held("ESZ6", source, new JournalPriceEvents.Print(TIME + n * 250L, 5000 + n, 4999.75f + n, 5000.25f + n, 1));
   }
   private static List<Integer> prices(List<String> ticks) {
     var result = new ArrayList<Integer>();

@@ -11,7 +11,6 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import org.mwjournal.study.JournalTicks.Held;
-import static org.mwjournal.study.JournalTicks.IN_POSITION;
 
 /** Writes a small bridge file, and the replay file beside it, with the code the study itself runs:
  * the account capture for fills, linked stop orders and heartbeats, the tick gate and writer for prints,
@@ -30,10 +29,9 @@ import static org.mwjournal.study.JournalTicks.IN_POSITION;
  *   price_known false, the 'platform reported no fill price' label); the exit is at 21020.
  * Because of that one fill every heartbeat is 'connected' with warnings '1 fill with no fill price'.
  * The replay file holds one ESZ6 trade, short 2 from 4800 and 4802 to 4797, with a buy stop at 4806 placed
- *   with the entry and cancelled at the exit, and the same heartbeats. Its
- *   replay prints are real ticks, as the study labels them with its default settings
- *   (motivewave-replay:<run>:ticks). Once it is flat, the replay backfill loads five real prints of its
- *   holding window (motivewave-replay:<run>:history), low 4795.5 and high 4806, with the replay clock three
+ *   with the entry and cancelled at the exit, and the same heartbeats. Its replay prints are real ticks,
+ *   as the study always labels them (motivewave-replay:<run>:ticks). Once it is flat, the replay backfill
+ *   loads five real prints of its holding window (motivewave-replay:<run>:history), low 4795.5 and high 4806, with the replay clock three
  *   seconds past the exit: the history also answers with a print after that clock, at 4700, which must
  *   never reach the file.
  *
@@ -57,7 +55,7 @@ public final class ContractSample {
     var capture = JournalAccountCapture.fixture(file,
         () -> new JournalNativeAccess.Snapshot("workspace", List.copyOf(fills), List.copyOf(orders)));
     String run = capture.replayRun("ESZ6", REPLAY);
-    String replaySource = JournalPriceEvents.replayProvider(run, JournalSettings.REAL_REPLAY_DEFAULT);
+    String replaySource = JournalPriceEvents.replayProvider(run);
     var writer = JournalEventWriter.acquire(file);
     var replayWriter = JournalEventWriter.acquire(replayFile);
     var gate = new TickGate<Held>();
@@ -111,10 +109,11 @@ public final class ContractSample {
     if (capture.failure != null) throw new IllegalStateException(capture.failure);
 
     // The past NQ trade was not recorded live: its ticks are asked from the tick history, as the study
-    // does on a chart of that contract, and then the minutes after its exit. The history here answers each
-    // with every print it has; only those inside the window asked for are written.
+    // does on a chart whose active contract is NQZ6, and then the minutes after its exit. The history here
+    // answers each with every print it has; only those inside the window asked for are written.
     var backfill = new JournalBackfill(new JournalBackfill.Ledger(file));
-    var loaded = backfill.pass("NQZ6", capture.fills(), LIVE + 600_000, 30, JournalSettings.POST_EXIT_DEFAULT,
+    var loaded = backfill.pass("NQZ6", capture.fills(), LIVE + 600_000, JournalSettings.BACKFILL_DAYS,
+        JournalSettings.AFTER_EXIT_MINUTES,
         (start, end, each) -> {
           each.accept(print(past - 8_000, 20990));
           each.accept(print(past - 3_000, 21000));
@@ -130,8 +129,8 @@ public final class ContractSample {
     // replay's present and no further. The history answers with more than that, before and after.
     long clock = REPLAY + 103_000;
     var replayBackfill = new JournalBackfill(new JournalBackfill.Ledger(replayFile, true));
-    var replayed = replayBackfill.replayPass("ESZ6", capture.replayFills(), clock, System.currentTimeMillis(), 30,
-        JournalSettings.POST_EXIT_DEFAULT, (start, end, each) -> {
+    var replayed = replayBackfill.replayPass("ESZ6", capture.replayFills(), clock, System.currentTimeMillis(),
+        JournalSettings.BACKFILL_DAYS, JournalSettings.AFTER_EXIT_MINUTES, (start, end, each) -> {
           each.accept(print(REPLAY + 2_000, 4810));
           each.accept(print(REPLAY + 8_000, 4799));
           each.accept(print(REPLAY + 25_000, 4801.5f));
@@ -170,14 +169,14 @@ public final class ContractSample {
 
   private static void live(TickGate<Held> gate, JournalEventWriter target, JournalAccountCapture capture,
                            int second, float price) {
-    JournalTicks.record(gate, target, new Held("ESZ6", false, "motivewave-ticks", print(LIVE + second * 1000L, price)),
-        "live", JournalTicks.armed(capture, IN_POSITION, false, "ESZ6", "ESZ6", "ESZ6"));
+    var held = new Held("ESZ6", "motivewave-ticks", print(LIVE + second * 1000L, price));
+    JournalTicks.record(gate, target, held, "live", JournalTicks.armed(capture, false, held));
   }
 
   private static void replay(TickGate<Held> gate, JournalEventWriter target, JournalAccountCapture capture,
                              String source, int second, float price) {
-    JournalTicks.record(gate, target, new Held("ESZ6", false, source, print(REPLAY + second * 1000L, price)),
-        "replay", JournalTicks.armed(capture, IN_POSITION, true, "ESZ6", "ESZ6", "ESZ6"));
+    var held = new Held("ESZ6", source, print(REPLAY + second * 1000L, price));
+    JournalTicks.record(gate, target, held, "replay", JournalTicks.armed(capture, true, held));
   }
 
   /** Through the SDK's Tick interface, the way the study receives a print. */

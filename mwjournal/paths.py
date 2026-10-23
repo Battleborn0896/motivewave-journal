@@ -24,14 +24,8 @@ APP_NAME = 'MotiveWave Journal'
 # The app's version. pyproject.toml, desktop/macos/Info.plist and desktop/macos/Main.swift say the same;
 # tests/test_version.py checks. The study has its own version (study/.../JournalPaths.java).
 VERSION = '0.4.15'
-# The study this app bundles (JournalPaths.CONNECTOR_VERSION; tests/test_version.py checks). Setup asks a
-# user whose study reports an older version to install this one: studies before 0.3.3 receive no live or
-# replay ticks, before 0.3.4 a replay's prints are labelled simulated unless Real Tick Data is ticked, and
-# before 0.3.6 no stop order is ever recorded (each order's instrument was read as the wrong type), so trades
-# have no R unless the stop is typed, and before 0.3.8 a chart records every print all day by default (about
-# 540,000 an NQ day); 0.3.8 records each trade's and loads the minutes after its exit from MotiveWave's history.
-# From 0.3.6 on a new study takes over from the old one without a restart.
-STUDY_VERSION = '0.3.9'
+# The study this app bundles; Setup asks an older one to update, as older studies miss ticks, stops or runners.
+STUDY_VERSION = '0.3.10'
 STUDY_CONNECTOR = 'motivewave-journal-study'
 ENV = 'MWJ_HOME'
 DATASETS = ('live', 'replay')

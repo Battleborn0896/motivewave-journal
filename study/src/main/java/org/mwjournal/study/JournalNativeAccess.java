@@ -47,7 +47,8 @@ final class JournalNativeAccess {
     }
   }
   /** skipped: how many executions could not be described, by reason. They are in none of the lists.
-   * instruments: the SDK instrument of the fills of each contract (key contract()), for the probes only. */
+   * instruments: the SDK instrument of the fills of each contract (key contract()), for the probes and for the
+   * tick history the backfill reads (JournalBackfill.history). */
   record Snapshot(String workspace, List<Fill> fills, List<ProtectiveOrder> orders, Map<String,Integer> skipped,
                   OrderCounts orderCounts, Map<String, Instrument> instruments) {
     Snapshot(String workspace, List<Fill> fills, List<ProtectiveOrder> orders) {

@@ -229,7 +229,7 @@ def test_open_replay_uses_its_recorded_clock_not_wall_time(tmp_path):
     assert chart['overlays']['levels'][0]['to'] == clock.timestamp()
 
 
-def beat(status='connected', detail='Experimental read-only account capture; 12 fills read', second=0, **more):
+def beat(status='connected', detail='Recording fills read-only; 12 fills read', second=0, **more):
     return {'version': 1, 'type': 'heartbeat', 'mode': 'live', 'provider': 'motivewave-native', 'workspace': 'workspace',
             'ts': f'2026-10-08T14:00:{second:02d}Z', 'status': status, 'detail': detail,
             'connector': 'motivewave-journal-study', 'connector_version': '0.3.1', **more}
