@@ -9,6 +9,7 @@ from dataclasses import replace
 
 from .model import Trade, digest, instant
 from .metrics import measurements
+from .workspace import time_zone
 from . import tagging
 
 KEY = 'trade_merges'
@@ -102,12 +103,13 @@ def create(journal, ids):
             raise ValueError('A selected trade already belongs to a merged review. Split it first.')
         data[id] = {'id': id, 'leg_ids': ids, 'active': True, 'at': dt.datetime.now(dt.timezone.utc).isoformat()}
         db.execute('INSERT OR REPLACE INTO journal_meta VALUES(?,?)', (KEY, json.dumps(data, allow_nan=False)))
-        library = tagging.library(db)
+        library, zone = tagging.library(db), time_zone(db)
         tags = set()
         for leg in (raw[key] for key in ids):
             row = db.execute('SELECT payload FROM annotations WHERE trade_id=?', (leg.id,)).fetchone()
             annotation = json.loads(row[0]) if row else {}
-            day = db.execute('SELECT payload FROM sessions WHERE key=?', (tagging.session_key(library, leg.opened),)).fetchone()
+            day = db.execute('SELECT payload FROM sessions WHERE key=?',
+                             (tagging.day_key(leg.opened, zone),)).fetchone()
             tags.update(tagging.effective(library, annotation, json.loads(day[0]) if day else {}))
         # Restoring a split merge retains its own prior notes/risk/tags. Original leg reviews stay untouched.
         db.execute('INSERT OR IGNORE INTO annotations VALUES(?,?)', (id, json.dumps({'tag_ids': sorted(tags),

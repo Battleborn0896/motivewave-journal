@@ -1,16 +1,21 @@
-"""The schema step that gives a 0.3.0 journal the platform's position ids, on invented fills only."""
+"""The schema steps, on invented fills only: 3 gives a 0.3.0 journal the platform's position ids, 4 gives every
+journal one time zone, its own, for its days."""
 import json
 import sqlite3
 import traceback
 
 import pytest
 
-from mwjournal import Journal, store
+import common
+from mwjournal import Execution, Journal, humanize, store, tagging
 from mwjournal.importers import apply_preview, preview_bridge, preview_csv
 from mwjournal.matching import match
 from mwjournal.metrics import excursions
 from mwjournal.model import ENTRY_MISSING, EXIT_MISSING, NO_FILL_PRICE
 from mwjournal.sync import SyncWorker
+from mwjournal.tags import DAY, STARTERS
+from test_chart import round_trip
+from test_packing import tape
 from test_positions import fills, history, lines, unlabelled
 
 PARTIAL = 'Some execution accounts unavailable; capture is partial.'
@@ -88,7 +93,7 @@ def test_schema_2_journal_is_backed_up_then_reads_its_position_fields_from_the_s
     assert rows(backup, 'SELECT key, payload, raw FROM executions ORDER BY key') == before
     assert rows(backup, 'PRAGMA user_version') == [(2,)] and rows(backup, 'SELECT count(*) FROM prices') == [(20,)]
     after = rows(path, 'SELECT key, payload, raw FROM executions ORDER BY key')
-    assert rows(path, 'PRAGMA user_version') == [(3,)] and len(after) == 12
+    assert rows(path, 'PRAGMA user_version') == [(store.SCHEMA_VERSION,)] and len(after) == 12
     assert [(key, raw) for key, _, raw in after] == [(key, raw) for key, _, raw in before]
     # The journal now holds exactly what importing the same file today stores.
     fresh = Journal(tmp_path / 'fresh.sqlite3')
@@ -99,7 +104,7 @@ def test_schema_2_journal_is_backed_up_then_reads_its_position_fields_from_the_s
     assert [(t.id, t.status, t.net) for t in trades] == [(t.id, t.status, t.net) for t in fresh.trades()]
     assert [t.incomplete for t in trades] == [[ENTRY_MISSING], [], [], [NO_FILL_PRICE], [EXIT_MISSING], [], []]
     note = journal.upgrade_note()
-    assert (note['from'], note['to'], note['executions_rewritten'], note['backup']) == (2, 3, 12, str(backup))
+    assert (note['from'], note['to'], note['executions_rewritten'], note['backup']) == (2, 4, 12, str(backup))
     # Reading the whole bridge file again is neither a conflict nor a second fill...
     result = apply_preview(journal, preview_bridge(bridge.read_text(), dataset='live'))
     assert (result['executions'], result['relabelled'], result['duplicates'], result['prices']) == (0, 0, 24, 0)
@@ -122,7 +127,7 @@ def test_upgrade_runs_once_and_a_new_or_current_journal_takes_no_backup(tmp_path
     new = Journal(tmp_path / 'new' / 'trades.sqlite3')
     Journal(new.path)
     assert not backups(new.path.parent) and new.upgrade_note() is None and not new.recalculation_due()
-    assert rows(new.path, 'PRAGMA user_version') == [(3,)]
+    assert rows(new.path, 'PRAGMA user_version') == [(store.SCHEMA_VERSION,)]
 
 
 def test_openers_racing_on_an_old_journal_upgrade_it_once_and_none_of_them_fails(tmp_path):
@@ -142,7 +147,7 @@ def test_openers_racing_on_an_old_journal_upgrade_it_once_and_none_of_them_fails
         thread.start()
     for thread in threads:
         thread.join()
-    assert opened == [7] * 6 and rows(path, 'PRAGMA user_version') == [(3,)]
+    assert opened == [7] * 6 and rows(path, 'PRAGMA user_version') == [(store.SCHEMA_VERSION,)]
     assert Journal(path).upgrade_note()['executions_rewritten'] == 12
     # Whoever copied it, every backup is the journal as 0.3.0 left it, and no unfinished copy remains.
     assert backups(path.parent) and not list(path.parent.glob('*.partial*'))
@@ -157,8 +162,8 @@ def test_interrupted_upgrade_leaves_the_journal_as_it_was_and_completes_on_the_n
               rows(path, 'SELECT name, payload FROM sync_status'), rows(path, 'SELECT key, value FROM journal_meta ORDER BY key')]
     upgrade = store._upgrade
 
-    def cut_short(db):
-        upgrade(db)                                        # every row is rewritten, then the process dies
+    def cut_short(db, version):
+        upgrade(db, version)                               # every row is rewritten, then the process dies
         raise KeyboardInterrupt
     monkeypatch.setattr(store, '_upgrade', cut_short)
     with pytest.raises(KeyboardInterrupt):
@@ -169,7 +174,8 @@ def test_interrupted_upgrade_leaves_the_journal_as_it_was_and_completes_on_the_n
                       rows(path, 'SELECT key, value FROM journal_meta ORDER BY key')]
     monkeypatch.setattr(store, '_upgrade', upgrade)
     journal = Journal(path)
-    assert rows(path, 'PRAGMA user_version') == [(3,)] and journal.executions()[0].native_position_id == 'p0'
+    assert rows(path, 'PRAGMA user_version') == [(store.SCHEMA_VERSION,)]
+    assert journal.executions()[0].native_position_id == 'p0'
     assert journal.upgrade_note()['executions_rewritten'] == 12
     # Each attempt backed the untouched journal up first; both copies are the journal as 0.3.0 left it.
     for backup in backups(path.parent):
@@ -303,7 +309,7 @@ def test_fills_that_never_had_position_fields_are_left_byte_for_byte(tmp_path):
     before = rows(path, 'SELECT key, payload, raw FROM executions ORDER BY key')
     upgraded = Journal(path)
     assert rows(path, 'SELECT key, payload, raw FROM executions ORDER BY key') == before
-    assert rows(path, 'PRAGMA user_version') == [(3,)] and len(backups(tmp_path)) == 1
+    assert rows(path, 'PRAGMA user_version') == [(store.SCHEMA_VERSION,)] and len(backups(tmp_path)) == 1
     assert upgraded.upgrade_note()['executions_rewritten'] == 0
     assert upgraded.recalculation_due()          # nothing regrouped, but measured under older rules: once more
     assert [(t.id, t.net, t.basis) for t in upgraded.trades()] == trades
@@ -340,3 +346,135 @@ def test_a_review_left_behind_never_replaces_the_review_its_fill_now_has(tmp_pat
     SyncWorker(journal).trades()
     assert journal.annotations()[holder.id]['notes'] == 'its own' and len(journal.trade_media(holder.id)) == 1
     assert journal.detached_reviews()['annotations'] == [swallowed.id]       # still stored, still reported
+
+
+# ---------------------------------------------------------------- schema 4: one time zone
+
+NY, LA = 'America/New_York', 'America/Los_Angeles'
+PATIENT, FOMO = tagging.identity('Patient'), tagging.identity('FOMO')
+PLAN, LIMITS, STOP = (tagging.identity(name) for name in DAY[2])
+
+
+def library_0_4_16():
+    """The tag library as 0.4.16 stored it: the starters without the Day category, the day-tag time zone (New York),
+    Mindset one choice at a time, and Patient and FOMO also on days."""
+    state = tagging.starter_library()
+    del state['groups']['Day']
+    state['tags'] = {id: tag for id, tag in state['tags'].items() if tag['group'] != 'Day'}
+    state['groups']['Mindset']['exclusive'] = True
+    for id in (PATIENT, FOMO):
+        state['tags'][id]['levels'] = ['trade', 'day']
+    return {**state, 'session_timezone': NY}
+
+
+def as_schema_3(path, days, *, zone=LA, library=None):
+    """Put a journal back as 0.4.16 stored its days: each under 'date:zone', with the Daily Report Card's three boxes;
+    a tag library that keeps the day-tag zone (library_0_4_16); the Time Zone `zone`, None for never chosen."""
+    db = sqlite3.connect(path)
+    with db:
+        db.execute('DELETE FROM sessions')
+        db.executemany('INSERT INTO sessions VALUES(?,?)', [(key, json.dumps(day)) for key, day in days.items()])
+        db.execute("INSERT OR REPLACE INTO journal_meta VALUES('tag_library',?)",
+                   (json.dumps(library or library_0_4_16()),))
+        db.execute("INSERT OR REPLACE INTO journal_meta VALUES('workspace',?)",
+                   (json.dumps({'preferences': {'display_timezone': zone} if zone else {}}),))
+        db.execute('PRAGMA user_version=3')
+    db.close()
+
+
+def near_midnight(journal):
+    """A trade at 10 PM on Oct 7 in Los Angeles, already 1 AM on Oct 8 in New York."""
+    journal.ingest([(Execution('motivewave', 'paper', 'ESZ6', side, 1, price, ts, execution_id=id), {})
+                    for side, price, ts, id in (('buy', 5000, '2026-10-08T05:00:00Z', 'late-in'),
+                                                ('sell', 5001, '2026-10-08T05:02:00Z', 'late-out'))])
+    return next(t for t in journal.trades() if t.opened.startswith('2026-10-08'))
+
+
+def test_a_schema_3_journal_keeps_one_day_per_date_in_its_time_zone_and_its_ticked_boxes_become_day_tags(tmp_path):
+    path = tmp_path / 'trades.sqlite3'
+    journal = Journal(path)
+    morning, late = round_trip(journal), near_midnight(journal)        # 7 AM and 10 PM on Oct 7 in Los Angeles
+    journal.ingest_prices(tape(4, minutes=6))
+    assert journal.pack_prices()
+    prices = rows(path, 'SELECT rowid, key, symbol, source, ts, payload FROM prices ORDER BY rowid')
+    assert any('"packed"' in row[-1] for row in prices)
+    # Day tags in New York (the day-tag zone), and a review of Oct 7 in each zone, as 0.4.16 kept them.
+    as_schema_3(path, {
+        f'2026-10-07:{NY}': {'date': '2026-10-07', 'timezone': NY, 'day_tag_ids': [PATIENT], 'planned': True,
+                             'risk_limits': False, 'stops': False, 'rating': 2, 'notes': 'Waited for the open.'},
+        f'2026-10-07:{LA}': {'date': '2026-10-07', 'timezone': LA, 'day_tag_ids': [FOMO], 'stops': True, 'rating': 4,
+                             'notes': 'Chased the first push.'},
+        f'2026-10-08:{NY}': {'date': '2026-10-08', 'timezone': NY, 'day_tag_ids': [PATIENT], 'planned': False,
+                             'notes': ''}})
+    before = rows(path, 'SELECT key, payload FROM sessions ORDER BY key')
+    upgraded = Journal(path)
+    backup, = backups(tmp_path)
+    assert backup.name.startswith('trades.schema-3-backup-')
+    assert rows(backup, 'SELECT key, payload FROM sessions ORDER BY key') == before
+    # One row per date. In Mindset, one choice at a time, the Time Zone's FOMO wins; the Settings-zone review wins and
+    # the other fills its blanks; the two notes are joined; ticked boxes are Day tags; unticked ones leave nothing.
+    assert upgraded.get('sessions') == {
+        '2026-10-07': {'date': '2026-10-07', 'day_tag_ids': sorted([FOMO, PLAN, STOP]), 'rating': 4,
+                       'notes': 'Chased the first push.\n\nWaited for the open.'},
+        '2026-10-08': {'date': '2026-10-08', 'day_tag_ids': [PATIENT], 'notes': ''}}
+    library = upgraded.tag_library()
+    assert 'session_timezone' not in library and not library.get('removed')
+    assert [(t['name'], t['levels']) for t in tagging.ordered_groups(library, level='day')['Day']] == [
+        (name, ['day']) for name in DAY[2]]
+    assert {t['name'] for t in library['tags'].values()} == {*(n for _, _, names in STARTERS for n in names)}
+    # Both trades are on Oct 7 in Los Angeles: the late one moved off New York's Oct 8 and its Patient.
+    tags = {row['id']: row['tags'] for row in common.rows_for(upgraded)}
+    assert tags[morning.id] == tags[late.id] == ['FOMO', 'Had a Plan', 'Respected My Stop']
+    note = upgraded.upgrade_note()
+    assert (note['from'], note['to'], note['days']['note']) == (
+        3, 4, f'Days now follow your Time Zone ({LA}); day reviews moved to their dates and the day checkboxes became '
+              'Day tags.')
+    assert 'packed' in note                                               # the note of the first packing stays
+    assert rows(path, 'SELECT rowid, key, symbol, source, ts, payload FROM prices ORDER BY rowid') == prices
+
+
+def test_a_schema_2_journal_takes_both_steps_and_gets_this_computers_time_zone(tmp_path, monkeypatch):
+    monkeypatch.setattr(humanize, 'local_zone', lambda: 'Europe/Berlin')
+    path, _ = journal_0_3_0(tmp_path / 'home')
+    db = sqlite3.connect(path)
+    with db:
+        db.execute("DELETE FROM journal_meta WHERE key IN ('workspace', 'tag_library')")     # nothing chosen yet
+        db.execute('INSERT INTO sessions VALUES(?,?)', (f'2026-09-21:{NY}', json.dumps(
+            {'date': '2026-09-21', 'timezone': NY, 'risk_limits': True, 'notes': 'Small size.'})))
+    db.close()
+    assert rows(path, 'PRAGMA user_version') == [(2,)]
+    journal = Journal(path)
+    assert rows(path, 'PRAGMA user_version') == [(4,)] and journal.executions()[0].native_position_id == 'p0'
+    assert journal.time_zone() == 'Europe/Berlin'                         # saved: it stays if the computer travels
+    assert journal.get('sessions') == {'2026-09-21': {'date': '2026-09-21', 'day_tag_ids': [LIMITS],
+                                                      'notes': 'Small size.'}}
+    assert journal.tag_library()['tags'][LIMITS]['group'] == 'Day'
+    note = journal.upgrade_note()
+    assert (note['from'], note['to'], note['executions_rewritten'], note['days']['zone']) == (2, 4, 12, 'Europe/Berlin')
+    monkeypatch.setattr(humanize, 'local_zone', lambda: 'Asia/Tokyo')
+    assert Journal(path).time_zone() == 'Europe/Berlin'
+
+
+def test_opening_an_upgraded_journal_again_changes_nothing_and_the_step_is_harmless_twice(tmp_path):
+    path = tmp_path / 'trades.sqlite3'
+    round_trip(Journal(path))
+    library = library_0_4_16()
+    library['tags'][tagging.identity('Moved Stop')]['aliases'].append('respected my stop')   # once named so
+    as_schema_3(path, {f'2026-10-07:{NY}': {'date': '2026-10-07', 'timezone': NY, 'stops': True, 'planned': True}},
+                library=library)
+    Journal(path)
+
+    def everything():
+        return [rows(path, f'SELECT * FROM {table} ORDER BY 1') for table in ('sessions', 'journal_meta')]
+    after = everything()
+    # A tag once named Respected My Stop, in another case, is that Day tag: no second one is made.
+    stop, again = tagging.identity('Moved Stop'), Journal(path)
+    assert again.get('sessions')['2026-10-07']['day_tag_ids'] == sorted([PLAN, stop])
+    assert again.tag_library()['tags'][stop]['levels'] == ['trade', 'day'] and STOP not in again.tag_library()['tags']
+    assert everything() == after and len(backups(tmp_path)) == 1
+    db = sqlite3.connect(path)
+    db.row_factory = sqlite3.Row
+    with db:
+        store._upgrade(db, 3)                                             # the step itself, once more
+    db.close()
+    assert everything() == after

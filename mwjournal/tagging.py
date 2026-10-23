@@ -13,24 +13,53 @@ import sqlite3
 from zoneinfo import ZoneInfo
 
 from .model import instant
-from .tags import LEGACY_CATALOG, STARTER_VERSION, STARTERS
+from .tags import DAY, LEGACY_CATALOG, STARTER_VERSION, STARTERS
 
 
 def identity(name):
     return hashlib.sha256(name.encode()).hexdigest()[:24]
 
 
-def starter_library(timezone='America/New_York'):
-    """Setup, Execution and Mindset as ordinary tags, marked as offered so they are offered once."""
-    state = {'version': 1, 'tags': {}, 'groups': {}, 'playbooks': {}, 'session_timezone': timezone,
-             'starters': STARTER_VERSION}
+def starter_library():
+    """Setup, Execution and Mindset as ordinary trade tags and Day as day tags, marked as offered so they are
+    offered once."""
+    state = {'version': 1, 'tags': {}, 'groups': {}, 'playbooks': {}, 'starters': STARTER_VERSION}
     for order, (group, colour, names) in enumerate(STARTERS):
         state['groups'][group] = {'exclusive': False, 'order': order}
         for name in names:
             id = identity(name)
             state['tags'][id] = {'id': id, 'name': name, 'aliases': [name], 'group': group, 'retired': False,
-                                 'levels': ['trade'], 'color': colour, 'order': len(state['tags'])}
+                                 'levels': ['day'] if group == DAY[0] else ['trade'], 'color': colour,
+                                 'order': len(state['tags'])}
     return state
+
+
+def upgrade_library(db, *, needed: bool) -> tuple[dict, dict]:
+    """The schema 4 upgrade of a journal's tag library, inside the caller's transaction (store._schema_4): the library
+    loses the time zone it kept for day tags, gains the Day category and its tags (tags.DAY), and is stored. A tag
+    that is or once was named as a Day tag, in any case, is used as it is and made available on days. A journal that
+    has never had a tag is left to be offered the starters, Day among them, at its first read (library), unless its
+    library is `needed` now. Returns (the library, each Day tag's id by its name)."""
+    if not needed and _never_tagged(db) and db.execute(
+            "SELECT 1 FROM journal_meta WHERE key IN ('tag_library', 'tag_catalog')").fetchone() is None:
+        return {'tags': {}, 'groups': {}}, {}
+    state = library(db)
+    state.pop('session_timezone', None)
+    group, colour, names = DAY
+    found = {}
+    for name in names:
+        id = next((id for id, tag in state['tags'].items()
+                   if name.casefold() in {alias.casefold() for alias in tag['aliases']}), None)
+        if id is None:
+            id = identity(name)
+            state['groups'].setdefault(group, {'exclusive': False, 'order': len(state['groups'])})
+            state['tags'][id] = {'id': id, 'name': name, 'aliases': [name], 'group': group, 'retired': False,
+                                 'levels': ['day'], 'color': colour, 'order': len(state['tags'])}
+        elif 'day' not in state['tags'][id]['levels']:
+            state['tags'][id]['levels'] = [*state['tags'][id]['levels'], 'day']
+        found[name] = id
+    save(db, state)
+    return state, found
 
 
 def _never_tagged(db):
@@ -76,8 +105,7 @@ def library(db):
         # record that they were offered, so a journal whose tags were all deleted stays empty.
         stored = _offer_starters(db)
         saved = (stored,) if stored else None
-    state = json.loads(saved[0]) if saved else {'version': 1, 'tags': {}, 'groups': {}, 'playbooks': {},
-                                               'session_timezone': 'America/New_York'}
+    state = json.loads(saved[0]) if saved else {'version': 1, 'tags': {}, 'groups': {}, 'playbooks': {}}
     # A library from 0.4.0 or earlier always holds the hidden suggestions of that version, as it
     # did then, except any the trader has since deleted. A library that was offered the starters
     # holds only what is stored.
@@ -170,16 +198,19 @@ def ids(state, values):
 
 
 def ensure_names(state, values, group='Other tags'):
-    # A new tag takes its category's colour when the category has one, so Mindset stays Mindset-coloured.
+    # A new tag takes its category's colour, and is chosen where its tags are (on trades or on days), when all of
+    # them agree: Mindset stays Mindset-coloured, and a tag made in Day is a day tag.
     colours = {tag['color'] for tag in state['tags'].values() if tag['group'] == group}
     colour = colours.pop() if len(colours) == 1 else '#65CA98'
+    levels = {tuple(tag['levels']) for tag in state['tags'].values() if tag['group'] == group}
+    levels = list(levels.pop()) if len(levels) == 1 else ['trade']
     added = False
     for name in values:
         if ids(state, [name]):
             continue
         id = identity(name)
         state['tags'][id] = {'id': id, 'name': name, 'aliases': [name], 'group': group,
-                             'retired': False, 'levels': ['trade'], 'color': colour,
+                             'retired': False, 'levels': list(levels), 'color': colour,
                              'order': len(state['tags'])}
         added = True
     if added:
@@ -211,8 +242,10 @@ def ordered_groups(state, *, level='trade', include_retired=False):
     return groups
 
 
-def session_key(state, opened):
-    return f"{instant(opened).astimezone(ZoneInfo(state['session_timezone'])).date()}:{state['session_timezone']}"
+def day_key(opened, zone) -> str:
+    """The trading day of a trade opened at `opened`: its date in `zone`, the journal's Time Zone, where a day starts
+    at midnight. 'YYYY-MM-DD', the key of that day's tags and review in the sessions table."""
+    return instant(opened).astimezone(ZoneInfo(zone)).date().isoformat()
 
 
 def inherited(state, session):

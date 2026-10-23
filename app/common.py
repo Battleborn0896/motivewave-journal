@@ -182,13 +182,12 @@ def md(text: str) -> str:
 
 
 def display_zone(journal=None) -> str:
-    """The one time zone every time is shown in: the Time Zone chosen on Settings, else this computer's own
-    zone. Stored times stay UTC."""
+    """The one time zone of the journal (Journal.time_zone): every time is shown in it and every trading day starts
+    at its midnight. Without a journal, or one that cannot be read, this computer's own. Stored times stay UTC."""
     try:
-        chosen = journal.workspace()['preferences'].get('display_timezone') if journal is not None else None
+        return journal.time_zone() if journal is not None else humanize.local_zone()
     except (sqlite3.Error, ValueError, KeyError):
-        chosen = None
-    return chosen if chosen and humanize.valid_zone(chosen) else humanize.local_zone()
+        return humanize.local_zone()
 
 
 def set_display_zone(journal, zone: str) -> None:
@@ -527,7 +526,8 @@ def rows_for(journal) -> list[dict]:
     for trade in trades:
         a = annotations.get(trade.id, {})
         m = best_display_metric(journal, trade, unit=unit)
-        tag_ids = tagging.effective(library, a, sessions.get(tagging.session_key(library, trade.opened), {}))
+        day = tagging.day_key(trade.opened, zone)     # its trading day: its day tags and what date filters compare
+        tag_ids = tagging.effective(library, a, sessions.get(day, {}))
         # The risk to the trade's stop (risk.py): every R the app shows divides by it.
         at_risk = plans[trade.id].risk
         # setup is always present: a captured trade nobody has reviewed yet still has to chart and group.
@@ -549,8 +549,7 @@ def rows_for(journal) -> list[dict]:
                      'r': trade.net / at_risk if trade.status == 'closed' and trade.net is not None and at_risk else None,
                      'mae_r': m['mae'] / at_risk if m.get('mae') is not None and at_risk else None,
                      'mfe_r': m['mfe'] / at_risk if m.get('mfe') is not None and at_risk else None,
-                     # The calendar day of entry in the display time zone: what date filters compare.
-                     'entry_day': local_day(trade.opened, zone).isoformat()})
+                     'entry_day': day})
     return rows
 
 

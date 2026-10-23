@@ -38,9 +38,8 @@ def render(journal, rows):
 
     zone_col, unit_col = st.columns(2)
     zone_col.selectbox('Time Zone', choices, format_func=common.zone_label, key=zone_key, on_change=save_zone,
-                       help='Every time in the journal is shown in this zone: the trade list, charts, stats and '
-                            'exports. Stored fill times stay UTC. Applies to Live and Replay. The day-tag time zone '
-                            'under Tags, Playbooks & Checklists is separate, so existing day tags stay on their days.')
+                       help='Times and trading days, with their day tags and reviews, follow this zone in Live and '
+                            'Replay; a day runs midnight to midnight.')
     common.unit_selector(journal, unit_col)
     theme.subsection('Advanced')
     weekend_col, _ = st.columns(2, vertical_alignment='bottom')

@@ -29,14 +29,6 @@ def render(journal, rows):
             group_editor(journal, library)
         else:
             st.info('No categories yet. Create one under Tags.')
-        zones = common.timezone_choices(library['session_timezone'])
-        timezone = st.selectbox('Day-tag time zone', zones, index=zones.index(library['session_timezone']),
-                                key=common.key(journal, 'day-tag-zone'),
-                                help='A day tag belongs to the calendar date of entry in this zone, not to an '
-                                     'exchange session. Changing it does not move existing day reviews or tags.')
-        if timezone != library['session_timezone']:
-            journal.set_tag_timezone(timezone)
-            st.rerun()
     with books_tab:
         playbooks(journal, library)
     if checks_tab.open:                        # the node editor is only drawn when its tab is open

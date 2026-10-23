@@ -20,7 +20,7 @@ import common
 import theme
 import runtime
 from views import setup
-from mwjournal import Execution, Journal, PriceSample, backup, paths
+from mwjournal import Execution, Journal, PriceSample, backup, paths, tagging
 from mwjournal.importers import apply_preview, preview_bridge
 from mwjournal.metrics import measurements
 from mwjournal.sync import DEFAULT_CONNECTION
@@ -715,21 +715,27 @@ def test_manual_fill_keeps_the_time_that_was_typed_and_is_measured_against_store
 # ---------------------------------------------------------------- daily review and export
 
 def test_daily_review_opens_on_the_latest_trading_day_and_is_saved(home):
+    Journal().tag_library()                    # a new journal's first read offers the starters, Day among them
     journal = seed_preview(home)
     journal.save_preferences(display_timezone='America/New_York')      # the trade list's days, and the card's
     app = open_app('Daily review')
     assert widget(app.date_input, 'Trading day').value == dt.date(2026, 10, 7)
     assert widget(app.metric, 'Trades').value == '1' and widget(app.metric, 'Net P&L').value == '+$242.00'
-    widget(app.checkbox, 'I had a plan').set_value(True).run()                # each box saves when it changes
-    assert journal.get('sessions')['2026-10-07:America/New_York']['planned']
+    # The Day tags replace the old checkboxes, and the day's Rating its slider: no stars until one is clicked.
+    assert widget(app.pills, 'Day').options == ['Had a Plan', 'Kept Risk Limits', 'Respected My Stop']
+    assert widget(app.pills, 'Rating').value is None and not app.slider
+    assert not any(box.label.startswith('I ') for box in app.checkbox)
+    widget(app.pills, 'Day').set_value(['Had a Plan']).run()                    # each box saves when it changes
+    assert journal.get('sessions')['2026-10-07']['day_tag_ids'] == [tagging.identity('Had a Plan')]
     widget(app.text_area, 'What I learned').set_value('Sized correctly.').run()
-    saved = journal.get('sessions')['2026-10-07:America/New_York']
-    assert saved['planned'] and saved['notes'] == 'Sized correctly.' and saved['date'] == '2026-10-07'
+    saved = journal.get('sessions')['2026-10-07']
+    assert saved['notes'] == 'Sized correctly.' and saved['date'] == '2026-10-07'
     assert 'rating' not in saved                                               # untouched: nothing is made up
-    widget(app.slider, 'Session process score').set_value(4).run()
-    assert journal.get('sessions')['2026-10-07:America/New_York']['rating'] == 4
+    widget(app.pills, 'Rating').set_value(4).run()
+    assert journal.get('sessions')['2026-10-07']['rating'] == 4
     app.run()
     assert widget(app.text_area, 'What I learned').value == 'Sized correctly.'
+    assert widget(app.pills, 'Rating').value == 4 and widget(app.pills, 'Day').value == ['Had a Plan']
     assert not any(b.label == 'Save Daily Review' for b in app.button)
 
 
@@ -856,7 +862,7 @@ def test_group_tag_clicks_autosave_and_preserve_legacy_tags_and_plan(home):
     saved = journal.annotations()[trade.id]
     assert 'Breakout' not in saved['tags'] and 'Patient' in saved['tags']
     assert saved['notes'] == original['notes'] and saved['initial_risk'] == original['initial_risk']
-    widget(app.pills, 'Process rating').set_value(5).run()
+    widget(app.pills, 'Rating').set_value(5).run()
     assert journal.annotations()[trade.id]['rating'] == 5
     assert not any(b.label == 'Save review' for b in app.button)
     app.run()

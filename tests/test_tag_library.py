@@ -89,24 +89,27 @@ def test_day_tags_inherit_lazily_and_trade_override_survives_day_review_save(tmp
     assert common.rows_for(journal)[0]['tags'] == ['Patient']
     assert not journal.annotations()  # no destructive per-trade expansion of day tags
     journal.set_trade_tag_group(trade, 'Mindset', ['FOMO'])
-    journal.update_session('2026-10-07:America/New_York', {'notes': 'Daily notes'})
+    journal.update_session('2026-10-07', {'notes': 'Daily notes'})
     assert common.rows_for(journal)[0]['tags'] == ['FOMO']
-    assert journal.get('sessions')['2026-10-07:America/New_York']['day_tag_ids']
+    assert journal.get('sessions')['2026-10-07']['day_tag_ids']
     journal.set_trade_tag_group(trade, 'Mindset', [])
     assert common.rows_for(journal)[0]['tags'] == []
-    assert journal.get('sessions')['2026-10-07:America/New_York']['notes'] == 'Daily notes'
+    assert journal.get('sessions')['2026-10-07']['notes'] == 'Daily notes'
 
 
-def test_day_date_uses_explicit_timezone_and_replay_is_separate(tmp_path):
+def test_a_day_is_its_date_in_the_journals_time_zone_and_replay_is_separate(tmp_path):
     journal = Journal(tmp_path / 'live.db')
     journal.edit_tag(tag_id(journal, 'Patient'), levels=['day'])
-    journal.set_tag_timezone('America/Los_Angeles')
-    state = journal.tag_library()
-    assert tagging.session_key(state, '2026-10-08T02:00:00Z') == '2026-10-07:America/Los_Angeles'
+    journal.save_preferences(display_timezone='America/Los_Angeles')
+    assert journal.time_zone() == 'America/Los_Angeles'
+    assert tagging.day_key('2026-10-08T02:00:00Z', journal.time_zone()) == '2026-10-07'     # 7 PM the evening before
+    assert tagging.day_key('2026-10-08T07:00:00Z', journal.time_zone()) == '2026-10-08'     # midnight starts a day
     journal.set_day_tag_group('2026-10-07', 'Mindset', ['Patient'])
+    assert journal.get('sessions') == {'2026-10-07': {'date': '2026-10-07',
+                                                      'day_tag_ids': [tag_id(journal, 'Patient')]}}
     replay = Journal(tmp_path / 'replay.db', dataset='replay')
     assert not replay.get('sessions')
-    assert replay.tag_library()['session_timezone'] == 'America/New_York'
+    assert 'session_timezone' not in replay.tag_library() and 'session_timezone' not in journal.tag_library()
 
 
 def test_playbook_or_within_and_across_groups_apply_preserves_review_and_renames(tmp_path):
@@ -206,7 +209,7 @@ def stored_library(journal):
     return row[0] if row else None
 
 
-def test_a_new_journal_opens_on_three_editable_starter_categories_stored_once(tmp_path):
+def test_a_new_journal_opens_on_three_editable_starter_categories_and_day_tags_stored_once(tmp_path):
     journal = Journal(tmp_path / 'live.db')
     assert stored_library(journal) is None              # nothing is written before the library is read
     library = journal.tag_library()
@@ -216,8 +219,14 @@ def test_a_new_journal_opens_on_three_editable_starter_categories_stored_once(tm
     assert [t['name'] for t in groups['Execution']] == ['Followed Plan', 'Chased Entry', 'Exited Early',
                                                         'Let Winner Run', 'Moved Stop']
     assert [t['name'] for t in groups['Mindset']] == ['Calm', 'Patient', 'FOMO', 'Hesitant', 'Tilted']
+    # The Day category's tags are chosen on a day's Daily Report Card, never on a trade.
+    days = tagging.ordered_groups(library, level='day')
+    assert list(days) == ['Day'] and [t['name'] for t in days['Day']] == ['Had a Plan', 'Kept Risk Limits',
+                                                                         'Respected My Stop']
+    assert all(t['levels'] == ['day'] for t in days['Day'])
+    groups = {**groups, **days}
     colours = {group: {t['color'] for t in tags} for group, tags in groups.items()}
-    assert all(len(c) == 1 for c in colours.values()) and len(set.union(*colours.values())) == 3
+    assert all(len(c) == 1 for c in colours.values()) and len(set.union(*colours.values())) == 4
     assert stored_library(journal) is not None and library['starters']
     assert not journal.annotations()                    # offered, never applied
     assert Journal(journal.path).tag_library() == library
@@ -240,7 +249,7 @@ def test_starter_tags_can_be_renamed_recoloured_retired_and_deleted_and_never_co
     for id, tag in list(journal.tag_library()['tags'].items()):
         if tag['name'] != 'Breakout':
             journal.delete_tag(id)
-    for group in ('Execution', 'Psychology'):
+    for group in ('Execution', 'Psychology', 'Day'):
         journal.delete_tag_group(group)
     assert list(journal.tag_library()['groups']) == ['Setup']
     assert [t['name'] for t in journal.tag_library()['tags'].values()] == ['Breakout']
@@ -250,8 +259,9 @@ def test_starter_tags_can_be_renamed_recoloured_retired_and_deleted_and_never_co
 
 def test_an_existing_library_is_never_given_the_starters_or_rewritten(tmp_path):
     journal = Journal(tmp_path / 'live.db')
-    # What 0.4.0 stored: its hidden suggestions plus a category of the trader's own.
-    old = {'version': 1, 'groups': {}, 'playbooks': {}, 'session_timezone': 'America/Chicago', 'tags': {}}
+    # What 0.4.0 stored, less the day-tag time zone the schema 4 upgrade took out: its hidden suggestions plus a
+    # category of the trader's own.
+    old = {'version': 1, 'groups': {}, 'playbooks': {}, 'tags': {}}
     for name, group in {**LEGACY_CATALOG, 'Absorption': 'Orderflow'}.items():
         old['tags'][tagging.identity(name)] = {'id': tagging.identity(name), 'name': name, 'aliases': [name],
                                                'group': group, 'retired': False, 'levels': ['trade'],
@@ -275,10 +285,10 @@ def test_a_journal_with_tag_history_keeps_the_old_suggestions_exactly(tmp_path, 
     if history == 'review':
         journal.annotate(trade.id, {'tags': ['My own tag']})
     elif history == 'day':
-        journal.update_session('2026-10-07:America/New_York', {'day_tag_ids': [legacy_id]})
+        journal.update_session('2026-10-07', {'day_tag_ids': [legacy_id]})
     else:
         with journal.connect() as db:                   # a rating that names an old built-in suggestion
-            db.execute("INSERT INTO journal_meta VALUES('workspace',?)",
+            db.execute("INSERT OR REPLACE INTO journal_meta VALUES('workspace',?)",
                        ('{"ratings": {"r": {"rules": [{"rules": {"Mindset": ["%s"]}}]}}}' % legacy_id,))
     library = journal.tag_library()
     assert not library.get('starters') and legacy_id in library['tags']

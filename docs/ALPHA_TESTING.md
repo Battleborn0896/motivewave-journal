@@ -79,15 +79,17 @@ Run this with a simulation account:
 3. Confirm the chart shows the entry and exit markers and that an observed tick path exists.
 4. Save a planned stop, then inspect the 5-, 15- and 30-minute Runner views.
 5. Create `Orderflow` and `Psychology` tag categories, add tags and apply them to the trade.
-6. Open **Stats → Runners** and compare by **Tag categories**.
-7. Restart the journal and confirm the review and tags remain.
-8. Repeat a trade in Replay and confirm it appears only in the Replay journal, its MAE / MFE read from
+6. Click the trade's day header in the list: on its Daily Report Card choose Day tags and a Rating, then
+   confirm the trade wears those Day tags. Days follow **Settings → Time Zone**, midnight to midnight.
+7. Open **Stats → Runners** and compare by **Tag categories**.
+8. Restart the journal and confirm the review and tags remain.
+9. Repeat a trade in Replay and confirm it appears only in the Replay journal, its MAE / MFE read from
    **Replay ticks**. Leave the study on the replay chart, contract or continuous: within about ten
    seconds of going flat the trade should also be measured from **Backfilled from MotiveWave history**,
    and MotiveWave's log should show one `replay trade tick backfill` line for the pass.
-9. Check that live and replay prints arrive while the chart runs: the Trades chart of a new trade should
+10. Check that live and replay prints arrive while the chart runs: the Trades chart of a new trade should
    offer **Recorded live** (or the replay's own prints) as a price source.
-10. Quit the journal and confirm MotiveWave stays open.
+11. Quit the journal and confirm MotiveWave stays open.
 
 Do not report a missing or partial runner window as zero. The app intentionally excludes windows
 with missing prices, recorded capture gaps or ambiguous OHLC stop ordering.

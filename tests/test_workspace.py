@@ -2,6 +2,7 @@
 import copy
 import datetime as dt
 import itertools
+import json
 import re
 import zipfile
 from concurrent.futures import ThreadPoolExecutor
@@ -30,10 +31,17 @@ def home(tmp_path, monkeypatch):
 
 def test_workspace_reads_do_not_save_definitions_or_rearm_anything(home):
     journal = Journal()
+
+    def stored():
+        with journal.connect() as db:
+            return db.execute("SELECT value FROM journal_meta WHERE key='workspace'").fetchone()[0]
+    made = json.loads(stored())                        # a new journal holds only this computer's time zone
+    assert made.pop('preferences') == {'display_timezone': journal.time_zone()}
+    assert all(not value for name, value in made.items() if name != 'version')
+    made = stored()
     assert journal.workspace()['dashboards'] == {}
     journal.reconcile_drafts()
-    with journal.connect() as db:
-        assert not db.execute("SELECT 1 FROM journal_meta WHERE key='workspace'").fetchone()
+    assert stored() == made
 
 
 def test_signed_tag_scores_and_conditional_weighted_ratings_preserve_raw_trade(home):

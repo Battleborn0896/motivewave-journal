@@ -320,14 +320,13 @@ def trading_calendar(journal, rows, key):
     zone = common.display_zone(journal)
     currency = rows[0]['currency'] if rows else 'USD'
     days = [instant(r['opened']).astimezone(ZoneInfo(zone)).date() for r in rows]
-    latest = max(days) if days else dt.date.today()
+    latest = max(days) if days else dt.datetime.now(ZoneInfo(zone)).date()
     months = sorted({d.replace(day=1) for d in days} | {latest.replace(day=1)}, reverse=True)
 
     def open_day(date):
         # The Daily Report Card is on Trades, in place of a trade, for this date.
         st.session_state.update(common.navigation('Daily review'))
         st.session_state[common.key(journal, 'review-day')] = date
-        st.session_state[common.key(journal, 'review-tz')] = zone
 
     with st.container(key='journal-calendar-' + key):
         choice, total = st.columns(2, vertical_alignment='center')
