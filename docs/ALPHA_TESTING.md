@@ -60,8 +60,11 @@ file the same way to undo the restore. A backup made by a newer version is refus
 One study instance records only the trade prints MotiveWave delivers to that chart. Once a replay
 trade is flat, the study loads the real ticks of its holding time from MotiveWave's tick history, never
 past the replay's current time, on a chart of the exact contract. The replay's own prints count as real
-ticks unless **Advanced → Real Tick Data** is switched off for a replay generated from bars. Continuous
-capture can use significant disk space on busy contracts.
+ticks unless **Advanced → Real Tick Data** is switched off for a replay generated from bars. The journal keeps
+every recorded tick, packed small an hour or two after it is recorded, and the study empties its bridge file
+once the app has read it, so neither grows much. The first time this version opens a journal it packs every
+tick already recorded and shrinks the file, in seconds (a 222 MB journal became 17 MB in 13 seconds). Back Up
+Journal, not the bridge file, is how a journal is recovered.
 
 ## Acceptance exercise
 

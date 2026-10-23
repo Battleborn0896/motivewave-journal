@@ -2,7 +2,8 @@
 
 Only the files named in saved connections are read. A bridge (NDJSON) is consumed in committed
 lines, never a partially written tail, and the read position is kept in the journal so a restart
-resumes where it stopped. A watched CSV is read whole and must be unchanged across that read.
+resumes where it stopped; it is also written beside the file (write_receipt), so the study empties a
+file read to its end. A watched CSV is read whole and must be unchanged across that read.
 
 A connection is a row in 'profiles': {'path', 'mode', 'enabled'} with mode one of MODES. The CSV
 modes also read timezone, provider, account, point_value and mapping (executions) or symbol,
@@ -13,6 +14,7 @@ same name in 'sync_status'.
 from __future__ import annotations
 
 import argparse
+import base64
 import datetime as dt
 import hashlib
 import os
@@ -30,8 +32,28 @@ MODES = ('bridge', 'executions', 'prices')
 # How often the watcher reads the files. The study writes the bridge file at least every quarter second,
 # and an open trade's chart is drawn again every second (app/views/trades.py LIVE).
 POLL_SECONDS = 1
+# How often the watcher packs the prints stored before its previous pass (Journal.pack_prices): as it starts, then
+# hourly, so a print stays a row for one to two hours.
+PACK_SECONDS = 3600
 DEFAULT_CONNECTION = 'MotiveWave'
 CHECKPOINT = 256            # bytes remembered from just before the read position, to notice a rewrite in place
+
+
+def write_receipt(path: Path, position: int, checkpoint: bytes):
+    """Tells the study how far the journal has read and stored its bridge file: `<file>.read`, two lines, the
+    position and the CHECKPOINT bytes just before it in base64. The study empties a file read to its end
+    (docs/protocol.md, Read receipt). Written whole or not at all, and a receipt that cannot be written only means
+    the file is not emptied yet."""
+    receipt = path.with_name(path.name + '.read')
+    partial = receipt.with_name(f'{receipt.name}.{os.getpid()}.partial')
+    try:
+        partial.write_bytes(b'%d\n%s\n' % (position, base64.b64encode(checkpoint)))
+        os.replace(partial, receipt)
+    except OSError:
+        try:
+            partial.unlink(missing_ok=True)
+        except OSError:
+            pass
 
 
 def _same_file(a, b) -> bool:
@@ -64,6 +86,7 @@ class SyncWorker:
         self.dirty_executions = set()
         self.dirty_prices = {}      # (product, source): the time new prices span, for the trades of that product
         self.measure_after = 0      # time.monotonic() before which new prices alone are not measured (recalculate)
+        self.pack_after = 0         # time.monotonic() at which prices are packed next: at the first poll, then hourly
         self.trade_list, self.trades_version = [], None
         # Measured under older rules, or regrouped by an upgrade: measure every trade again, once.
         self.rebuild = journal.recalculation_due()
@@ -151,6 +174,7 @@ class SyncWorker:
                     raise ValueError(result['unresolved'][0])
                 if mode == 'bridge':
                     self.journal.set_bridge_offset(name, *position)   # only after its lines are in the journal
+                    write_receipt(path, *position[1:])                # and only once that is stored
                 else:
                     self.hashes[name] = checksum
                 if result['executions'] or result['relabelled']:
@@ -199,6 +223,9 @@ class SyncWorker:
         # Drafts are matched at every poll, as cancelling one can settle another; from the kept trades.
         self.journal.reconcile_drafts(self.trades())
         self.recalculate()
+        if time.monotonic() >= self.pack_after:        # at the first poll, then once an hour
+            self.pack_after = time.monotonic() + PACK_SECONDS
+            self.journal.pack_prices()
 
     def trades(self):
         """The journal's trades, built again only when its fills or multipliers changed: new prices arrive at

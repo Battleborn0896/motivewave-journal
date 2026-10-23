@@ -11,13 +11,16 @@ import java.nio.file.Path;
 import java.nio.file.StandardOpenOption;
 import java.time.Instant;
 import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.Base64;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ArrayBlockingQueue;
 import java.util.concurrent.TimeUnit;
 
-/** One append writer per path across chart instances. All filesystem I/O runs off the tick callback. */
+/** One append writer per path across chart instances. All filesystem I/O runs off the tick callback. A file the
+ * app has read and stored to its end is emptied, so the bridge stays small (emptyIfRead). */
 final class JournalEventWriter {
   /** Why a writer failed when another copy of the study holds its file, word for word in MotiveWave's log
    * and in the heartbeat. Usually MotiveWave loaded a new jar without a full restart and the old copy is
@@ -27,6 +30,13 @@ final class JournalEventWriter {
   /** Why a copy that a newer copy took over from opens nothing more (JournalHandoff). */
   static final String RETIRED = "A newer copy of the MotiveWave Journal study took over.";
   static final long FLUSH_MILLIS = 250;
+  /** A file the app has read and stored to its end is emptied once it is over this size (docs/protocol.md, Read
+   * receipt), so the bridge holds only what the app has not read yet. */
+  static final long EMPTY_ABOVE = 1024 * 1024;
+  /** How often, while nothing is waiting to be written, the app's read receipt is looked at. Tests shorten it. */
+  static volatile long receiptMillis = 10_000;
+  /** The bytes before the receipt's position that it repeats, as the app's reader remembers them (sync.py). */
+  static final int CHECKPOINT = 256;
   private static final Map<Path, JournalEventWriter> WRITERS = new HashMap<>();
   private final Path path;
   private final ArrayBlockingQueue<String> queue = new ArrayBlockingQueue<>(65536);
@@ -129,6 +139,41 @@ final class JournalEventWriter {
 
   private boolean hasDrops() { synchronized (dropped) { return !dropped.isEmpty(); } }
 
+  /** Empties the file when the app's read receipt says it has read and stored every byte of it (readToEnd). Only the
+   * writer that holds the file's lock calls this, between events, so nothing is written between the check and the
+   * emptying; its file stays open for appending, and the next event lands at the start. The app's reader starts again
+   * from the start of a file that got shorter. Anything else (no receipt, a stale or damaged one, an error) leaves the
+   * file as it is, still being appended to. */
+  static boolean emptyIfRead(Path path) {
+    try {
+      if (!readToEnd(path)) return false;
+      try (FileChannel channel = FileChannel.open(path, StandardOpenOption.WRITE)) { channel.truncate(0); }
+      return true;
+    } catch (IOException | RuntimeException exc) {
+      return false;
+    }
+  }
+
+  /** True when the file is over EMPTY_ABOVE and the receipt beside it, `<file>.read` (two lines: a position, then the
+   * CHECKPOINT bytes before it in base64), names its size and its last bytes: the app has read and stored all of it. */
+  static boolean readToEnd(Path path) throws IOException {
+    Path receipt = path.resolveSibling(path.getFileName() + ".read");
+    if (!Files.isRegularFile(receipt)) return false;
+    List<String> lines = Files.readAllLines(receipt, StandardCharsets.US_ASCII);
+    if (lines.size() < 2) return false;
+    long position = Long.parseLong(lines.get(0).strip());
+    byte[] checkpoint = Base64.getDecoder().decode(lines.get(1).strip());
+    try (FileChannel channel = FileChannel.open(path, StandardOpenOption.READ)) {
+      long size = channel.size();
+      if (size <= EMPTY_ABOVE || position != size || checkpoint.length != Math.min(position, CHECKPOINT)) return false;
+      ByteBuffer tail = ByteBuffer.allocate(checkpoint.length);
+      while (tail.hasRemaining()) {
+        if (channel.read(tail, size - checkpoint.length + tail.position()) < 0) return false;
+      }
+      return Arrays.equals(tail.array(), checkpoint);
+    }
+  }
+
   /** The bridge's lock, or null while someone else holds it. Only this study takes that lock, so that is
    * another copy of the study: in another process tryLock returns null, in this one (an old copy that
    * MotiveWave did not unload) it throws. */
@@ -156,7 +201,7 @@ final class JournalEventWriter {
             // A run that was killed in the middle of a write left half an event. Finish its line, or this
             // run's first event is glued to it and the reader has to throw both away.
             if (midLine) file.newLine();
-            long lastFlush = 0;
+            long lastFlush = 0, lastReceipt = System.currentTimeMillis();
             while (running || !queue.isEmpty() || hasDrops()) {
               String event = queue.poll(100, TimeUnit.MILLISECONDS);
               if (event != null) { file.write(event); file.newLine(); }
@@ -171,6 +216,13 @@ final class JournalEventWriter {
               if (System.currentTimeMillis() - lastFlush >= FLUSH_MILLIS) {
                 file.flush();
                 lastFlush = System.currentTimeMillis();
+              }
+              // Only while nothing waits, and never by a copy a newer one is taking over from: it only finishes.
+              if (event == null && gaps.isEmpty() && queue.isEmpty() && running && !JournalHandoff.retired()
+                  && System.currentTimeMillis() - lastReceipt >= receiptMillis) {
+                file.flush();
+                emptyIfRead(path);
+                lastReceipt = System.currentTimeMillis();
               }
             }
             file.flush();

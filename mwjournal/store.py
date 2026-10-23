@@ -2,12 +2,14 @@
 
 from __future__ import annotations
 
+import base64
 import datetime as dt
 import json
 import os
 import shutil
 import sqlite3
 import tempfile
+import zlib
 from contextlib import contextmanager
 from dataclasses import asdict
 from pathlib import Path
@@ -74,6 +76,102 @@ CREATE INDEX IF NOT EXISTS protection_trade ON protection(provider,account,symbo
 
 def encode(value):
     return json.dumps(value, sort_keys=True, allow_nan=False)
+
+
+def megabytes(size: int) -> str:
+    return f'{size / 1e6:,.0f} MB' if size >= 1e6 else 'under 1 MB'
+
+
+# A print as ingest_prices stores it: these keys, one price (high == low), no open or close. Only the study's prints
+# ('motivewave-' sources) of this shape are packed (Journal.pack_prices); bars, imported prices and anything else
+# stay rows as they were stored.
+PRINT_KEYS = frozenset(('ask', 'bid', 'close', 'high', 'low', 'open', 'proxy', 'resolution_seconds', 'source', 'symbol',
+                        'ts', 'volume'))
+MICROSECOND = dt.timedelta(microseconds=1)
+
+
+def plain_print(data: dict) -> bool:
+    return (data.keys() == PRINT_KEYS and data['resolution_seconds'] == 0 and data['high'] == data['low']
+            and data['open'] is None and data['close'] is None)
+
+
+def minute(ts: str) -> str:
+    """The UTC minute a stored time falls in, written as stored times are."""
+    return instant(ts).replace(second=0, microsecond=0).isoformat()
+
+
+def packed_key(symbol: str, source: str, start: str) -> str:
+    """The key of the packed row of one symbol, source and minute."""
+    return digest([symbol, source, start, 'packed'])
+
+
+def identity(data: dict) -> tuple:
+    """What makes a print of one symbol and source the same print: what its key digest says (ingest_prices)."""
+    return data['ts'], data['high'], data['bid'], data['ask'], data['proxy'], data['volume']
+
+
+def pack(symbol: str, source: str, start: str, prints: list) -> dict | None:
+    """The packed row of the prints of one symbol, source and minute, given as (rowid, payload) in the order
+    prices() reads them. Each print's time is kept in microseconds from the minute, its prices in steps of the
+    smallest power of ten that makes them whole, and the rowid it was stored under, which orders prints sharing a
+    time; each as the change from the print before, compressed: about 5 bytes a print instead of about 475 as a row.
+    The row stays JSON: the prices_bars index reads every payload as JSON. None when a price needs more than ten
+    decimals."""
+    quoted = [data[name] for _, data in prints for name in ('high', 'bid', 'ask') if data[name] is not None]
+    scale = next((10 ** n for n in range(11) if all(round(p * 10 ** n) / 10 ** n == p for p in quoted)), None)
+    if scale is None:
+        return None
+    base, columns, before = instant(start), [[] for _ in range(7)], (0, 0, 0)
+    for stored, data in prints:
+        at, price = (instant(data['ts']) - base) // MICROSECOND, round(data['high'] * scale)
+        for column, value in zip(columns, (
+                at - before[0], price - before[1], data['volume'],
+                None if data['bid'] is None else round(data['bid'] * scale) - price,
+                None if data['ask'] is None else round(data['ask'] * scale) - price,
+                int(data['proxy']), stored - before[2])):
+            column.append(value)
+        before = at, price, stored
+    blob = zlib.compress(json.dumps([scale, *columns], separators=(',', ':')).encode(), 9)
+    return {'symbol': symbol, 'source': source, 'ts': start, 'resolution_seconds': 0, 'prints': len(prints),
+            'last': prints[-1][1]['ts'], 'packed': base64.b64encode(blob).decode('ascii')}
+
+
+def unpack(data: dict) -> list:
+    """The prints a packed row holds, as (rowid, payload) exactly as they were stored, in the order stored."""
+    scale, times, prices, volumes, bids, asks, proxies, rowids = json.loads(
+        zlib.decompress(base64.b64decode(data['packed'])))
+    base, symbol, source = instant(data['ts']), data['symbol'], data['source']
+    at = price = stored = 0
+    prints = []
+    for step, move, volume, bid, ask, proxy, row in zip(times, prices, volumes, bids, asks, proxies, rowids):
+        at, price, stored = at + step, price + move, stored + row
+        last = price / scale
+        prints.append((stored, {'ask': None if ask is None else (price + ask) / scale,
+                                'bid': None if bid is None else (price + bid) / scale, 'close': None, 'high': last,
+                                'low': last, 'open': None, 'proxy': bool(proxy), 'resolution_seconds': 0.0,
+                                'source': source, 'symbol': symbol, 'ts': (base + at * MICROSECOND).isoformat(),
+                                'volume': volume}))
+    return prints
+
+
+def drop_copies(db, keys) -> int:
+    """For a named journal, which holds its capture journal's prices as they are stored there (journals.mirror):
+    the packed minutes `keys` were just copied in, and the loose copies of the prints they hold go, inside the
+    caller's transaction, so no print is read twice. A print the packed minute does not hold stays. Returns how
+    many went."""
+    dropped = 0
+    for key in keys:
+        symbol, source, start, payload = db.execute('SELECT symbol, source, ts, payload FROM main.prices WHERE key=?',
+                                                    (key,)).fetchone()
+        held = {identity(data) for _, data in unpack(json.loads(payload))}
+        until = (instant(start) + dt.timedelta(minutes=1)).isoformat()
+        gone = [(rowid,) for rowid, text in db.execute(
+                    'SELECT rowid, payload FROM main.prices WHERE symbol=? AND source=? AND ts>=? AND ts<? AND key!=?',
+                    (symbol, source, start, until, key))
+                if plain_print(data := json.loads(text)) and identity(data) in held]
+        db.executemany('DELETE FROM main.prices WHERE rowid=?', gone)
+        dropped += len(gone)
+    return dropped
 
 
 def _upgrade(db) -> dict:
@@ -165,11 +263,12 @@ def _prints_away_from_trades(db) -> int:
     # What stays is set aside and copied back: twice as quick as deleting most of a long tape row by row, and each
     # row keeps its rowid, the order prices sharing a time were stored in (prices()). Stored times are UTC ISO
     # text, so they compare as text in time order: a print is inside a window when the last window starting at or
-    # before it has not ended by then, one index step per print.
+    # before it has not ended by then, one index step per print. A packed minute (pack_prices) is stored at the
+    # minute's start, so it is never judged by that time: it stays.
     db.execute('CREATE TEMP TABLE kept_prices AS SELECT rowid AS stored, key, symbol, source, ts, payload FROM prices '
                "WHERE source NOT GLOB 'motivewave-*' OR coalesce((SELECT until IS NULL OR until >= prices.ts "
                'FROM kept_windows WHERE start <= prices.ts ORDER BY start DESC LIMIT 1), 0) '
-               "OR json_extract(payload, '$.resolution_seconds') IS NOT 0")
+               "OR json_extract(payload, '$.resolution_seconds') IS NOT 0 OR json_extract(payload, '$.packed') IS NOT NULL")
     removed = (db.execute('SELECT count(*) FROM prices').fetchone()[0]
                - db.execute('SELECT count(*) FROM kept_prices').fetchone()[0])
     if removed:
@@ -295,10 +394,8 @@ class Journal(Workspace):
         """Once per journal, when 0.4.14 first opens it. Until then the study recorded every print of its charts all
         day, about 475 bytes each in the journal: one day of NQ took over 300 MB. The prints away from every trade
         are removed (_prints_away_from_trades) in one transaction with the record that this ran, so an interruption
-        leaves the journal as it was, to be trimmed at the next open. Then the file is compacted (VACUUM) so it
-        shrinks on disk, and the upgrade note says in plain words what was freed. Compacting writes a second copy of
-        what is kept, so it needs that much free disk twice, and it waits for another writer no longer than any
-        write does. When it cannot run the file keeps its size, and new prices fill the space freed inside it."""
+        leaves the journal as it was, to be trimmed at the next open. Then the file is compacted (_compact) so it
+        shrinks on disk, and the upgrade note says in plain words what was freed."""
         try:
             size = sum(path.stat().st_size for path in (self.path, Path(f'{self.path}-wal')) if path.exists())
             if shutil.disk_usage(self.path.parent).free < size:
@@ -319,37 +416,141 @@ class Journal(Workspace):
         if not removed:
             return
         try:
-            with self.connect() as db:
-                kept = (db.execute('PRAGMA page_count').fetchone()[0] - db.execute('PRAGMA freelist_count').fetchone()[0]) * page
-                compacted = shutil.disk_usage(self.path.parent).free >= 2 * kept
-                if compacted:
-                    try:
-                        db.execute('VACUUM')
-                        db.execute('PRAGMA wal_checkpoint(TRUNCATE)').fetchall()
-                    except sqlite3.OperationalError:
-                        compacted = False      # another writer held on, or the disk filled: left as it was
-                after = db.execute('PRAGMA page_count').fetchone()[0] * page if compacted else kept
-                freed = max(before - after, 0)
-                amount = f'{freed / 1e6:,.0f} MB' if freed >= 1e6 else 'under 1 MB'
-                words = (f'Freed {amount} of price data recorded away from your trades.' if compacted else
-                         f'Removed {amount} of price data recorded away from your trades. The file keeps its size, as it '
-                         'was in use or the disk was nearly full; new prices fill that space first.')
-                db.execute('BEGIN IMMEDIATE')
-                row = db.execute("SELECT value FROM journal_meta WHERE key='schema_upgrade'").fetchone()
-                note = {**(json.loads(row[0]) if row else {}),
-                        'prices': {'removed': removed, 'freed': freed, 'compacted': compacted, 'note': words,
-                                   'at': dt.datetime.now(dt.timezone.utc).isoformat()}}
-                db.execute("INSERT OR REPLACE INTO journal_meta VALUES('schema_upgrade',?)", (encode(note),))
+            compacted, freed, _ = self._compact(before)
+            words = (f'Freed {megabytes(freed)} of price data recorded away from your trades.' if compacted else
+                     f'Removed {megabytes(freed)} of price data recorded away from your trades. The file keeps its size, '
+                     'as it was in use or the disk was nearly full; new prices fill that space first.')
+            self._note('prices', {'removed': removed, 'freed': freed, 'compacted': compacted, 'note': words})
         except (sqlite3.OperationalError, OSError):
             pass                                   # the prints are gone either way; only the note is missing
 
+    def _compact(self, before: int) -> tuple[bool, int, int]:
+        """Gives the space freed inside the file back to the disk: SQLite writes what is kept into a new file
+        (VACUUM), so this needs that much free disk twice, and it waits for another writer no longer than any write
+        does. From then on the file gives back what a pass frees as it goes (auto_vacuum=INCREMENTAL, pack_prices).
+        Returns (compacted, bytes freed since the file took `before`, bytes it takes now); when it cannot run, the
+        file keeps its size and new prices fill the space freed inside it first."""
+        with self.connect() as db:
+            page = db.execute('PRAGMA page_size').fetchone()[0]
+            kept = (db.execute('PRAGMA page_count').fetchone()[0] - db.execute('PRAGMA freelist_count').fetchone()[0]) * page
+            compacted = shutil.disk_usage(self.path.parent).free >= 2 * kept
+            if compacted:
+                try:
+                    db.execute('PRAGMA auto_vacuum=INCREMENTAL')
+                    db.execute('VACUUM')
+                    db.execute('PRAGMA wal_checkpoint(TRUNCATE)').fetchall()
+                except sqlite3.OperationalError:
+                    compacted = False              # another writer held on, or the disk filled: left as it was
+            after = db.execute('PRAGMA page_count').fetchone()[0] * page if compacted else kept
+        return compacted, max(before - after, 0), after
+
+    def _note(self, name: str, data: dict):
+        """Records what a one-time step did, in the upgrade note (upgrade_note) under `name`."""
+        with self.connect() as db:
+            db.execute('BEGIN IMMEDIATE')
+            row = db.execute("SELECT value FROM journal_meta WHERE key='schema_upgrade'").fetchone()
+            note = {**(json.loads(row[0]) if row else {}),
+                    name: {**data, 'at': dt.datetime.now(dt.timezone.utc).isoformat()}}
+            db.execute("INSERT OR REPLACE INTO journal_meta VALUES('schema_upgrade',?)", (encode(note),))
+
     def upgrade_note(self) -> dict | None:
-        """What upgrading this journal did, or None: the last schema upgrade (from, to, its backup) and, under
-        'prices', the prints recorded away from trades that were removed once (_trim_prices), with a note in
-        plain words."""
+        """What upgrading this journal did, or None: the last schema upgrade (from, to, its backup); under
+        'prices', the prints recorded away from trades that were removed once (_trim_prices); and under 'packed',
+        the first packing of the recorded ticks (pack_prices). Each one-time step has a note in plain words."""
         with self.connect() as db:
             row = db.execute("SELECT value FROM journal_meta WHERE key='schema_upgrade'").fetchone()
         return json.loads(row[0]) if row else None
+
+    def pack_prices(self) -> int:
+        """Packs the study's prints stored before the previous pass into one row per symbol, source and minute
+        (pack), and returns how many prints it packed. prices() unpacks them, so every reader gets exactly the prints
+        it got before, in the same order: every print is kept, in about 1% of the space. The watcher runs it as it
+        starts and then every hour (sync.py), so a print is packed one to two hours after it was stored, whatever
+        trade is open: no trade decides anything here.
+
+        Which prints: journal_meta 'prices_packed' holds two rowids, from and mark. A pass packs the prints stored
+        after `from` up to `mark` (a rowid range, never a read of the whole table), then moves from to mark and mark
+        to the newest rowid. The first pass has no marks and packs every print. Minutes are packed in batches that
+        commit on their own, so a pass cut short leaves each minute either packed or as it was, and the next pass,
+        from the same marks, finishes it. A packed minute takes the rowid of its newest print, so the newest rowid
+        still names the newest price stored (recent_contracts).
+
+        The first pass then gives the freed space back to the disk once (_compact) and says so in the upgrade note
+        ('packed'); every later pass gives back what it freed (incremental_vacuum). A named journal packs nothing of
+        its own: it holds its capture journal's prints as they are stored there (journals.mirror)."""
+        with self.connect() as db:
+            row = db.execute("SELECT value FROM journal_meta WHERE key='prices_packed'").fetchone()
+            marks = json.loads(row[0]) if row else None
+            low, high = ((marks['from'], marks['mark']) if marks else
+                         (0, db.execute('SELECT coalesce(max(rowid), 0) FROM prices').fetchone()[0]))
+            before = db.execute('PRAGMA page_count').fetchone()[0] * db.execute('PRAGMA page_size').fetchone()[0]
+            groups = {}
+            for rowid, symbol, source, ts in db.execute(
+                    "SELECT rowid, symbol, source, ts FROM prices WHERE rowid>? AND rowid<=? AND source GLOB 'motivewave-*' "
+                    "AND json_extract(payload, '$.resolution_seconds')=0 AND json_extract(payload, '$.packed') IS NULL",
+                    (low, high)):
+                groups.setdefault((symbol, source, minute(ts)), []).append(rowid)
+        packed = 0
+        ordered = sorted(groups.items(), key=lambda group: max(group[1]))
+        for first in range(0, len(ordered), 100):
+            with self.connect() as db:
+                db.execute('BEGIN IMMEDIATE')
+                for (symbol, source, start), rowids in ordered[first:first + 100]:
+                    packed += self._pack_minute(db, symbol, source, start, set(rowids))
+        with self.connect() as db:
+            newest = db.execute('SELECT coalesce(max(rowid), 0) FROM prices').fetchone()[0]
+            db.execute("INSERT OR REPLACE INTO journal_meta VALUES('prices_packed',?)",
+                       (encode({'from': high, 'mark': newest}),))
+        if marks is not None:
+            with self.connect() as db:
+                db.execute('PRAGMA incremental_vacuum').fetchall()      # unread, it gives nothing back
+            return packed
+        try:
+            compacted, freed, after = self._compact(before)
+            if packed:
+                words = (f'Packed the recorded ticks: the journal went from {megabytes(before)} to {megabytes(after)}, '
+                         'and every tick is kept.' if compacted else
+                         'Packed the recorded ticks, and every tick is kept. The file keeps its size, as it was in use '
+                         'or the disk was nearly full; new prices fill that space first.')
+                self._note('packed', {'prints': packed, 'freed': freed, 'compacted': compacted, 'note': words})
+        except (sqlite3.OperationalError, OSError):
+            pass                                   # packed either way; the file keeps its size and has no note
+        return packed
+
+    @staticmethod
+    def _pack_minute(db, symbol: str, source: str, start: str, rowids: set) -> int:
+        """Packs the prints stored under `rowids` of one symbol, source and minute into that minute's packed row,
+        inside the caller's transaction, and returns how many it took. A print the packed row already holds (read
+        twice) only goes. The packed row must unpack to exactly the prints it replaces, rowids and stored text alike,
+        or the minute stays as it is."""
+        key = packed_key(symbol, source, start)
+        held = db.execute('SELECT rowid, payload FROM prices WHERE key=?', (key,)).fetchone()
+        prints = [(stored, data, encode(data)) for stored, data in unpack(json.loads(held[1]))] if held else []
+        known, taken = {identity(data) for _, data, _ in prints}, []
+        until = (instant(start) + dt.timedelta(minutes=1)).isoformat()
+        for rowid, text in db.execute('SELECT rowid, payload FROM prices WHERE symbol=? AND source=? AND ts>=? AND ts<?',
+                                      (symbol, source, start, until)):
+            data = json.loads(text) if rowid in rowids else None
+            if data is not None and plain_print(data) and (data['symbol'], data['source']) == (symbol, source):
+                taken.append(rowid)
+                if identity(data) not in known:
+                    known.add(identity(data))
+                    prints.append((rowid, data, text))
+        if not taken:
+            return 0
+        prints.sort(key=lambda found: (found[1]['ts'], found[0]))
+        payload = pack(symbol, source, start, [(stored, data) for stored, data, _ in prints])
+        if payload is None or [(stored, encode(data)) for stored, data in unpack(payload)] != [
+                (stored, text) for stored, _, text in prints]:
+            return 0
+        db.executemany('DELETE FROM prices WHERE rowid=?', [(rowid,) for rowid in taken])
+        stored = max(taken + ([held[0]] if held else []))
+        if held:
+            db.execute('UPDATE prices SET rowid=?, payload=? WHERE key=?', (stored, encode(payload), key))
+        else:
+            db.execute('INSERT INTO prices(rowid, key, symbol, source, ts, payload) VALUES(?,?,?,?,?,?)',
+                       (stored, key, symbol, source, start, encode(payload)))
+        return len(taken)
 
     def recalculation_due(self) -> bool:
         """True while this journal's trades were measured under older MEASUREMENT_RULES than this version's
@@ -883,9 +1084,18 @@ class Journal(Workspace):
             if sample.source.startswith('motivewave-') and event_mode({'provider': sample.source}) != self.dataset:
                 raise ValueError('MotiveWave prices belong to the other trading environment.')
         with self._write(db) as db:
-            count = 0
+            count, packed = 0, {}                  # (symbol, source, minute): the prints its packed row holds
             for sample in samples:
                 data = asdict(sample)
+                if sample.source.startswith('motivewave-') and not sample.resolution_seconds:
+                    # A print its minute's packed row already holds (pack_prices) is not stored again: a bridge
+                    # file read again, or history sent again, adds nothing.
+                    slot = (sample.symbol, sample.source, minute(sample.ts))
+                    if slot not in packed:
+                        row = db.execute('SELECT payload FROM prices WHERE key=?', (packed_key(*slot),)).fetchone()
+                        packed[slot] = {identity(held) for _, held in unpack(json.loads(row[0]))} if row else set()
+                    if identity(data) in packed[slot]:
+                        continue
                 # A revised bar replaces its previous version, preserving one source/time slot.
                 tick_identity = {k: v for k, v in data.items() if k not in ('open', 'close', 'volume')}
                 if sample.volume is not None:
@@ -916,13 +1126,15 @@ class Journal(Workspace):
         return [label for label in self._distinct(db, 'symbol') if product(label) == product(symbol)]
 
     def prices(self, symbol: str, source: str, *, start: str | None = None, end: str | None = None) -> list[PriceSample]:
-        """The prices of one source that measure a trade in `symbol`, as model.trade_prices chooses them."""
+        """The prices of one source that measure a trade in `symbol`, as model.trade_prices chooses them. A packed
+        minute (pack_prices) gives the prints it holds, exactly as they were stored."""
         exact = symbol.strip().upper()
         with self.connect() as db:
             labels = self._labels(db, exact)
             if not labels:
                 return []
             within = 'symbol IN (' + ','.join('?' * len(labels)) + ') AND source=?'
+            columns = "rowid AS stored,symbol,payload,ts,json_extract(payload, '$.packed') IS NOT NULL AS packed"
             filters, args = [within], [*labels, source]
             if start:
                 # The hot tick query starts at entry, not a day earlier. A separate partial index
@@ -932,20 +1144,34 @@ class Journal(Workspace):
             if end:
                 filters.append('ts<=?')
                 args.append(timestamp(end))
-            query = 'SELECT rowid AS stored,symbol,payload,ts FROM prices WHERE ' + ' AND '.join(filters)
+            query = f'SELECT {columns} FROM prices WHERE ' + ' AND '.join(filters)
             if start:
-                query += (' UNION ALL SELECT rowid AS stored,symbol,payload,ts FROM prices INDEXED BY prices_bars WHERE ' + within +
+                query += (f' UNION ALL SELECT {columns} FROM prices INDEXED BY prices_bars WHERE ' + within +
                           " AND json_extract(payload, '$.resolution_seconds') > 0 AND ts>=? AND ts<? "
                           "AND julianday(ts) + json_extract(payload, '$.resolution_seconds') / 86400.0 > julianday(?)")
                 args.extend([*labels, source, (instant(start) - dt.timedelta(days=1)).isoformat(),
                              timestamp(start), timestamp(start)])
+                # The packed minute that holds `start` is stored at the minute's start, before it.
+                query += (f' UNION ALL SELECT {columns} FROM prices WHERE ' + within +
+                          " AND ts>=? AND ts<? AND json_extract(payload, '$.packed') IS NOT NULL")
+                args.extend([*labels, source, minute(timestamp(start)), timestamp(start)])
             # Prices sharing a time stay in the order they were stored, the tape's, whatever their label:
             # the last of them is a candle's close and an open trade's last price, and metrics.carry_on
             # counts on it.
             rows = db.execute(query + ' ORDER BY ts, stored', args).fetchall()
-        if any(row['symbol'] == exact for row in rows):
-            rows = [row for row in rows if row['symbol'] == exact]   # trade_prices' choice, before any payload is read
-        return trade_prices([PriceSample.stored(json.loads(row['payload'])) for row in rows], exact, source)
+        # (time, rowid stored under, symbol, payload): a packed print keeps the rowid it was stored under.
+        found = [(row['ts'], row['stored'], row['symbol'], row['payload']) for row in rows if not row['packed']]
+        if len(found) < len(rows):
+            low, high = timestamp(start) if start else '', timestamp(end) if end else None
+            for row in rows:
+                if row['packed']:
+                    found.extend((data['ts'], stored, row['symbol'], data) for stored, data in unpack(json.loads(row['payload']))
+                                 if data['ts'] >= low and (high is None or data['ts'] <= high))
+            found.sort(key=lambda price: price[:2])
+        if any(price[2] == exact for price in found):
+            found = [price for price in found if price[2] == exact]  # trade_prices' choice, before a stored payload is read
+        return trade_prices([PriceSample.stored(data if isinstance(data, dict) else json.loads(data))
+                             for _, _, _, data in found], exact, source)
 
     def price_sources(self, symbol: str, trade=None) -> list[str]:
         """Every source holding prices of this symbol's product."""
@@ -993,8 +1219,7 @@ class Journal(Workspace):
                             else source.startswith('motivewave-') and not source.startswith('motivewave-replay:')
                             and source != 'motivewave-ticks:history')       # a backfill of a past window
                     if ours:
-                        newest = db.execute('SELECT max(ts) FROM prices WHERE symbol=? AND source=?',
-                                            (symbol, source)).fetchone()[0]
+                        newest = self._newest(db, symbol, source)
                         if newest and newest > priced.get(symbol, ''):
                             priced[symbol] = newest
             filled = {}
@@ -1024,12 +1249,22 @@ class Journal(Workspace):
         with self.connect() as db:
             # Every source that starts with the prefix: the run's ticks, simulated prints and history. One
             # index step per source; a range over sources would read every price of the run, every second.
-            latest = [db.execute('SELECT max(ts) FROM prices WHERE symbol=? AND source=?', (label, source)).fetchone()[0]
-                      for label in self._labels(db, trade.symbol)
+            latest = [self._newest(db, label, source) for label in self._labels(db, trade.symbol)
                       for source in self._distinct(db, 'source', 'symbol=? AND ', (label,)) if source.startswith(prefix)]
         stamps = [instant(f['ts']) for f in trade.fills]
         stamps.extend(instant(stamp) for stamp in latest if stamp)
         return max(stamps) + dt.timedelta(milliseconds=1)
+
+    @staticmethod
+    def _newest(db, symbol: str, source: str) -> str | None:
+        """The time of the newest price of one symbol and source, two index steps: a packed minute is stored at the
+        minute's start, and says when its newest print was."""
+        newest = db.execute('SELECT max(ts) FROM prices WHERE symbol=? AND source=?', (symbol, source)).fetchone()[0]
+        if newest is None:
+            return None
+        row = db.execute("SELECT json_extract(payload, '$.last') FROM prices WHERE key=?",
+                         (packed_key(symbol, source, minute(newest)),)).fetchone()
+        return max(newest, row[0]) if row and row[0] else newest
 
     def ingest_protection(self, events: list[ProtectionEvent], *, db=None) -> int:
         for event in events:

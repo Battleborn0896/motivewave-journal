@@ -3,7 +3,10 @@
 The study and the app talk through one append-only text file per environment. The study appends one
 JSON object per line (NDJSON); the app reads only complete lines and remembers how far it got. A file
 is used instead of a socket so that nothing is lost while the app is closed: the next time it starts,
-it carries on from where it stopped.
+it carries on from where it stopped. Once the app has read and stored all of a file it says so in a
+[read receipt](#read-receipt), and the study empties the file, so it holds only what the app has not
+read yet. The file is a hand-over, not a record: the journal is, and **Back Up Journal** is how a
+journal is kept safe.
 
 | Environment | File |
 |---|---|
@@ -15,7 +18,9 @@ The data home is `MWJ_HOME` when set, otherwise `~/Library/Application Support/M
 
 ## Rules for writers
 
-- One complete JSON object per line, newline after each. Never rewrite a line that has been written.
+- One complete JSON object per line, newline after each. Never rewrite a line that has been written. A
+  writer may empty a file its reader has read completely, as its [read receipt](#read-receipt) says, and
+  nothing else.
 - Every timestamp is ISO-8601 with a full date and a UTC offset, for example `2026-10-07T14:00:00.123Z`.
 - Give fills the exact contract symbol (`ESZ6`, not a continuous alias) and stable execution ids. Prices
   may carry whatever the chart is called (`ES`, `ESZ6`, `ESZ6.CME`): see [prices and products](#prices-and-products).
@@ -27,6 +32,35 @@ The data home is `MWJ_HOME` when set, otherwise `~/Library/Application Support/M
 - An event whose `type` the reader does not know is skipped and counted, never an error, so a newer writer
   never stops an older reader: the fills, stops and heartbeats around it still arrive. The app (0.4.8 and
   later) shows the count on Data → Connection. Before 0.4.8 an unknown type rejected the file's batch.
+- A file can get shorter: the writer empties it once it has been read. A reader starts again from the
+  start of the file when the file is shorter than where it stopped, or when the bytes just before that
+  point are no longer the ones it read there (the file was emptied and has grown again since). The app
+  has read files this way since it first watched one.
+
+## Read receipt
+
+After the app has stored what it read from a bridge file (the import committed, then the position kept),
+it writes `<bridge file>.read` beside it, for example `motivewave.ndjson.read`. Two lines of ASCII:
+
+1. the position read to, in bytes from the start of the file;
+2. the up to 256 bytes just before that position, in base64. They end with a newline, as the app reads
+   only complete lines.
+
+The receipt is written to a temporary file and then renamed over the old one, so a writer never sees half
+of it. A receipt that cannot be written is simply not updated. Only bridge connections have one.
+
+The study (0.3.10 and later) is the only writer of its file and holds `<bridge file>.lock` while it writes.
+Between events, with nothing waiting to be written, at most every ten seconds, it empties the file when all
+of these hold: the file is over 1 MB, the receipt's position is the file's size, and the file's last bytes
+are the ones the receipt repeats. Anything else (no receipt, an older one, one that cannot be read, a file
+of 1 MB or less) leaves the file as it is, and the study goes on appending to it; so does an emptying that
+fails. A copy of the study that a newer one is taking over from never empties a file. The replay file
+works the same way, with `motivewave.replay.ndjson.read`.
+
+An older study ignores the receipt and the file grows as before; an older app writes none and the file is
+never emptied. While the app is closed the receipt does not move, so nothing it has not read is emptied.
+If two journals watch one bridge file, the first to read it to its end lets the study empty it: watch a
+bridge file from one journal only.
 
 ## Events
 
@@ -145,7 +179,8 @@ from MotiveWave's tick history. A chart that pointed at another bridge file now 
 and a chart that stood in for another contract through **Symbol** no longer does. New: a continuous chart
 backfills its front contract's trades too, the minutes after each exit included (see **History ticks**
 below), so the minutes after an exit no longer need **Always While Study Runs** on a continuous chart. The
-heartbeat's `detail` reads `Recording fills read-only; N fills read`.
+heartbeat's `detail` reads `Recording fills read-only; N fills read`. Also new: it empties a bridge file the
+app has read to its end (see [read receipt](#read-receipt)), so the files no longer grow for good.
 
 Study 0.3.8 changes no event's shape; it changes which prints are recorded. Its **Record Ticks** setting
 (Advanced) has three choices: **During Trades Only**, the default, records live and replay prints only while
