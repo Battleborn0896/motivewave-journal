@@ -10,9 +10,9 @@ import pytest
 
 import common
 import runtime
-from mwjournal import Execution, Journal, PriceSample, paths
-from test_app import (CREDIT, backup_controls, heartbeat, helped, listed, open_app, press, said, show, states,
-                      status_of, study_writes, wait_until, widget)
+from mwjournal import Execution, Journal, PriceSample, paths, tagging
+from test_app import (CREDIT, backup_controls, heartbeat, helped, listed, menu_label, open_app, press, said, show,
+                      states, status_of, study_writes, wait_until, widget)
 from test_capture import fill, lines
 from test_chart import seed_preview, seed_ticks
 from views import connection, setup
@@ -491,16 +491,17 @@ def test_the_saved_filter_is_chosen_in_the_filters_menu_and_applies_to_every_pag
     choice = widget(app.selectbox, 'Saved Filter on Every Page')
     assert choice.options == ['All trades', 'Shorts only']
     choice.set_value('Shorts only').run()
-    assert not app.exception and said(app.main.caption, 'Saved filter: Shorts only')
-    for other in ('Trades', 'Edge', 'Settings'):       # the selectbox is drawn on two pages; the choice holds on all
+    assert not app.exception and menu_label(app) == 'Filters · 1'          # the saved filter in use is one filter on
+    assert not said(app.main.caption, 'Saved filter')                     # said by the button, not by a line
+    for other in ('Settings', 'Edge', 'Trades'):       # the selectbox is drawn on two pages; the choice holds on all
         show(app, other)
-        assert said(app.main.caption, 'Saved filter: Shorts only')
     show(app, 'Edge')
     assert said(app.info, 'Statistics need') and widget(app.selectbox, 'Saved Filter on Every Page').value == 'Shorts only'
+    assert menu_label(app) == 'Filters · 1'
     show(app, 'Trades')
     assert said(app.info, 'No trades match these filters')         # the menu stays, so the filter can be undone
     widget(app.selectbox, 'Saved Filter on Every Page').set_value('').run()
-    assert not said(app.main.caption, 'Saved filter') and not said(app.info, 'No trades match')
+    assert menu_label(app) == 'Filters' and not said(app.info, 'No trades match')
     show(app, 'Edge')
     assert any(m.label == 'Net P&L' for m in app.metric)
 
@@ -531,8 +532,7 @@ def test_saving_a_filter_is_a_name_and_one_click_and_shows_the_same_trades():
     save(app, 'NQ only')
     assert journal.workspace()['filters']['NQ only']['markets'] == ['NQ']
     # The new filter is the one in use and the menu's own filters are empty again: the same trade, listed alone.
-    assert widget(app.selectbox, 'Saved Filter on Every Page').value == 'NQ only'
-    assert said(app.main.caption, 'Saved filter: NQ only')
+    assert widget(app.selectbox, 'Saved Filter on Every Page').value == 'NQ only' and menu_label(app) == 'Filters · 1'
     assert widget(app.multiselect, 'Markets').value == [] and widget(app.text_input, 'Filter Name').value == ''
     # New widgets, not the old ones emptied: a browser goes on showing a widget's choices under the same key.
     assert widget(app.multiselect, 'Markets').key == 'filter-markets-1-live'
@@ -551,7 +551,7 @@ def test_saving_on_stats_is_the_same_two_steps_and_keeps_the_same_numbers():
     numbers = [(m.label, m.value) for m in app.metric]
     assert widget(app.metric, 'Net P&L').value == '+$40.00'
     save(app, 'NQ only')
-    assert said(app.main.caption, 'Saved filter: NQ only') and widget(app.multiselect, 'Markets').value == []
+    assert menu_label(app) == 'Filters · 1' and widget(app.multiselect, 'Markets').value == []
     assert [(m.label, m.value) for m in app.metric] == numbers
 
 
@@ -568,7 +568,7 @@ def test_saving_while_a_saved_filter_is_on_saves_the_two_together_as_one_filter(
     saved = journal.workspace()['filters']
     assert (saved['Paper NQ']['accounts'], saved['Paper NQ']['markets']) == (['paper'], ['NQ'])
     assert saved['Paper']['markets'] == []                        # the filter that was in use is left as it was
-    assert said(app.main.caption, 'Saved filter: Paper NQ') and listed(app) == shown
+    assert widget(app.selectbox, 'Saved Filter on Every Page').value == 'Paper NQ' and listed(app) == shown
     widget(app.multiselect, 'Directions').set_value(['long']).run()
     save(app, 'Paper NQ')                                         # the same name replaces it
     assert journal.workspace()['filters']['Paper NQ']['directions'] == ['long'] and listed(app) == shown
@@ -610,34 +610,175 @@ def test_only_a_narrowed_side_of_the_entry_dates_is_saved_so_a_new_days_trades_s
     assert rule['start'] == '2026-10-07' and 'end' not in rule
     round_trips(journal, ('paper', 'ESZ6', '2026-10-09', 14))
     app.run()
-    assert len(listed(app)) == 3 and said(app.main.caption, 'Saved filter: From Oct 7')
+    assert len(listed(app)) == 3 and widget(app.selectbox, 'Saved Filter on Every Page').value == 'From Oct 7'
     assert widget(app.date_input, 'Entry Dates').value == (dt.date(2026, 10, 7), dt.date(2026, 10, 9))
+
+
+# What the one filter editor asks, wherever it is drawn: the Filters menu, a dashboard page and a dashboard widget.
+EDITOR = {'Markets', 'Entry Dates', 'Accounts', 'Exact Contracts', 'Tags', 'Tag Match', 'Exclude Tags', 'Playbook',
+          'Trade Status', 'Directions', 'Rating', 'Number Ranges'}
+
+
+def editor_labels(app, prefix):
+    """The labels of the widgets whose keys start with `prefix`."""
+    kinds = ('multiselect', 'selectbox', 'date_input', 'radio', 'number_input', 'text_input')
+    return {w.label for kind in kinds for w in getattr(app, kind) if w.key and w.key.startswith(prefix)}
 
 
 def test_the_filters_menu_is_one_editor_with_short_title_case_labels(home):
     seed_preview(home)
     app = open_app(review=False)
+    assert widget(app.multiselect, 'Number Ranges').options == ['Net P&L', 'R', 'MAE', 'MFE', 'Contracts',
+                                                                'Minutes held']
     widget(app.multiselect, 'Number Ranges').set_value(['net']).run()
     assert len(listed(app)) == 1                                  # an empty box is no limit
     widget(app.number_input, 'Max Net P&L').set_value(0.0).run()
     assert not app.exception and not listed(app)                 # the fixture's trade made money
     assert not any(e.label == 'Save a Filter' for e in app.expander)
-    kinds = ('multiselect', 'selectbox', 'date_input', 'radio', 'number_input', 'text_input')
-    labels = {w.label for kind in kinds for w in getattr(app, kind)
-              if w.key and w.key.startswith(('filter-', 'save-filter', 'global-saved-filter'))}
-    assert labels == {'Saved Filter on Every Page', 'Markets', 'Entry Dates', 'Accounts', 'Exact Contracts', 'Tags',
-                      'Tag Match', 'Exclude Tags', 'Playbook', 'Trade Status', 'Directions', 'Rating',
-                      'Number Ranges', 'Min Net P&L', 'Max Net P&L', 'Filter Name'}
+    labels = editor_labels(app, ('filter-', 'save-filter', 'global-saved-filter'))
+    assert labels == {'Saved Filter on Every Page', *EDITOR, 'Min Net P&L', 'Max Net P&L', 'Filter Name'}
     assert all(title_case(label) for label in labels) and any(b.label == 'Save Filter' for b in app.button)
+
+
+def test_page_filters_and_widget_filters_are_the_filters_menu_with_the_same_words(home):
+    seed_preview(home)
+    app = show(open_app(review=False), 'Dashboard')
+    assert editor_labels(app, 'filter-') == editor_labels(app, 'page-filter-default-') == EDITOR
+    assert editor_labels(app, 'widget-default-new-') == EDITOR
+    for prefix in ('page-filter-default-', 'widget-default-new-'):
+        assert app.multiselect(key=prefix + 'numbers-live').options == widget(app.multiselect, 'Number Ranges').options
+
+
+def test_mae_and_mfe_limits_are_in_the_chosen_units(home):
+    journal = seed_ticks(seed_preview(home))              # MAE 1 point, $100
+    journal.set_excursion_unit('points')
+    app = open_app(review=False)
+    widget(app.multiselect, 'Number Ranges').set_value(['mae']).run()
+    assert said(app.caption, 'MAE and MFE are in Points')
+    assert [n.label for n in app.number_input if n.key.startswith('filter-')] == ['Min MAE', 'Max MAE']
+    widget(app.number_input, 'Max MAE').set_value(2.0).run()
+    assert len(listed(app)) == 1                                  # 1 point, not $100
+    widget(app.number_input, 'Max MAE').set_value(0.5).run()
+    assert not listed(app)
+
+
+def test_a_stored_page_rule_opens_by_its_tags_names_now_and_keeps_what_the_old_editor_saved(home):
+    journal = seed_preview(home)
+    library = journal.tag_library()
+    breakout, patient, fomo = (next(iter(tagging.ids(library, [name]))) for name in ('Breakout', 'Patient', 'FOMO'))
+    # Only the old dashboard editor could require every tag and any tag at once.
+    page = journal.save_dashboard('Mine', [{'kind': 'Summary', 'filters': {'directions': ['short']}}],
+                                  filters={'tags_all': [breakout], 'tags_any': [patient, fomo], 'net_min': 5})
+    journal.edit_tag(breakout, name='Clean breakout')
+    app = show(open_app(review=False), 'Dashboard')
+    widget(app.selectbox, 'Dashboard page').set_value(page).run()
+    assert app.multiselect(key=f'page-filter-{page}-tags-live').value == ['Clean breakout']
+    assert app.radio(key=f'page-filter-{page}-tag-match-live').value == 'All selected'
+    assert app.number_input(key=f'page-filter-{page}-net_min-live').value == 5
+    assert said(app.caption, 'Also only trades with any of ') and said(app.caption, '; Any selected replaces these.')
+    assert menu_label(app, 'Page Filters') == 'Page Filters · 3'
+    app.multiselect(key=f'page-filter-{page}-directions-live').set_value(['long'])
+    press(app, 'Save Page Filters')
+    rule = journal.workspace()['dashboards'][page]['filters']
+    assert (rule['tags_all'], rule['tags_any']) == ([breakout], sorted([patient, fomo]))
+    assert (rule['net_min'], rule['directions']) == (5, ['long'])
+    assert menu_label(app, 'Page Filters') == 'Page Filters · 4'
+    # A widget's form opens on the widget's own rule, and saving it keeps that rule.
+    widget(app.selectbox, 'Edit widget').set_value(0).run()
+    first = journal.workspace()['dashboards'][page]['widgets'][0]['id']
+    assert app.multiselect(key=f'widget-{page}-{first}-directions-live').value == ['short']
+    press(app, 'Save Widget')
+    assert journal.workspace()['dashboards'][page]['widgets'][0]['filters']['directions'] == ['short']
+
+
+def test_a_widget_moved_down_opens_on_its_own_filters(home):
+    journal = seed_preview(home)
+    page = journal.save_dashboard('Mine', [{'kind': 'Summary', 'title': 'Shorts', 'filters': {'directions': ['short']}},
+                                           {'kind': 'Summary', 'title': 'Longs', 'filters': {'directions': ['long']}}])
+    app = show(open_app(review=False), 'Dashboard')
+    widget(app.selectbox, 'Dashboard page').set_value(page).run()
+    widget(app.selectbox, 'Edit widget').set_value(0).run()
+    press(app, '↓ Later')
+    longs = journal.workspace()['dashboards'][page]['widgets'][0]
+    assert longs['title'] == 'Longs' and widget(app.text_input, 'Widget title').value == 'Longs'
+    assert app.multiselect(key=f"widget-{page}-{longs['id']}-directions-live").value == ['long']
+    press(app, 'Save Widget')
+    widgets = journal.workspace()['dashboards'][page]['widgets']
+    assert [w['filters']['directions'] for w in widgets] == [['long'], ['short']]
+
+
+def test_the_filters_button_counts_the_filters_on_and_clear_filters_empties_them():
+    journal = round_trips(Journal(), ('paper', 'ESZ6', '2026-10-06', 14), ('paper', 'NQZ6', '2026-10-07', 15),
+                          ('second', 'NQZ6', '2026-10-08', 15))
+    journal.save_filter('Paper', {'accounts': ['paper']})
+    app = open_app(review=False)
+    assert menu_label(app) == 'Filters' and len(listed(app)) == 3
+    widget(app.selectbox, 'Saved Filter on Every Page').set_value('Paper').run()
+    assert menu_label(app) == 'Filters · 1' and len(listed(app)) == 2           # the saved filter in use counts 1
+    widget(app.multiselect, 'Markets').set_value(['NQ']).run()
+    assert menu_label(app) == 'Filters · 2'
+    widget(app.multiselect, 'Directions').set_value(['long']).run()
+    assert menu_label(app) == 'Filters · 3'
+    assert widget(app.date_input, 'Entry Dates').value == (dt.date(2026, 10, 6), dt.date(2026, 10, 7))
+    widget(app.date_input, 'Entry Dates').set_value((dt.date(2026, 10, 7), dt.date(2026, 10, 7))).run()
+    assert menu_label(app) == 'Filters · 4'                     # one narrowed side: the full span is no filter
+    widget(app.multiselect, 'Number Ranges').set_value(['net']).run()
+    assert menu_label(app) == 'Filters · 4'                     # empty boxes limit nothing
+    widget(app.number_input, 'Min Net P&L').set_value(0.0).run()
+    assert menu_label(app) == 'Filters · 5' and len(listed(app)) == 1
+    press(app, 'Clear Filters')
+    assert menu_label(app) == 'Filters' and len(listed(app)) == 3
+    assert widget(app.selectbox, 'Saved Filter on Every Page').value == ''          # All trades
+    assert widget(app.multiselect, 'Markets').value == [] and widget(app.multiselect, 'Directions').value == []
+    # New widgets, as after Save Filter: a browser goes on showing a widget's choices under the same key.
+    assert widget(app.multiselect, 'Markets').key == 'filter-markets-1-live'
+    assert set(journal.workspace()['filters']) == {'Paper'}                        # nothing saved is deleted
+
+
+def test_a_filter_left_on_stats_shows_on_the_trades_button_and_clears_there():
+    round_trips(Journal(), ('paper', 'ESZ6', '2026-10-07', 14), ('paper', 'NQZ6', '2026-10-07', 15))
+    app = open_app('Edge')
+    widget(app.multiselect, 'Markets').set_value(['NQ']).run()
+    assert menu_label(app) == 'Filters · 1'
+    show(app, 'Trades')
+    assert menu_label(app) == 'Filters · 1' and len(listed(app)) == 1
+    press(app, 'Clear Filters')
+    assert menu_label(app) == 'Filters' and len(listed(app)) == 2
+
+
+def test_a_saved_filter_is_renamed_and_deleted_beside_where_it_is_chosen():
+    journal = round_trips(Journal(), ('paper', 'ESZ6', '2026-10-07', 14), ('second', 'NQZ6', '2026-10-07', 15))
+    journal.save_filter('Paper', {'accounts': ['paper']})
+    journal.save_filter('Second', {'accounts': ['second']})
+    app = open_app(review=False)
+    assert not any(b.label in ('Rename', 'Delete') for b in app.button)          # only beside a chosen filter
+    widget(app.selectbox, 'Saved Filter on Every Page').set_value('Paper').run()
+    shown = listed(app)
+    assert len(shown) == 1
+    widget(app.text_input, 'New Name').set_value('Second')
+    press(app, 'Rename')
+    assert said(app.error, 'already named Second') and set(journal.workspace()['filters']) == {'Paper', 'Second'}
+    widget(app.text_input, 'New Name').set_value('Paper account')
+    press(app, 'Rename')
+    assert set(journal.workspace()['filters']) == {'Paper account', 'Second'}
+    # Renamed, it stays the filter in use, and the name box is empty again.
+    assert widget(app.selectbox, 'Saved Filter on Every Page').value == 'Paper account'
+    assert menu_label(app) == 'Filters · 1' and listed(app) == shown and widget(app.text_input, 'New Name').value == ''
+    press(app, 'Delete')
+    assert set(journal.workspace()['filters']) == {'Second'}
+    assert widget(app.selectbox, 'Saved Filter on Every Page').value == '' and menu_label(app) == 'Filters'
+    assert len(listed(app)) == 2                                   # back to All trades
 
 
 def test_dashboard_page_filters_still_save_on_their_own(home):
     journal = seed_preview(home)
     app = show(open_app(review=False), 'Dashboard')
+    assert menu_label(app, 'Page Filters') == 'Page Filters'
     app.multiselect(key='page-filter-default-directions-live').set_value(['short'])
     press(app, 'Save Page Filters')
     page = next(iter(journal.workspace()['dashboards'].values()))
     assert page['filters']['directions'] == ['short'] and widget(app.metric, 'Trades').value == '0'
+    assert menu_label(app, 'Page Filters') == 'Page Filters · 1'
     assert not journal.workspace()['filters']                    # a dashboard's filters are not a saved filter
 
 

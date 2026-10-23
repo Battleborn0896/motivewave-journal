@@ -150,6 +150,12 @@ def said(elements, text):
     return any(text in e.value for e in elements)
 
 
+def menu_label(app, name='Filters'):
+    """What the button of the menu `name` reads, with the number of filters on: 'Filters', 'Filters · 2'."""
+    return next(label for label in (p.proto.popover.label for p in app.main.get('popover'))
+                if label == name or label.startswith(name + ' · '))
+
+
 def helped(elements, text):
     """The text is in the ? tooltip of one of the elements."""
     return any(text in (getattr(e.proto, 'help', '') or '') for e in elements)
@@ -1034,14 +1040,15 @@ def test_excursion_unit_picker_updates_detail_list_plot_and_persists_without_rew
     app = open_app('Settings')
     assert widget(app.selectbox, 'MAE / MFE Units').options == [
         'Dollars / account currency', 'Points', 'Ticks', 'R · risk to your stop']
-    assert widget(app.selectbox, 'MAE / MFE Units').help == 'Changes only how MAE / MFE are shown.'
+    assert widget(app.selectbox, 'MAE / MFE Units').help == ('Changes how MAE / MFE are shown, and the unit their '
+                                                             'filter limits are in.')
     # The most in your favour was with both contracts held, 2.5 points up: $250, over $200 at risk to 4998. Every
     # unit is that one moment, never the 3.5 points the one contract left saw later.
     display_setting(app, 'MAE / MFE Units', 'points')
     assert widget(app.metric, 'MFE').value == '2.50 pts'
     path = next(json.loads(x.proto.spec) for x in app.get('plotly_chart') if 'Move from your average entry' in x.proto.spec)
     assert path['layout']['yaxis']['title']['text'] == 'Move from your average entry (pts)'
-    assert common.display_excursion_rows(journal, common.rows_for(journal))[0]['display_mfe'] == pytest.approx(2.5)
+    assert common.rows_for(journal)[0]['display_mfe'] == pytest.approx(2.5)
     assert widget(app.metric, 'MAE').help == units.description('points')    # the one definition, on hover
     open_review(app)
     display_setting(app, 'MAE / MFE Units', 'ticks')

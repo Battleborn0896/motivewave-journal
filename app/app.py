@@ -149,13 +149,11 @@ for pending, target in [('dashboard-next', 'dashboard-page'), ('checklist-next',
     if common.key(journal, pending) in st.session_state:
         st.session_state[common.key(journal, target)] = st.session_state.pop(common.key(journal, pending))
 saved_filters = journal.workspace()['filters']
-global_filter = preferences.chosen_filter(journal, saved_filters)      # chosen in Filters on Trades or Stats
+# Chosen in Filters on Trades or Stats, whose button counts it among the filters on.
+global_filter = preferences.chosen_filter(journal, saved_filters)
 every_row = rows                           # the session tools on Trades and the settings on Settings see every trade
 if global_filter:
     rows = filter_sample(rows, saved_filters[global_filter])
-    st.caption(common.md(f'Saved filter: {global_filter}'),
-               help='Only trades this saved filter keeps are shown on every page. Choose All trades under '
-                    'Filters on Trades or Stats to see everything.')
 
 if view == 'Settings':
     def tool(page):

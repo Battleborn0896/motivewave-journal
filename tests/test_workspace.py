@@ -17,8 +17,8 @@ from mwjournal import backup, tagging
 from mwjournal import workspace
 from mwjournal.workspace import (validate_graph, replay_run, tag_score, filter_sample, combine_filters,
                                  validate_filter)
-from test_app import open_app, show, press, widget, said
-from test_chart import seed_preview
+from test_app import menu_label, open_app, show, press, widget, said
+from test_chart import seed_preview, seed_ticks
 from views.checklists import starter
 
 
@@ -77,6 +77,37 @@ def test_saved_filters_remain_attached_after_rename_and_layer_by_intersection(ho
     assert not filter_sample(filter_sample(common.rows_for(journal), {'accounts': ['paper']}), {'directions': ['short']})
     with pytest.raises(ValueError):
         journal.save_filter('Bad', {'tags_all': ['Not a tag']})
+
+
+def test_a_saved_filter_is_renamed_to_a_free_name_and_deleted(home):
+    journal = Journal()
+    journal.save_filter('Longs', {'directions': ['long']})
+    journal.save_filter('Shorts', {'directions': ['short']})
+    assert journal.rename_filter('Longs', '  Long trades ') == 'Long trades'          # label(): trimmed
+    assert journal.workspace()['filters']['Long trades']['directions'] == ['long']
+    assert set(journal.workspace()['filters']) == {'Long trades', 'Shorts'}
+    for old, new, message in [('Long trades', 'Shorts', 'already named Shorts'), ('Gone', 'Other', 'no saved filter'),
+                              ('Shorts', ' ', 'Use a name'), ('Shorts', 'x' * 81, 'Use a name')]:
+        with pytest.raises(ValueError, match=message):
+            journal.rename_filter(old, new)
+    assert journal.rename_filter('Shorts', 'Shorts') == 'Shorts'                       # its own name is not taken
+    journal.delete_filter('Shorts')
+    assert set(journal.workspace()['filters']) == {'Long trades'}
+    with pytest.raises(ValueError, match='no saved filter'):
+        journal.delete_filter('Shorts')
+    assert Journal(dataset='replay').workspace()['filters'] == {}
+
+
+def test_mae_and_mfe_limits_are_read_in_the_chosen_units(home):
+    journal = seed_ticks(seed_preview(home))              # MAE 1 point ($100), MFE 2.5 points ($250)
+    rule = {'mae_max': 2, 'mfe_min': 2}
+    assert not filter_sample(common.rows_for(journal), rule)                        # $100 and $250
+    journal.set_excursion_unit('points')
+    rows = common.rows_for(journal)
+    assert (rows[0]['display_mae'], rows[0]['display_mfe']) == (1, 2.5)
+    assert filter_sample(rows, rule) == rows                                        # the same limit, in points
+    journal.set_excursion_unit('ticks')
+    assert not filter_sample(common.rows_for(journal), rule)                        # 4 and 10 ticks
 
 
 def test_numeric_filters_exclude_missing_values_and_reject_reversed_bounds(home):
@@ -206,7 +237,7 @@ def test_filters_saved_before_playbooks_and_process_ratings_still_load_combine_a
     assert filter_sample(rows, journal.workspace()['filters']['Old longs']) == rows
     app = open_app(review=False)
     widget(app.selectbox, 'Saved Filter on Every Page').set_value('Old').run()
-    assert not app.exception and said(app.main.caption, 'Saved filter: Old')
+    assert not app.exception and menu_label(app) == 'Filters · 1'
 
 
 def test_dashboard_pages_widgets_clone_and_partial_writes_are_dataset_local(home):
@@ -407,7 +438,7 @@ def test_tag_score_is_offered_nowhere_until_a_tag_has_a_score(home):
         found.update(kind='Tag score' in widget(app.selectbox, 'Widget type').options,
                      measure='Tag score' in widget(app.selectbox, 'Series metric').options,
                      tags=any(m.label.startswith('Score only these tags') for m in app.multiselect),
-                     limit='Signed tag score' in widget(app.multiselect, 'Numbers to limit').options,
+                     limit='Tag Score' in app.multiselect(key=f'widget-{stored}-new-numbers-live').options,
                      script='"tag_score"' in script_widget.document(common.rows_for(journal), journal.tag_library(), ''))
         return found
     assert not any(offered().values())

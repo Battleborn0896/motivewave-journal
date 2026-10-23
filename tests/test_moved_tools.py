@@ -255,6 +255,9 @@ def test_the_stats_filters_narrow_the_dashboards_too(home):
     assert summary() == '2'
     widget(app.multiselect, 'Markets').set_value(['NQ']).run()
     assert not app.exception and summary() == '1'
+    # The Stats button says a filter is on; the page's own count only the page's filters.
+    assert [p.proto.popover.label for p in app.main.get('popover')][:4] == [
+        'Filters · 1', 'Customize', 'Page Filters', 'Customize Page']
 
 
 def test_dashboards_open_with_no_closed_trade_yet():

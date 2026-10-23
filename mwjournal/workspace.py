@@ -56,8 +56,8 @@ def time_zone(db) -> str:
 # Saved-filter fields a trade passes by having any one of the values listed: its account, exact contract,
 # market, direction, status (closed, open or incomplete) and Rating (1 to 5 stars).
 CHOICES = ('accounts', 'symbols', 'markets', 'directions', 'status', 'ratings')
-# Number limits, each as name_min and name_max: signed tag score, net P&L, R, MAE and MFE in account currency,
-# peak quantity and minutes held.
+# Number limits, each as name_min and name_max: signed tag score, net P&L, R, MAE and MFE in the chosen MAE / MFE
+# Units (a stored limit is read in the unit chosen now), peak contracts and minutes held.
 NUMBERS = ('score', 'net', 'r', 'mae', 'mfe', 'quantity', 'duration')
 
 
@@ -102,8 +102,9 @@ def filter_sample(rows, rule):
         tags = set(row.get('tag_ids', []))
         # Rows from the app carry their entry day in the display time zone; others fall back to UTC.
         day = row.get('entry_day') or instant(row['opened']).date().isoformat()
+        # MAE and MFE as the app shows them, in the chosen MAE / MFE Units (common.rows_for).
         numbers = {'score': row.get('tag_score', 0), 'net': row.get('net'), 'r': row.get('r'),
-                   'mae': row.get('mae'), 'mfe': row.get('mfe'), 'quantity': row.get('max_qty'),
+                   'mae': row.get('display_mae'), 'mfe': row.get('display_mfe'), 'quantity': row.get('max_qty'),
                    'duration': (instant(row['closed']) - instant(row['opened'])).total_seconds() / 60 if row.get('closed') else None}
         numeric_match = all((rule.get(name + '_min') is None or val is not None and val >= rule[name + '_min'])
                             and (rule.get(name + '_max') is None or val is not None and val <= rule[name + '_max'])
@@ -292,6 +293,27 @@ class Workspace:
         name = label(name)
         self._workspace_edit(lambda s, lib: s['filters'].update({name: validate_filter(filters, lib)}))
         return name
+
+    def delete_filter(self, name):
+        """Removes the saved filter `name`."""
+        name = label(name)
+        def delete(state, library):
+            if name not in state['filters']:
+                raise ValueError(f'There is no saved filter named {name}.')
+            del state['filters'][name]
+        self._workspace_edit(delete)
+
+    def rename_filter(self, old, new):
+        """Gives the saved filter `old` the name `new`, a name no other saved filter has, and returns it as saved."""
+        old, new = label(old), label(new)
+        def rename(state, library):
+            if old not in state['filters']:
+                raise ValueError(f'There is no saved filter named {old}.')
+            if new != old and new in state['filters']:
+                raise ValueError(f'A saved filter is already named {new}.')
+            state['filters'][new] = state['filters'].pop(old)
+        self._workspace_edit(rename)
+        return new
 
     def save_checklist(self, name, graph, *, id=None, hidden=False):
         def save(state, library):

@@ -63,7 +63,7 @@ def test_compound_excursions_use_recorded_combined_equity_not_sum_of_leg_extrema
     journal.set_excursion_unit('points')
     # The dollars peaked at 2 × 4 × $50, before the 5-point price peak on the 1 left after a partial exit: the
     # points are that moment's 4.
-    assert common.display_excursion_rows(view, common.rows_for(view))[0]['display_mfe'] == 4
+    assert common.rows_for(view)[0]['display_mfe'] == 4
 
 
 @pytest.mark.parametrize('kwargs', [{'symbol': 'ESM6'}, {'side': 'sell'}, {'account': 'other'}])
@@ -92,9 +92,9 @@ def test_overlapping_positions_merged_are_measured_from_their_combined_average_e
     assert merged.net == sum(t.net for t in raw) == 200
     assert (metric['mfe'], metric['mfe_points']) == (300, 15)
     journal.set_excursion_unit('points')
-    assert common.display_excursion_rows(view, common.rows_for(view))[0]['display_mfe'] == 15
+    assert common.rows_for(view)[0]['display_mfe'] == 15
     journal.set_excursion_unit('ticks')
-    assert common.display_excursion_rows(view, common.rows_for(view))[0]['display_mfe'] == 60
+    assert common.rows_for(view)[0]['display_mfe'] == 60
 
 
 def test_unavailable_or_ambiguous_legs_leave_raw_reviews_visible(home):

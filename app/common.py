@@ -271,7 +271,7 @@ def unit_selector(journal, container=st):
     def save():
         journal.set_excursion_unit(st.session_state[widget_key])
     container.selectbox('MAE / MFE Units', units.UNITS, format_func=units.LABELS.get, key=widget_key, on_change=save,
-                        help='Changes only how MAE / MFE are shown.')
+                        help='Changes how MAE / MFE are shown, and the unit their filter limits are in.')
 
 
 def excursion_unit(journal):
@@ -384,20 +384,6 @@ def excursion_values(journal, trade, metric, risk=None):
     return tuple(units.value(metric, name, unit, risk=risk, tick=tick) for name in ('mae', 'mfe'))
 
 
-def display_excursion_rows(journal, rows):
-    """MAE and MFE of trade rows (rows_for) in the chosen unit. Each row carries the measurement it is shown with,
-    so no trade is read again here."""
-    result = []
-    unit = excursion_unit(journal)
-    sizes = journal.display_settings()['tick_sizes']
-    for row in rows:
-        metric = row['metric']
-        mae, mfe = (units.value(metric, name, unit, risk=row.get('initial_risk'), tick=units.tick_size(row['symbol'], sizes))
-                    for name in ('mae', 'mfe'))
-        result.append({**row, 'display_mae': mae, 'display_mfe': mfe})
-    return result
-
-
 def excursion_help(journal, trade, at_risk):
     unit = excursion_unit(journal)
     if unit == 'r' and not units.positive(at_risk):
@@ -473,7 +459,9 @@ def rows(journal) -> list[dict]:
 
 
 def rows_for(journal) -> list[dict]:
-    """One row per trade with its review, tags, risk and measurement. The journal's settings are read once."""
+    """One row per trade with its review, tags, risk and measurement, and its MAE and MFE in the chosen MAE / MFE
+    Units (display_mae, display_mfe: what Stats shows and MAE / MFE filters compare). The journal's settings are
+    read once."""
     annotations = journal.annotations()
     library = journal.tag_library()
     sessions = journal.get('sessions')
@@ -482,6 +470,7 @@ def rows_for(journal) -> list[dict]:
     aliases = journals.registry(getattr(journal, 'capture_journal', journal))['account_aliases']
     import json
     zone = display_zone(journal)
+    unit, sizes = excursion_unit(journal), journal.display_settings()['tick_sizes']
     rows = []
     trades = journal.trades()
     plans = risk.plans(journal, trades, annotations)
@@ -492,7 +481,9 @@ def rows_for(journal) -> list[dict]:
         tag_ids = tagging.effective(library, a, sessions.get(day, {}))
         # The risk to the trade's stop (risk.py): every R the app shows divides by it.
         at_risk = plans[trade.id].risk
-        rows.append({**trade.row(), **a, 'initial_risk': at_risk, 'stop': plans[trade.id].stop,
+        shown = {'display_' + name: units.value(m, name, unit, risk=at_risk, tick=units.tick_size(trade.symbol, sizes))
+                 for name in ('mae', 'mfe')}
+        rows.append({**trade.row(), **a, **shown, 'initial_risk': at_risk, 'stop': plans[trade.id].stop,
                      'market': instrument_market(trade.symbol),
                      'merge_leg_ids': getattr(trade, 'merge_leg_ids', []),
                      'account_label': aliases.get(json.dumps([trade.provider, trade.account], sort_keys=True), trade.account),
@@ -529,9 +520,14 @@ def show_result(result: dict) -> None:
         st.warning('The file reports dropped ticks: the trades they fall in show no MAE / MFE, and say why.')
 
 
-# The number limits the Filters menu offers, by their name in a filter rule.
-NUMBER_LIMITS = {'net': 'Net P&L', 'r': 'R', 'mae': 'MAE', 'mfe': 'MFE', 'quantity': 'Size',
-                 'duration': 'Minutes Held', 'score': 'Tag Score'}
+# ---------------------------------------------------------------- filters
+# One editor for every filter (filter_rule): the Filters menu of Trades and Stats, a dashboard page's Page Filters and
+# each dashboard widget's. Each draws it under a key prefix of its own and gets back the kind of rule a saved filter is.
+
+# The number limits a filter offers, by their name in a rule. MAE and MFE are in the chosen MAE / MFE Units.
+NUMBER_LIMITS = {'net': 'Net P&L', 'r': 'R', 'mae': 'MAE', 'mfe': 'MFE', 'quantity': 'Contracts',
+                 'duration': 'Minutes held', 'score': 'Tag Score'}
+TAG_MATCH = ('All selected', 'Any selected')
 
 
 def filter_keys(journal) -> list[str]:
@@ -541,83 +537,159 @@ def filter_keys(journal) -> list[str]:
 
 
 def filter_generation(journal) -> str:
-    """'' until a filter is saved here, then '-1', '-2' and so on: part of the key of every Filters-menu widget,
-    so a save gives the menu new, empty widgets. A browser keeps showing what a widget held as long as its key
-    is the same, whatever the session says."""
-    saved = st.session_state.get(key(journal, 'filters-saved'), 0)
-    return f'-{saved}' if saved else ''
+    """'' until the Filters menu is saved or cleared here, then '-1', '-2' and so on: part of the key of every filter
+    widget, so a save or a clear gives the menu new, empty widgets. A browser keeps showing what a widget held as
+    long as its key is the same, whatever the session says."""
+    done = st.session_state.get(key(journal, 'filters-generation'), 0)
+    return f'-{done}' if done else ''
 
 
-def filter_rule(journal, rows: list[dict]) -> dict:
-    """Draws the Filters menu's own filters and returns them as a rule for workspace.filter_sample: the same
-    kind of rule a saved filter is, so saving one keeps exactly the trades these show."""
-    if not rows:
-        return {}
-    fresh = filter_generation(journal)
+def empty_filters(journal) -> None:
+    """Empties the Filters menu of Trades and Stats: its values go, and the next run draws new widgets."""
+    for name in filter_keys(journal):
+        st.session_state.pop(name, None)
+    done = key(journal, 'filters-generation')
+    st.session_state[done] = st.session_state.get(done, 0) + 1
+
+
+def _editor(journal, rows, prefix, start) -> dict:
+    """What a filter editor is drawn from: each field's widget key ('keys'), the value each widget opens on
+    ('opening'), the first and last entry day of `rows` and the tag library. A field is named as its key ends; a
+    number limit as in a rule, such as net_max."""
     library = journal.tag_library()
-    c1, c2 = st.columns([1, 1])
-    markets = c1.multiselect('Markets', sorted({r['market'] for r in rows}),
-                             key=key(journal, 'filter-markets' + fresh),
-                             placeholder='All markets · expiries grouped',
-                             help='NQZ6, NQM6 and other NQ expiries share NQ. Micros stay separate. '
-                                  'Charts and MAE/MFE still use the exact traded contract.')
-    zone = display_zone(journal)
-    days = [local_day(r['opened'], zone) for r in rows]
-    first, last = min(days), max(days)
-    # The span is part of the key: a trade on a new day widens the filter instead of hiding behind
-    # the range that was right yesterday.
-    period = c2.date_input('Entry Dates', (first, last), key=key(journal, f'filter-dates-{first}-{last}' + fresh),
-                           help=f'Calendar days in your display time zone, {zone}.')
-    with st.expander('More Filters'):
-        c1, c2, c3 = st.columns(3)
-        names = {r['account']: r['account_label'] for r in rows}         # by the name given under Journals & Accounts
-        accounts = c1.multiselect('Accounts', sorted(names), format_func=lambda a: names.get(a, a),
-                                  key=key(journal, 'filter-accounts' + fresh))
-        symbols = c2.multiselect('Exact Contracts', sorted({r['symbol'] for r in rows}), key=key(journal, 'filter-symbols' + fresh))
-        available_tags = {t for r in rows for t in r['tags']}
-        # A removed tag can still be an active filter; do not silently broaden the list on return.
-        available_tags.update(st.session_state.get(key(journal, 'filter-tags' + fresh), []))
-        tags = c3.multiselect('Tags', sorted(available_tags), key=key(journal, 'filter-tags' + fresh),
-                              help='Trades with all of these tags, or any of them: choose under Tag Match.')
-        match = c3.radio('Tag Match', ['All selected', 'Any selected'], horizontal=True, key=key(journal, 'filter-tag-match' + fresh))
-        excluded = c3.multiselect('Exclude Tags', sorted(available_tags), key=key(journal, 'filter-exclude-tags' + fresh))
-        books = [p for p in library['playbooks'].values() if not p.get('retired')]
-        book = c1.selectbox('Playbook', [None, *[p['id'] for p in books]],
-                            format_func=lambda id: next(p['name'] for p in books if p['id'] == id) if id else 'Any playbook',
-                            key=key(journal, 'filter-playbook' + fresh), help='Trades whose tags complete this playbook.')
-        status = c1.multiselect('Trade Status', ['closed', 'open', 'incomplete'], format_func=str.title,
-                                key=key(journal, 'filter-status' + fresh))
-        directions = c2.multiselect('Directions', ['long', 'short'], format_func=str.title,
-                                    key=key(journal, 'filter-directions' + fresh))
-        ratings = c2.multiselect('Rating', [1, 2, 3, 4, 5], key=key(journal, 'filter-ratings' + fresh))
-        offered = [name for name in NUMBER_LIMITS if name != 'score' or tagging.scored(library)]
-        numbers = st.multiselect('Number Ranges', offered, format_func=NUMBER_LIMITS.get,
-                                 key=key(journal, 'filter-numbers' + fresh),
-                                 help='Each one adds a minimum and a maximum; an empty box is no limit. MAE and MFE are '
-                                      'in account currency, not the display unit. A trade without a value never '
-                                      'passes a limit; R needs a stop.')
-        limits = {}
-        for name in numbers:
-            low, high = st.columns(2)
-            for column, end, word in [(low, '_min', 'Min '), (high, '_max', 'Max ')]:
-                limits[name + end] = column.number_input(word + NUMBER_LIMITS[name], value=None, step=1.0,
-                                                         key=key(journal, f'filter-{name}{end}' + fresh), placeholder='No limit')
+    first, last = (dt.date.fromisoformat(day) for day in (min(r['entry_day'] for r in rows),
+                                                           max(r['entry_day'] for r in rows)))
+    fresh = filter_generation(journal)
+    limits = [name + end for name in NUMBER_LIMITS for end in ('_min', '_max')]
+    keys = {field: key(journal, f'{prefix}-{field}{fresh}') for field in (
+        'markets', 'accounts', 'symbols', 'tags', 'tag-match', 'exclude-tags', 'playbook', 'status', 'directions',
+        'ratings', 'numbers', *limits)}
+    # The span is part of the key: a trade on a new day widens the filter instead of hiding behind the range that
+    # was right yesterday.
+    keys['dates'] = key(journal, f'{prefix}-dates-{first}-{last}{fresh}')
+    name = lambda id: library['tags'][id]['name'] if id in library['tags'] else id
+    match = TAG_MATCH[1] if start.get('tags_any') and not start.get('tags_all') else TAG_MATCH[0]
+    opening = {**{field: list(start.get(field, [])) for field in ('markets', 'accounts', 'symbols', 'status',
+                                                                  'directions', 'ratings')},
+               'tags': [name(id) for id in start.get('tags_all' if match == TAG_MATCH[0] else 'tags_any', [])],
+               'tag-match': match, 'exclude-tags': [name(id) for id in start.get('tags_none', [])],
+               'playbook': start.get('playbook'),
+               'dates': tuple(dt.date.fromisoformat(start[side]) if start.get(side) else day
+                              for side, day in (('start', first), ('end', last))),
+               'numbers': [n for n in NUMBER_LIMITS
+                           if start.get(n + '_min') is not None or start.get(n + '_max') is not None],
+               **{limit: None if start.get(limit) is None else float(start[limit]) for limit in limits}}
+    return {'keys': keys, 'opening': opening, 'first': first, 'last': last, 'library': library}
+
+
+def _rule(editor, start) -> dict:
+    """The rule an editor (_editor) holds: each widget's value, else the value it opens on."""
+    value = {field: st.session_state.get(name, editor['opening'][field]) for field, name in editor['keys'].items()}
 
     def ids(names):
         # A renamed tag keeps its identity; a name no tag has any more matches no trade.
-        return [next(iter(tagging.ids(library, [name])), name) for name in names]
+        return [next(iter(tagging.ids(editor['library'], [name])), name) for name in names]
 
-    rule = {'markets': markets, 'accounts': accounts, 'symbols': symbols, 'directions': directions,
-            'status': status, 'ratings': ratings, 'playbook': book, 'tags_none': ids(excluded),
-            'tags_all' if match == 'All selected' else 'tags_any': ids(tags), **limits}
+    rule = {field: value[field] for field in ('markets', 'accounts', 'symbols', 'directions', 'status', 'ratings',
+                                              'playbook')}
+    rule['tags_none'] = ids(value['exclude-tags'])
+    rule['tags_all' if value['tag-match'] == TAG_MATCH[0] else 'tags_any'] = ids(value['tags'])
+    if start.get('tags_all') and start.get('tags_any'):
+        rule.setdefault('tags_any', list(start['tags_any']))     # kept as it was saved (filter_rule says so)
+    period = value['dates']
     if isinstance(period, (tuple, list)) and len(period) == 2:
-        # Only a narrowed side limits: the full span is no limit, so a new day's trades are never hidden by it.
-        if period[0] > first:
-            rule['start'] = period[0].isoformat()
-        if period[1] < last:
-            rule['end'] = period[1].isoformat()
+        # Only a narrowed side limits: the full span is no limit, so a new day's trades are never hidden by it. A
+        # side the rule was saved with stays until it is changed.
+        for side, day, narrowed in (('start', period[0], period[0] > editor['first']),
+                                    ('end', period[1], period[1] < editor['last'])):
+            if narrowed or start.get(side) == day.isoformat():
+                rule[side] = day.isoformat()
+    for name in value['numbers']:
+        for end in ('_min', '_max'):
+            rule[name + end] = value[name + end]
     return rule
 
+
+def filter_state(journal, rows, prefix='filter', start=None) -> dict:
+    """The rule the filter editor under `prefix` holds (filter_rule), read without drawing it, so the button that
+    opens it can say how many filters are on."""
+    start = start or {}
+    return _rule(_editor(journal, rows, prefix, start), start) if rows else dict(start)
+
+
+def active_filters(rule: dict) -> int:
+    """How many filters a rule holds: each choice made, each side of the entry dates and each number limit."""
+    return sum(value not in (None, [], ()) for value in rule.values())
+
+
+def filter_rule(journal, rows: list[dict], prefix='filter', start=None) -> dict:
+    """Draws the one filter editor and returns its rule for workspace.filter_sample, the kind of rule a saved filter
+    is: the Filters menu of Trades and Stats (prefix 'filter'), a dashboard page's ('page-filter-<page id>') or a
+    dashboard widget's ('widget-<page id>-<widget id>', 'new' for a new one). It opens on `start`, a page's or
+    widget's stored rule, and shows its tags by their names now. Without trades there is nothing to choose from, and
+    `start` comes back as it is."""
+    start = start or {}
+    if not rows:
+        return dict(start)
+    editor = _editor(journal, rows, prefix, start)
+    keys, opening, library = editor['keys'], editor['opening'], editor['library']
+
+    def held(*fields):
+        # What a widget opens on or holds stays offered, so no filter goes because no trade has that value now.
+        return {value for field in fields for value in [*opening[field], *st.session_state.get(keys[field], [])]}
+
+    c1, c2 = st.columns([1, 1])
+    c1.multiselect('Markets', sorted({r['market'] for r in rows} | held('markets')), default=opening['markets'],
+                   key=keys['markets'], placeholder='All markets · expiries grouped',
+                   help='NQZ6, NQM6 and other NQ expiries share NQ; micros stay separate, and charts and MAE / MFE '
+                        'use the exact contract.')
+    c2.date_input('Entry Dates', opening['dates'], key=keys['dates'],
+                  help=f'Calendar days in your Time Zone, {display_zone(journal)}.')
+    with st.expander('More Filters'):
+        c1, c2, c3 = st.columns(3)
+        names = {r['account']: r['account_label'] for r in rows}         # by the name given under Journals & Accounts
+        c1.multiselect('Accounts', sorted(set(names) | held('accounts')), default=opening['accounts'],
+                       format_func=lambda a: names.get(a, a), key=keys['accounts'])
+        c2.multiselect('Exact Contracts', sorted({r['symbol'] for r in rows} | held('symbols')),
+                       default=opening['symbols'], key=keys['symbols'])
+        tags = sorted({t for r in rows for t in r['tags']} | held('tags', 'exclude-tags'))
+        c3.multiselect('Tags', tags, default=opening['tags'], key=keys['tags'],
+                       help='Trades with all of these tags, or any of them: choose under Tag Match.')
+        c3.radio('Tag Match', TAG_MATCH, index=TAG_MATCH.index(opening['tag-match']), horizontal=True,
+                 key=keys['tag-match'])
+        if start.get('tags_all') and start.get('tags_any'):
+            any_of = ', '.join(library['tags'][id]['name'] if id in library['tags'] else id for id in start['tags_any'])
+            c3.caption(md(f'Also only trades with any of {any_of}; Any selected replaces these.'))
+        c3.multiselect('Exclude Tags', tags, default=opening['exclude-tags'], key=keys['exclude-tags'])
+        books = library['playbooks']
+        chosen = [opening['playbook'], st.session_state.get(keys['playbook'])]
+        playbooks = [None, *[id for id, book in books.items() if not book.get('retired') or id in chosen],
+                     *[id for id in dict.fromkeys(chosen) if id and id not in books]]
+        c1.selectbox('Playbook', playbooks, index=playbooks.index(opening['playbook']),
+                     format_func=lambda id: books[id]['name'] if id in books else id or 'Any playbook',
+                     key=keys['playbook'], help='Trades whose tags complete this playbook.')
+        c1.multiselect('Trade Status', ['closed', 'open', 'incomplete'], default=opening['status'],
+                       format_func=str.title, key=keys['status'])
+        c2.multiselect('Directions', ['long', 'short'], default=opening['directions'], format_func=str.title,
+                       key=keys['directions'])
+        c2.multiselect('Rating', [1, 2, 3, 4, 5], default=opening['ratings'], key=keys['ratings'])
+        offered = [name for name in NUMBER_LIMITS
+                   if name != 'score' or tagging.scored(library) or name in held('numbers')]
+        numbers = st.multiselect('Number Ranges', offered, default=opening['numbers'], format_func=NUMBER_LIMITS.get,
+                                 key=keys['numbers'],
+                                 help='Each adds a Min and a Max; an empty box is no limit, and a trade without a '
+                                      'value never passes one.')
+        if {'mae', 'mfe'} & set(numbers):
+            st.caption(f'MAE and MFE are in {units.LABELS[excursion_unit(journal)]}, your MAE / MFE Units on Settings.')
+        for name in numbers:
+            low, high = st.columns(2)
+            for column, end, word in [(low, '_min', 'Min '), (high, '_max', 'Max ')]:
+                column.number_input(word + NUMBER_LIMITS[name], value=opening[name + end], step=1.0,
+                                    key=keys[name + end], placeholder='No limit')
+    return _rule(editor, start)
+
+
+# ---------------------------------------------------------------- a contract's multiplier
 
 def multiplier_form(journal, form_key: str, symbol: str) -> None:
     """Dollars per full price point per contract, asked on a trade whose contract has none: known futures roots come
