@@ -511,7 +511,7 @@ The default uses two independently stacked columns so the calendar doesn't push 
 below an unnecessarily tall row. **Page Filters** (on top of the Stats filters) and each widget's filters, under
 Customize Page, are the same editor as the Filters menu, with the same words, and save with their own button;
 **Page Filters · 3** says how many the page has. Saved filters, page filters and widget filters intersect;
-they never modify captured trades. Saved tag rules use stable identities and show a tag's name now. Calendar
+they never change recorded trades. Saved tag rules use stable identities and show a tag's name now. Calendar
 buttons open the exact day's Report Card on Trades. **Settings** sets the Time Zone the calendar's days follow,
 and hides weekends under Advanced.
 
