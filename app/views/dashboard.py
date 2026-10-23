@@ -4,6 +4,7 @@ from __future__ import annotations
 import calendar
 import datetime as dt
 import html
+from zoneinfo import ZoneInfo
 
 import pandas as pd
 import plotly.express as px
@@ -55,7 +56,7 @@ def filter_editor(journal, rows, prefix, old=None):
                                   help='Calendar days in your display time zone.')
         if date_filter:
             days = [dt.date.fromisoformat(r['entry_day']) if r.get('entry_day') else instant(r['opened']).date()
-                    for r in rows] or [dt.date.today()]
+                    for r in rows] or [dt.datetime.now(ZoneInfo(common.display_zone(journal))).date()]
             period = st.date_input('Entry date range', (dt.date.fromisoformat(old['start']) if old.get('start') else min(days),
                                                         dt.date.fromisoformat(old['end']) if old.get('end') else max(days)), key=key('dates'))
             if isinstance(period, (tuple, list)) and len(period) == 2:
@@ -316,7 +317,6 @@ def calendar_cell(label, net, trades, biggest, currency, *, kind='mwj-cal') -> s
 def trading_calendar(journal, rows, key):
     """The month's days, each tinted by its closed trades' net result, deeper for a bigger day of that month, with
     each week's total at the end of its row and the month's beside the month. A day opens its Daily Report Card."""
-    from zoneinfo import ZoneInfo
     zone = common.display_zone(journal)
     currency = rows[0]['currency'] if rows else 'USD'
     days = [instant(r['opened']).astimezone(ZoneInfo(zone)).date() for r in rows]
