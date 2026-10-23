@@ -125,7 +125,7 @@ def preview_csv(text: str, *, timezone='America/New_York', mapping=None,
 
 
 # The event types this version reads (docs/protocol.md); any other is skipped and counted (Preview.unknown),
-# as a 'metric' (MAE / MFE a platform reported) is since 0.4.18: only recorded ticks measure a trade.
+# a 'metric' (MAE / MFE a platform reported) included: only recorded ticks measure a trade.
 KNOWN = ('execution', 'tick', 'quote', 'bar', 'protection', 'gap', 'heartbeat')
 
 

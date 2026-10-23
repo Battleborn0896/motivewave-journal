@@ -115,6 +115,10 @@ def test_it_does_not_carry_on_what_would_differ_from_measuring_again(tmp_path):
     # A closed trade, and a measurement that stopped before the last fill.
     assert carry_on(dataclasses.replace(trade, closed=at(8)), previous, [], now=later) is None
     assert carry_on(trade, [{**previous[0], 'last_ts': '2026-10-07T13:59:00+00:00'}], [], now=later) is None
+    # A contract with no dollars per point: its measurement keeps no dollars to compare new prices with.
+    unpriced = dataclasses.replace(trade, point_value=None)
+    first = measurements(unpriced, journal.prices('NQZ6', SOURCE), SOURCE, now=T0 + dt.timedelta(seconds=3))
+    assert first[0]['mae'] is None and carry_on(unpriced, first, [tick('NQ', 4, 19980)], now=later) is None
 
 
 def test_a_print_stored_late_with_the_time_already_measured_is_counted_once(tmp_path):

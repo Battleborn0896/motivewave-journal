@@ -320,6 +320,25 @@ def test_a_journal_with_nothing_measured_is_told_nothing_about_measuring_again(t
     assert not journal.recalculation_due() and journal.upgrade_note() is None and journal.unseen_notes() == {}
 
 
+def test_points_stored_under_rules_2_become_the_points_of_the_dollars_moment_after_one_pass(tmp_path):
+    """Long 2 at 100, a dip to 97, sell 1 at 102, the runner dips to 96: rules 2 stored the runner's 4 points beside
+    the $300 of the dip with 2 held. The pass measures it again from its stored ticks: 3 points, the same moment."""
+    from test_core import fill, tick
+    journal = Journal(tmp_path / 'trades.db')
+    journal.ingest([(fill('a', 'buy', 2, 100), {}), (fill('b', 'sell', 1, 102, 1), {}), (fill('c', 'sell', 1, 101, 2), {})])
+    journal.ingest_prices([tick(0, 97), tick(1, 96)])
+    trade, = journal.trades()
+    old = {'source': 'test-prices', 'basis': 'last', 'precision': 'observed-ticks', 'mae': 300., 'mfe': 200.,
+           'mae_points': 4., 'mfe_points': 2., 'path': [], 'observations': 2}
+    journal.record_metric(trade, old)
+    with journal.connect() as db:
+        db.execute("UPDATE journal_meta SET value='2' WHERE key='measurement_rules'")
+    SyncWorker(Journal(journal.path)).recalculate()
+    metric, = journal.metric_options(trade)
+    assert (metric['mae'], metric['mae_points'], metric['mfe'], metric['mfe_points']) == (300, 3, 200, 2)
+    assert not journal.recalculation_due() and 'measurement_rules_3' in journal.unseen_notes()
+
+
 def test_fills_that_never_had_position_fields_are_left_byte_for_byte(tmp_path):
     path = tmp_path / 'trades.sqlite3'
     journal = Journal(path)

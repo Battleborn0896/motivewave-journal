@@ -206,7 +206,7 @@ def render(journal, rows, *, every=None) -> None:
     capture = getattr(journal, 'capture_journal', journal)
     seen = common.changes(capture)
     selected = common.key(journal, 'selected-trade')
-    shown, options_slot = top_row(journal, every, open_rows, rows)
+    shown = top_row(journal, every, open_rows, rows)
     filter_state = {k: st.session_state[k] for k in common.filter_keys(journal)}
     signature = json.dumps(filter_state, sort_keys=True, default=str)
     signature_key = common.key(journal, 'review-filter-signature')
@@ -221,8 +221,6 @@ def render(journal, rows, *, every=None) -> None:
     if ids and st.session_state.get(selected) not in ids:
         st.session_state[selected] = ids[0]
     trade = next((t for t in journal.trades() if t.id == st.session_state.get(selected)), None) if ids else None
-    with options_slot:
-        options_menu(journal, rows)
     list_col, review_col = st.columns([1.75, 3.25], gap='medium')
     with list_col:
         theme.section('Trades', count)
@@ -245,7 +243,7 @@ def render(journal, rows, *, every=None) -> None:
 
 def top_row(journal, every, open_rows, rows=None):
     """The session tools, then Filters and Options: one row above the list. Returns the trades the filters
-    keep and the Options menu, which is filled in once the selected trade is known."""
+    keep."""
     # The timer takes the width it needs and the menus the rest; on a narrow window the menus move below it
     # together rather than one by one.
     bar = st.container(horizontal=True, vertical_alignment='top', gap='small', key='session-bar')
@@ -254,12 +252,13 @@ def top_row(journal, every, open_rows, rows=None):
     with bar.container(horizontal=True, horizontal_alignment='right', vertical_alignment='center', gap='small'):
         session.menus(journal, every)
         if rows is None:
-            return [], None
+            return []
         with st.popover('Filters', help='Narrow the list by market, date, account, tag, playbook or rating. The '
                                         'saved filter here applies to every page.'):
             shown = preferences.filter_menu(journal, rows)
-        options = st.popover('Options', help='Chart settings, and merging or splitting trades.')
-    return shown, options
+        with st.popover('Options', help='Chart settings, and merging or splitting trades.'):
+            options_menu(journal, rows)
+    return shown
 
 
 def report_card(journal, rows) -> None:
@@ -419,9 +418,9 @@ def detail(journal, trade, ids, zone) -> None:
 
 
 def numbers(journal, trade, annotation: dict, zone) -> None:
-    """The trade's result, MAE, MFE and size, and where their prices came from when they were not the ticks the
-    study recorded while you traded (PRICES_FROM). An open trade's result is what it would be if closed at the
-    newest price its MAE and MFE were measured with."""
+    """The trade's result, MAE, MFE and peak contracts, and where their prices came from when they were not the
+    ticks the study recorded while you traded (PRICES_FROM). An open trade's result is what it would be if closed
+    at the newest price its MAE and MFE were measured with."""
     unit = common.excursion_unit(journal)
     metric = common.best_display_metric(journal, trade)
     prices_from = PRICES_FROM.get(metric.get('provenance')) if common.measured(metric) else None
@@ -666,7 +665,7 @@ def chart_panel(journal, trade, annotation: dict, zone) -> None:
                 '1-minute bars or ticks in Import.')
         return
     source = default_source(sources)
-    context =st.session_state.get(common.key(journal, 'chart-context'), CONTEXT[0])
+    context = st.session_state.get(common.key(journal, 'chart-context'), CONTEXT[0])
     levels = st.session_state.get(common.key(journal, 'chart-levels'), True)
     clock = journal.trade_clock(trade)
     start, end = chart_window(trade, context, now=clock)
@@ -705,8 +704,8 @@ def chart_panel(journal, trade, annotation: dict, zone) -> None:
                         'Scroll to zoom, drag to pan, double-click to reset. Review '
                         'only: nothing here can place an order.')
     else:
-        st.info('This source has no usable 1-minute candles in the trade window. Full OHLC or observed ticks are '
-                'needed; high/low-only and 5-minute history cannot be turned into real 1-minute candles.')
+        st.info('No usable 1-minute candles in the trade window. Full OHLC or recorded ticks are needed; '
+                'high/low-only and 5-minute history cannot be turned into real 1-minute candles.')
     if trade.closed and instant(trade.closed) > end:
         st.warning('The chart is capped at 10,000 minutes from entry. This position was held beyond that window.')
     if journal.capture_gaps(source, start=start.isoformat(), end=end.isoformat(), symbol=trade.symbol):

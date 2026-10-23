@@ -410,7 +410,7 @@ def test_gap_in_one_tick_stream_or_one_instrument_does_not_mark_another(tmp_path
     # The live recording's gap leaves its measurement unshown; the backfill, whose gap was another contract's, shows.
     from common import metric_options
     assert [m['source'] for m in metric_options(journal, trade)] == ['motivewave-ticks:history']
-    window ={'start': trade.opened, 'end': trade.closed}
+    window = {'start': trade.opened, 'end': trade.closed}
     assert journal.capture_gaps('motivewave-ticks:history', **window)                       # every instrument
     assert not journal.capture_gaps('motivewave-ticks:history', symbol='ESZ6', **window)
     assert journal.capture_gaps('motivewave-ticks:history', symbol='nqz6', **window)[0]['dropped'] == 9
