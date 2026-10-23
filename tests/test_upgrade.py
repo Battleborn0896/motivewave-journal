@@ -636,8 +636,7 @@ def as_0_4_16_connections(journal):
         db.execute("DELETE FROM journal_meta WHERE key='one_connection'")
 
 
-def test_the_migration_removes_a_watched_csv_and_keeps_the_default_connection_pointed_at_the_studys_file(
-        tmp_path, monkeypatch):
+def test_the_migration_removes_a_watched_csv_and_keeps_the_default_connection(tmp_path, monkeypatch):
     home = tmp_path / 'home'
     monkeypatch.setenv('MWJ_HOME', str(home))
     journal = Journal()
@@ -647,31 +646,31 @@ def test_the_migration_removes_a_watched_csv_and_keeps_the_default_connection_po
     apply_preview(journal, preview_csv(csv.read_text()))                   # what the watched CSV brought in
     journal.put('profiles', 'Broker export', {'path': str(csv), 'mode': 'executions', 'enabled': True,
                                               'timezone': 'America/New_York', 'provider': 'csv', 'mapping': None})
-    journal.put('profiles', 'MotiveWave', {'path': str(tmp_path / 'elsewhere.ndjson'), 'mode': 'bridge',
-                                           'enabled': True})
+    study = {'path': str(paths.bridge_file()), 'mode': 'bridge', 'enabled': True}
+    journal.put('profiles', 'MotiveWave', study)
     for name in ('Broker export', 'MotiveWave', 'worker'):
         journal.put('sync_status', name, {'status': 'synced', 'checked': '2026-10-09T09:00:00+00:00'})
     for name in ('Broker export', 'MotiveWave'):
         journal.set_bridge_offset(name, '1', 2, b'}\n')
     as_0_4_16_connections(journal)
     opened = Journal()
-    assert opened.get('profiles') == {'MotiveWave': {'path': str(paths.bridge_file()), 'mode': 'bridge',
-                                                     'enabled': True}}
-    # What the other file said, and how far it was read, no longer applies; the reader's own status stays.
-    assert list(opened.get('sync_status')) == ['worker']
-    assert opened.bridge_offset('Broker export') is None and opened.bridge_offset('MotiveWave') is None
+    assert opened.get('profiles') == {'MotiveWave': study}
+    # What the other file said, and how far it was read, no longer apply; the study's connection and the reader's own
+    # status stay as they were.
+    assert sorted(opened.get('sync_status')) == ['MotiveWave', 'worker']
+    assert opened.bridge_offset('Broker export') is None and opened.bridge_offset('MotiveWave') == ('1', 2, b'}\n')
     assert len(opened.trades()) == 1 and opened.trades()[0].provider == 'csv'      # the trades it read stay
     note = opened.upgrade_note()['connections']
     assert note['note'] == ("The journal now reads only the study's own file; 1 other watched file (Broker export) "
                             'was removed, and the trades read from it stay.')
     assert opened.unseen_notes() == {'connections': note['note']}
     assert not backups(home)                                                    # nothing rewritten: no backup
-    # Twice: nothing left to remove or move, and the note stays as it was.
+    # Twice: nothing left to remove, and the note stays as it was.
     as_0_4_16_connections(opened)
     again = Journal()
     assert again.get('profiles') == opened.get('profiles') and again.upgrade_note()['connections'] == note
     assert meta(again.path, 'one_connection') == '0'
-    # A journal already reading the study's file has nothing to say.
+    # A journal reading nothing but the study's file has nothing to say.
     replay = Journal(dataset='replay')
     replay.put('profiles', 'MotiveWave', {'path': str(paths.bridge_file('replay')), 'mode': 'bridge', 'enabled': True})
     as_0_4_16_connections(replay)

@@ -56,18 +56,18 @@ def ensure_default_connection(journal: Journal) -> bool:
     """Watch the study's bridge file with no setup, and keep reading it: reading trades is always on. True when the
     connection was just created.
 
-    The connection is the 'MotiveWave' one. It is kept where it points (opening a journal points it at the study's
-    file once, store._one_connection) and only switched back on when it was off (earlier versions had a switch for
-    that). Run at every start, so a second run changes nothing.
+    The connection is the 'MotiveWave' one, switched on and pointed at the file the study writes on this computer
+    (paths.bridge_file). A journal that points elsewhere (an earlier version's own choice of file, or a backup
+    restored from another computer or data folder) is pointed back at it, and what the other file said is cleared.
+    Run at every start, so a second run changes nothing.
     """
     profile = journal.get('profiles').get(DEFAULT_CONNECTION)
-    if profile is None:
-        journal.put('profiles', DEFAULT_CONNECTION,
-                    {'path': str(paths.bridge_file(journal.dataset)), 'mode': 'bridge', 'enabled': True})
-        return True
-    if not profile.get('enabled'):
-        journal.put('profiles', DEFAULT_CONNECTION, {**profile, 'enabled': True})
-    return False
+    study = {'path': str(paths.bridge_file(journal.dataset)), 'mode': 'bridge', 'enabled': True}
+    if profile != study:
+        journal.put('profiles', DEFAULT_CONNECTION, study)
+        if profile is not None and profile.get('path') != study['path']:
+            journal.clear_status(DEFAULT_CONNECTION)
+    return profile is None
 
 
 class SyncWorker:

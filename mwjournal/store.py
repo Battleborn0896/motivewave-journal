@@ -422,32 +422,22 @@ def _prints_away_from_trades(db) -> int:
     return removed
 
 
-def _one_connection(db, dataset: str) -> None:
+def _one_connection(db) -> None:
     """Once per journal, inside the caller's transaction. In 0.4.16 and earlier a journal could also watch CSV files
-    and other bridge files. Now it reads one file, the study's: every other connection goes, with its last status
-    and read position, and the study's connection points at the file study 0.3.10 always writes (paths.bridge_file)
-    if it was pointed elsewhere. Fills and prices already read stay. Nothing stored is rewritten, so this needs no
-    backup; the upgrade note says what changed under 'connections'."""
+    and other bridge files. Now it reads one file, the study's (sync.ensure_default_connection, which also points it
+    at the file study 0.3.10 always writes): every other connection goes, with its last status and read position.
+    Fills and prices already read stay. Nothing stored is rewritten, so this needs no backup; the upgrade note says
+    what was removed under 'connections'."""
     removed = [name for (name,) in db.execute('SELECT name FROM profiles WHERE name<>?', (DEFAULT_CONNECTION,))]
     for table in ('profiles', 'sync_status', 'bridge_offsets'):
         db.executemany(f'DELETE FROM {table} WHERE name=?', [(name,) for name in removed])
-    row = db.execute('SELECT payload FROM profiles WHERE name=?', (DEFAULT_CONNECTION,)).fetchone()
-    target = str(paths.bridge_file(dataset))
-    profile = json.loads(row[0]) if row else None
-    moved = profile is not None and (os.path.normcase(os.path.normpath(str(profile.get('path') or '')))
-                                     != os.path.normcase(os.path.normpath(target)))
-    if moved:
-        db.execute('UPDATE profiles SET payload=? WHERE name=?',
-                   (encode({**profile, 'path': target, 'mode': 'bridge'}), DEFAULT_CONNECTION))
-        for table in ('sync_status', 'bridge_offsets'):     # what the other file said no longer applies
-            db.execute(f'DELETE FROM {table} WHERE name=?', (DEFAULT_CONNECTION,))
     db.execute("INSERT OR REPLACE INTO journal_meta VALUES('one_connection',?)", (str(len(removed)),))
-    if removed or moved:
+    if removed:
         one = len(removed) == 1
-        gone = (f'; {len(removed)} other watched file{"" if one else "s"} ({", ".join(removed)}) '
-                f'{"was" if one else "were"} removed, and the trades read from {"it" if one else "them"} stay')
-        note = "The journal now reads only the study's own file" + (gone if removed else '') + '.'
-        _add_note(db, 'connections', {'removed': removed, 'moved': moved, 'note': note})
+        note = (f"The journal now reads only the study's own file; {len(removed)} other watched "
+                f'file{"" if one else "s"} ({", ".join(removed)}) {"was" if one else "were"} removed, and the trades '
+                f'read from {"it" if one else "them"} stay.')
+        _add_note(db, 'connections', {'removed': removed, 'note': note})
 
 
 def _add_note(db, name: str, data: dict):
@@ -518,7 +508,7 @@ class Journal(Workspace):
                 _stops_from_risks(db)
             _answers_to_tags(db)
             if not db.execute("SELECT 1 FROM journal_meta WHERE key='one_connection'").fetchone():
-                _one_connection(db, dataset)
+                _one_connection(db)
             trim = not db.execute("SELECT 1 FROM journal_meta WHERE key='prices_trimmed'").fetchone()
         if trim:
             self._trim_prices()

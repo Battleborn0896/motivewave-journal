@@ -136,6 +136,22 @@ def test_a_file_that_is_not_a_sound_backup_of_this_version_is_refused_and_change
     assert held('live') == before and not (home / 'backups').exists()
 
 
+def test_a_backup_from_another_data_folder_reads_this_ones_study_file(home, monkeypatch):
+    """There is no path to type: a journal restored from another computer reads the file the study writes here."""
+    from mwjournal.sync import ensure_default_connection
+    monkeypatch.setenv('MWJ_HOME', str(home / 'other computer'))
+    for dataset in paths.DATASETS:
+        ensure_default_connection(Journal(dataset=dataset))
+    saved = backup.write(home / 'other computer')
+    monkeypatch.setenv('MWJ_HOME', str(home / 'this computer'))
+    backup.restore(saved)
+    for dataset in paths.DATASETS:                     # what the app does once the backup is back (runtime.start)
+        journal = Journal(dataset=dataset)
+        ensure_default_connection(journal)
+        assert journal.get('profiles')['MotiveWave']['path'] == str(paths.bridge_file(dataset))
+        assert str(home / 'this computer') in str(paths.bridge_file(dataset))
+
+
 def test_named_journals_archived_ones_too_are_backed_up_and_put_back(home):
     capture = seed_preview(home)
     kept = journals.create(capture, 'Practice', [('motivewave', 'paper')])
