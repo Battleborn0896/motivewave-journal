@@ -113,8 +113,8 @@ def preview_csv(text: str, *, timezone='America/New_York', mapping=None,
             fill = Execution(provider, value('account', account), value('symbol'), value('side'),
                              finite(value('qty'), 'Contracts'), finite(value('price'), 'Price'),
                              timestamp(stamp, timezone), value('execution_id'), value('order_id'),
-                             finite(value('commission', 0), 'Commission'),
-                             finite(pv, 'Point value', True) if pv is not None and pv != '' else None,
+                             finite(value('commission', 0), LABELS['commission']),
+                             finite(pv, LABELS['point_value'], True) if pv is not None and pv != '' else None,
                              value('currency', 'USD'), commission_known=value('commission') != '')
             result.fills.append((fill, raw))
         except (ValueError, TypeError) as exc:

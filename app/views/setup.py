@@ -168,7 +168,8 @@ def upgrade_notes(journals) -> None:
     """What opening an older journal did once (Journal.upgrade_note), said once: one quiet line of the sentences not
     seen yet, and OK, which marks them seen. Nothing when there is nothing new to say."""
     unseen = [(journal, journal.unseen_notes()) for journal in journals]
-    said = [note for _, notes in unseen for note in notes.values()]
+    # A named journal and the one it is drawn from can have taken the same step: its sentence is said once.
+    said = list(dict.fromkeys(note for _, notes in unseen for note in notes.values()))
     if not said:
         return
     with st.container(horizontal=True, vertical_alignment='center', gap='small', key='setup-upgrade-notes'):

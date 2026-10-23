@@ -729,6 +729,20 @@ def test_what_an_upgrade_did_is_said_once_at_the_top_of_settings_until_ok():
     assert not app.exception and not any(b.key == 'setup-upgrade-notes-ok' for b in app.button)
 
 
+def test_a_step_a_named_journal_and_its_captures_both_took_is_said_once():
+    from mwjournal import journals
+    capture = Journal()
+    named = journals.open_named(capture, journals.create(capture, 'Practice', [('motivewave', 'paper')]))
+    days = 'Days now follow your Time Zone (America/New_York); day reviews moved to their dates.'
+    for journal in (capture, named):
+        journal._note('days', {'note': days})
+    app = open_app('Settings')
+    widget(app.sidebar.selectbox, 'Local journal').set_value(named.path.parent.name).run()
+    assert not app.exception and app.main.caption[0].value == days
+    app.button(key='setup-upgrade-notes-ok').click().run()
+    assert not app.exception and capture.unseen_notes() == named.unseen_notes() == {}
+
+
 def test_about_is_one_line_with_both_versions_and_the_data_folder_then_the_fine_print():
     app = open_app('Settings')
     captions = [c.value for c in app.main.caption]

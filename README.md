@@ -400,7 +400,7 @@ you held at that moment, from their average entry. Profit banked by a partial ex
 - Points: directional price move from the **currently held average entry**, regardless of size.
   Scale-ins update that average; partial-exit realised profit is not added to price movement.
 - Ticks: those points divided by the contract's confirmed minimum price increment. Outright
-  ES/MES/NQ/MNQ are detected automatically; other symbols need a one-time size, set on a trade of that
+  ES/MES/NQ/MNQ are detected automatically; other symbols need their tick size set once, on a trade of that
   contract. Unknown sizes stay unavailable, not guessed. Average entries can produce fractional ticks.
 - R: the currency excursion divided by the **risk to the trade's stop**. No stop means
   unavailable, not zero.
