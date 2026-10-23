@@ -1,4 +1,4 @@
-"""Tags, Playbooks & Checklists, a Setup page: click-first, non-destructive tag and playbook management, and the
+"""Tags, Playbooks & Checklists, a Settings page: click-first, non-destructive tag and playbook management, and the
 checklist editor. Running a checklist happens on Trades, in the selected trade's Checklist tab."""
 import streamlit as st
 

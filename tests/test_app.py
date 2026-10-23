@@ -17,6 +17,7 @@ import pytest
 from streamlit.testing.v1 import AppTest
 
 import common
+import theme
 import runtime
 from views import setup
 from mwjournal import Execution, Journal, PriceSample, backup, paths
@@ -60,15 +61,15 @@ def open_review(app):
 
 
 def show(app, view):
-    """Open a view the way a person does: its page in the sidebar, then, for a page under Setup, its tile or
-    the tile's link to one of its tabs on Setup's first page; for the dashboards, the Dashboards tab of Stats;
+    """Open a view the way a person does: its page in the sidebar, then, for a page under Settings, its tile or
+    the tile's link to one of its tabs on the first page of Settings; for the dashboards, the Dashboards tab of Stats;
     for the Daily Report Card, a day's header in the trade list. Two clicks at most."""
     route = common.navigation(view)
     app.segmented_control(key=common.VIEW_KEY).set_value(route[common.VIEW_KEY]).run()
     assert not app.exception
     if route[common.VIEW_KEY] == 'Settings':
         if app.session_state[common.TOOL_KEY] != setup.HOME:
-            app.button(key='setup-back').click().run()        # already on Setup, on another of its pages
+            app.button(key='setup-back').click().run()        # already on Settings, on another of its pages
         page, tab = route[common.TOOL_KEY], route[common.TAB_KEY]
         if page != setup.HOME:
             app.button(key=f'setup-tab-{page}-{tab}' if tab else 'setup-open-' + page).click().run()
@@ -108,7 +109,7 @@ def report_open(app):
 
 
 def setup_page(app):
-    """The Setup page on screen."""
+    """The Settings page on screen."""
     return app.session_state[common.TOOL_KEY]
 
 
@@ -154,8 +155,8 @@ def helped(elements, text):
 
 
 def display_setting(app, label, value, back='Trades'):
-    """Change one setting where it lives, on Setup's first page, then go back to the page that shows it."""
-    show(app, 'General')
+    """Change one setting where it lives, on the first page of Settings, then go back to the page that shows it."""
+    show(app, 'Settings')
     widget(app.selectbox, label).set_value(value).run()
     assert not app.exception
     return show(app, back)
@@ -193,14 +194,14 @@ def status_of(dataset='live'):
 
 def landmarks(app, view, empty):
     """Something only this view draws, so 'no exception' cannot hide a view that drew nothing."""
-    if view == 'Trades':
-        return said(app.info, 'No trades yet') if empty else bool(listed(app))
+    if view == 'Trades':                   # Replay's empty list says 'No replay trades yet'
+        return (said(app.info, 'No trades yet') or said(app.info, common.NO_REPLAY_TRADES)) if empty else bool(listed(app))
     if view == 'Edge':
         return said(app.info, 'Statistics need') if empty else any(m.label == 'Win Rate' for m in app.metric)
     if view == 'Import':
         return any(s.label == 'Import format' for s in app.selectbox) and len(app.file_uploader) == 2
     if view == 'Connection':
-        return (any(t.label == 'Read Trades From MotiveWave' for t in app.toggle) and len(states(app.main)) == 1
+        return (any(t.label.startswith('Live bridge file') for t in app.text_input) and len(states(app.main)) == 1
                 and any(c.value == str(paths.bridge_file(Journal().dataset)) for c in app.main.code))
     if view == 'Daily review':
         return report_open(app)
@@ -240,8 +241,8 @@ def test_the_sidebar_holds_only_the_switch_the_pages_and_the_badge_on_every_view
     assert states(app.sidebar) and [b.key for b in app.sidebar.button] == ['connection-badge-open']
 
 
-def test_chart_library_notice_data_folder_and_independence_are_on_setup():
-    app = open_app('General')
+def test_chart_library_notice_data_folder_and_independence_are_on_settings():
+    app = open_app('Settings')
     notice = [c.value for c in app.main.caption if CREDIT in c.value]
     assert len(notice) == 1 and '(https://www.tradingview.com/)' in notice[0]
     assert said(app.main.caption, 'not affiliated with or endorsed by MotiveWave')
@@ -254,7 +255,7 @@ def test_replay_environment_views_render_separately(view):
     apply_preview(replay, preview_bridge(lines([fill('a'), tick(5001),
                            fill('b', 'sell', 5002, ts='2022-01-03T14:32:00Z')]), dataset='replay'))
     app = open_app(view, 'Replay')
-    assert said(app.info, 'Replay journal')
+    assert not said(app.info, 'Replay journal')                     # no banner: the sidebar says which journal
     assert app.segmented_control(key=common.VIEW_KEY).value == common.navigation(view)[common.VIEW_KEY]
     if view == 'Trades':
         assert listed(app, 'replay') == [replay.trades()[0].id] and chosen(app, 'replay') == replay.trades()[0].id
@@ -262,7 +263,7 @@ def test_replay_environment_views_render_separately(view):
         assert any(c.value == str(paths.bridge_file('replay')) for c in app.main.code)
     assert not Journal().executions()
     app.radio(key='journal-environment').set_value('Live').run()
-    assert not app.exception and not said(app.info, 'Replay journal')
+    assert not app.exception
     assert not listed(app, 'replay') and not listed(app, 'live')
 
 
@@ -306,10 +307,10 @@ def test_view_switcher_always_shows_a_view_and_empty_journal_shortcuts_open_thei
     app.run()
     assert not app.exception and landmarks(app, 'Import', True)
     show(app, 'Trades')
-    press(app, 'Open Setup')                        # the one step that is missing, not the diagnostics
+    press(app, 'Open Settings')                     # the one step that is missing, not the diagnostics
     assert app.segmented_control(key=common.VIEW_KEY).value == 'Settings'
-    assert setup_page(app) == setup.HOME and said(app.markdown, '**Install the Study**')
-    assert not said(app.markdown, 'Add It to Your Chart')
+    assert setup_page(app) == setup.HOME and said(app.markdown, 'then add the study to your chart')
+    assert not said(app.markdown, 'Add **Journal → MotiveWave Journal**')
 
 
 def test_a_journal_from_a_newer_version_is_refused_with_a_message_not_a_crash(home):
@@ -748,14 +749,14 @@ def test_the_backup_holds_both_environments_and_the_csv_this_one(home):
 
 def test_nothing_is_typed_the_app_watches_the_default_bridge_and_waits_for_the_study():
     app = open_app('Connection')
-    assert states(app.main) == ['Waiting For Study'] and states(app.sidebar) == ['Waiting For Study']
+    assert states(app.main) == ['Not recording'] and states(app.sidebar) == ['Not recording']
     for dataset in paths.DATASETS:
         assert Journal(dataset=dataset).get('profiles') == {DEFAULT_CONNECTION: {
             'path': str(paths.bridge_file(dataset)), 'mode': 'bridge', 'enabled': True}}
     assert not paths.bridge_file().exists()
     assert any(c.value == str(paths.bridge_file('live')) for c in app.main.code)
-    show(app, 'Setup')                              # the step that is missing is on Setup's first page
-    assert states(app.main) == ['Waiting For Study'] and said(app.main.markdown, '**Install the Study**')
+    show(app, 'Settings')                           # the step that is missing is on the first page of Settings
+    assert states(app.main) == ['Not recording'] and said(app.main.markdown, 'then add the study to your chart')
     assert any(b.label == 'Install MotiveWave Study' for b in app.button)
     assert not any(str(paths.bridge_file('live')) in m.value for m in [*app.main.markdown, *app.main.code])
 
@@ -765,27 +766,27 @@ def shape(app):
             for block in (app.sidebar, app.main)]
 
 
-def test_connection_turns_connected_once_the_study_writes_a_fresh_heartbeat():
+def test_connection_turns_to_recording_once_the_study_writes_a_fresh_heartbeat():
     app = open_app('Connection')
-    assert states(app.main) == ['Waiting For Study']
+    assert states(app.main) == ['Not recording']
     waiting = shape(app)
     study_writes([heartbeat()])
     wait_until(lambda: status_of().get('heartbeat'))
     app.run()
     assert not app.exception
-    assert states(app.main) == ['Connected'] and states(app.sidebar) == ['Connected']
-    assert said(app.main.markdown, f'Connected · study {paths.STUDY_VERSION}')
-    assert not said(app.sidebar.markdown, 'study ' + paths.STUDY_VERSION)   # too wide for the sidebar badge; Setup shows it
+    assert states(app.main) == ['Recording'] and states(app.sidebar) == ['Recording']
+    assert said(app.main.markdown, f'Recording · study {paths.STUDY_VERSION}')
+    assert not said(app.sidebar.markdown, 'study ' + paths.STUDY_VERSION)   # too wide for the sidebar badge; Settings shows it
     assert said(app.main.markdown, 'The study says: Read-only capture · workspace paper')
     assert not said(app.sidebar.markdown, 'has not appeared yet')
     connected = shape(app)
-    show(app, 'Setup')                              # one green line and no step
-    assert states(app.main) == ['Connected'] and said(app.main.markdown, f'Connected · study {paths.STUDY_VERSION}')
+    show(app, 'Settings')                           # one green line and no step
+    assert states(app.main) == ['Recording'] and said(app.main.markdown, f'Recording · study {paths.STUDY_VERSION}')
     assert not any(b.label == 'Install MotiveWave Study' for b in app.button)
-    assert not any(f'**{title}**' in m.value for m in app.main.markdown for title, _, _ in setup.STEPS.values())
+    assert not any(helped(app.main.markdown, explained) for _, explained in setup.STEPS.values())
     show(app, 'Connection')
     assert shape(app) == connected
-    # What the study could not link or read is said there too, beside Connected, and so are the events of a
+    # What the study could not link or read is said there too, beside Recording, and so are the events of a
     # kind this app does not read, which are skipped and counted.
     warned = {**heartbeat(), 'warnings': '1 working stop order not linked to a position: no position on that '
                                          'account and contract (orders: 3 read, 1 stop, 0 new, 0 without instrument, '
@@ -793,7 +794,7 @@ def test_connection_turns_connected_once_the_study_writes_a_fresh_heartbeat():
     study_writes([{'version': 1, 'type': 'position', 'mode': 'live', 'provider': 'motivewave-native:paper:live'}, warned])
     wait_until(lambda: status_of().get('heartbeat', {}).get('warnings'))
     app.run()
-    assert states(app.main) == ['Connected'] and shape(app) == connected
+    assert states(app.main) == ['Recording'] and shape(app) == connected
     assert said(app.main.markdown, 'The study also says: 1 working stop order not linked to a position: no position '
                                    'on that account and contract (orders: 3 read')
     assert said(app.main.markdown, 'Events of a kind this version does not read, skipped: 1.')
@@ -806,10 +807,10 @@ def test_connection_turns_connected_once_the_study_writes_a_fresh_heartbeat():
     study_writes([heartbeat(), heartbeat('error', detail='Unsupported MotiveWave version')])
     wait_until(lambda: status_of().get('error'))
     app.run()
-    assert states(app.main) == ['Needs Attention'] and said(app.main.markdown, '1 damaged lines')
+    assert states(app.main) == ['Needs attention'] and said(app.main.markdown, '1 damaged lines')
     assert shape(app) == waiting
-    show(app, 'Setup')                              # one line saying what to do, without the raw error
-    assert states(app.main) == ['Needs Attention'] and said(app.main.markdown, 'Open Data → Connection')
+    show(app, 'Settings')                           # one line saying what to do, without the raw error
+    assert states(app.main) == ['Needs attention'] and said(app.main.markdown, 'Open Data → Connection')
     assert not said(app.main.markdown, 'Unsupported MotiveWave version')
 
 
@@ -834,7 +835,7 @@ def test_trades_the_study_writes_show_up_without_any_setup():
     assert widget(app.metric, 'Maximum adverse excursion').value == '$50.00'      # a magnitude: no sign
     assert len(Journal().executions()) == 2 and len(Journal(dataset='replay').executions()) == 1
     app.radio(key='journal-environment').set_value('Replay').run()
-    assert not app.exception and states(app.sidebar) == ['Connected']
+    assert not app.exception and states(app.sidebar) == ['Recording']
     open_review(app)
     # An open position: bought at 5000 with a $2 fee, and the replay's last print is 5001, one ES point up.
     result = widget(app.metric, 'Open P&L')
@@ -903,13 +904,14 @@ def test_return_from_detail_preserves_market_filters_and_tag_removal_does_not_ju
     assert said(app.info, 'No trades match these filters')
 
 
-def test_connection_says_stale_when_the_study_has_gone_quiet():
+def test_connection_says_not_recording_when_the_study_has_gone_quiet():
     study_writes([heartbeat(age=600)])
     app = open_app('Connection')
     wait_until(lambda: status_of().get('heartbeat'))
     app.run()
-    assert states(app.main) == ['Stale'] and states(app.sidebar) == ['Stale']
+    assert states(app.main) == ['Not recording'] and states(app.sidebar) == ['Not recording']
     assert said(app.main.markdown, 'last heard from 10 min ago')
+    assert f'color:{theme.MUTED}' in next(m.value for m in app.sidebar.markdown if 'data-state=' in m.value)  # grey
 
 
 def test_connection_needs_attention_shows_the_error_the_study_reported():
@@ -917,24 +919,25 @@ def test_connection_needs_attention_shows_the_error_the_study_reported():
     app = open_app('Connection')
     wait_until(lambda: status_of().get('error'))
     app.run()
-    assert states(app.main) == ['Needs Attention'] and states(app.sidebar) == ['Needs Attention']
+    assert states(app.main) == ['Needs attention'] and states(app.sidebar) == ['Needs attention']
     assert said(app.main.markdown, 'Unsupported MotiveWave version')
     assert not said(app.sidebar.markdown, 'Unsupported MotiveWave version')    # the badge is one word
 
 
-def test_capture_can_be_paused_and_resumed_from_the_connection_view():
-    app = open_app('Connection')
-    widget(app.toggle, 'Read Trades From MotiveWave').set_value(False).run()
-    assert not app.exception and states(app.main) == ['Paused']
-    assert Journal().get('profiles')[DEFAULT_CONNECTION]['enabled'] is False
-    assert Journal(dataset='replay').get('profiles')[DEFAULT_CONNECTION]['enabled'] is True
+def test_reading_trades_is_always_on_and_a_connection_switched_off_before_is_switched_back_on():
+    """Earlier versions had a switch that stopped the app reading the study's file. It is gone: at the next start
+    the connection is read again, from where reading stopped."""
+    for dataset in paths.DATASETS:
+        Journal(dataset=dataset).put('profiles', DEFAULT_CONNECTION, {'path': str(paths.bridge_file(dataset)),
+                                                                     'mode': 'bridge', 'enabled': False})
     study_writes([heartbeat()])
-    time.sleep(1.5)                                  # a reader that ignored the switch would have imported by now
-    assert not status_of().get('heartbeat')
-    widget(app.toggle, 'Read Trades From MotiveWave').set_value(True).run()
+    app = open_app('Connection')
+    assert not any('Read Trades' in t.label for t in app.toggle) and not said(app.main.markdown, '>Advanced<')
+    for dataset in paths.DATASETS:
+        assert Journal(dataset=dataset).get('profiles')[DEFAULT_CONNECTION]['enabled'] is True
     wait_until(lambda: status_of().get('heartbeat'))
     app.run()
-    assert states(app.main) == ['Connected']
+    assert not app.exception and states(app.main) == ['Recording']
 
 
 def test_advanced_watches_a_different_bridge_file_in_both_environments(home):
@@ -951,18 +954,18 @@ def test_advanced_watches_a_different_bridge_file_in_both_environments(home):
     press(app, 'Watch This File')
     assert Journal().get('profiles')[DEFAULT_CONNECTION] == {'path': str(other), 'mode': 'bridge', 'enabled': True}
     assert Journal(dataset='replay').get('profiles')[DEFAULT_CONNECTION]['path'] == str(other.with_name('mw.replay.ndjson'))
-    assert any(c.value == str(other) for c in app.main.code) and states(app.main) == ['Waiting For Study']
+    assert any(c.value == str(other) for c in app.main.code) and states(app.main) == ['Not recording']
     other.parent.mkdir()
     other.write_text(lines([heartbeat()]))
     wait_until(lambda: status_of().get('heartbeat'))
     app.run()
-    assert states(app.main) == ['Connected']
+    assert states(app.main) == ['Recording']
     paths.bridge_file().parent.mkdir()
     paths.bridge_file().write_text('')                             # the default file exists but the study is not writing it
     press(app, 'Use the Default File')
     assert Journal().get('profiles')[DEFAULT_CONNECTION]['path'] == str(paths.bridge_file())
     assert Journal(dataset='replay').get('profiles')[DEFAULT_CONNECTION]['path'] == str(paths.bridge_file('replay'))
-    assert states(app.main) == ['Waiting For Study']               # the other file's heartbeat no longer counts
+    assert states(app.main) == ['Not recording']                   # the other file's heartbeat no longer counts
 
 
 def test_another_watched_csv_can_be_added_paused_and_removed(home):
@@ -983,7 +986,7 @@ def test_another_watched_csv_can_be_added_paused_and_removed(home):
     wait_until(lambda: len(Journal().executions()) == 2)
     app.run()
     assert not app.exception and said(app.main.markdown, 'Broker export')
-    assert states(app.main) == ['Waiting For Study']               # the study's own state is not the CSV's
+    assert states(app.main) == ['Not recording']                   # the study's own state is not the CSV's
     press(app, 'Remove')
     assert list(Journal().get('profiles')) == [DEFAULT_CONNECTION]
     assert 'Broker export' not in Journal().get('sync_status')
@@ -1019,7 +1022,7 @@ def test_excursion_unit_picker_updates_detail_list_plot_and_persists_without_rew
     trade = journal.trades()[0]
     before = journal.best_metric(trade)
     reviews = journal.annotations()
-    app = open_app('General')
+    app = open_app('Settings')
     assert widget(app.selectbox, 'MAE / MFE Units').options == [
         'Dollars / account currency', 'Points', 'Ticks', 'R · risk to your stop']
     display_setting(app, 'MAE / MFE Units', 'points')
@@ -1041,7 +1044,7 @@ def test_excursion_unit_picker_updates_detail_list_plot_and_persists_without_rew
     assert journal.best_metric(trade) == before
     assert journal.annotations() == reviews
     display_setting(app, 'MAE / MFE Units', 'points')
-    fresh = open_app('General')
+    fresh = open_app('Settings')
     assert widget(fresh.selectbox, 'MAE / MFE Units').value == 'points'
     fresh.radio(key='journal-environment').set_value('Replay').run()
     assert widget(fresh.selectbox, 'MAE / MFE Units').value == 'currency'
@@ -1168,23 +1171,34 @@ def test_link_state_reads_the_stored_status_and_the_heartbeat_age(tmp_path):
     there.write_text('')
     on, missing = {'path': str(there), 'enabled': True}, {'path': str(tmp_path / 'none.ndjson'), 'enabled': True}
     state = lambda profile, status, **more: common.link_state(profile, status, now=NOW, **more)
-    assert state(None, {}).state == 'Needs Attention'
-    assert state({**on, 'enabled': False}, {'status': 'synced', 'heartbeat': beat(1)}).state == 'Paused'
-    assert state(missing, {}).state == 'Waiting For Study'
-    assert state(on, {'status': 'waiting for study'}).state == 'Waiting For Study'
-    assert state(on, {}).state == 'Waiting For Study' and 'no events' in state(on, {}).detail
-    assert state(on, {'status': 'synced'}).state == 'No Heartbeat'
-    assert state(on, {'status': 'synced', 'heartbeat': {'ts': 'not a time'}}).state == 'No Heartbeat'
-    fresh = state(on, {'status': 'synced', 'heartbeat': beat(12, connector_version='0.1.0')})
-    assert (fresh.state, fresh.tone, fresh.label) == ('Connected', 'good', 'Connected · study 0.1.0')
-    assert state(on, {'status': 'synced', 'heartbeat': beat(12)}).label == 'Connected'      # an older study: no version
-    assert state(on, {'status': 'synced', 'heartbeat': beat(common.STALE_AFTER)}).state == 'Connected'
-    assert state(on, {'status': 'synced', 'heartbeat': beat(-5)}).state == 'Connected'      # clocks a little apart
-    stale = state(on, {'status': 'synced', 'heartbeat': beat(common.STALE_AFTER + 1, connector_version='0.1.0')})
-    assert stale.state == 'Stale' and stale.label == 'Stale' and '1 min ago' in stale.detail
+    words = lambda link: (link.state, link.tone)
+    recording, quiet, attention = ('Recording', 'good'), ('Not recording', 'neutral'), ('Needs attention', 'critical')
+    # Recording: a heartbeat within the last 60 s.
+    fresh = state(on, {'status': 'synced', 'heartbeat': beat(12, connector_version='0.3.10')})
+    assert words(fresh) == recording and fresh.label == 'Recording · study 0.3.10'
+    assert fresh.heard == NOW - dt.timedelta(seconds=12) and fresh.version == '0.3.10'
+    assert state(on, {'status': 'synced', 'heartbeat': beat(12)}).label == 'Recording'      # an older study: no version
+    assert words(state(on, {'status': 'synced', 'heartbeat': beat(common.STALE_AFTER)})) == recording
+    assert words(state(on, {'status': 'synced', 'heartbeat': beat(-5)})) == recording      # clocks a little apart
+    # Not recording, grey: a 61 s old heartbeat, no bridge file, or a file with no events yet.
+    old = state(on, {'status': 'synced', 'heartbeat': beat(61, connector_version='0.3.10')})
+    assert words(old) == quiet and old.label == 'Not recording' and '1 min ago' in old.detail
+    assert old.heard == NOW - dt.timedelta(seconds=61) and old.version == '0.3.10'      # heard from before
+    assert words(state(missing, {})) == quiet and words(state(on, {'status': 'waiting for study'})) == quiet
+    assert words(state(on, {})) == quiet and 'no events' in state(on, {}).detail
+    # Needs attention: no study connection, a reader error, the study's own error, events with no heartbeat at all.
+    assert words(state(None, {})) == attention
+    assert words(state(on, {'status': 'synced', 'heartbeat': beat(1)}, worker_error='OperationalError')) == attention
     failed = state(on, {'status': 'needs attention', 'error': 'Line 3: Unknown event type', 'heartbeat': beat(2)})
-    assert failed.state == 'Needs Attention' and failed.detail == 'Line 3: Unknown event type'
-    assert state(on, {'status': 'synced', 'heartbeat': beat(1)}, worker_error='OperationalError').state == 'Needs Attention'
+    assert words(failed) == attention and failed.detail == 'Line 3: Unknown event type'
+    assert words(state(on, {'status': 'synced'})) == attention
+    assert words(state(on, {'status': 'synced', 'heartbeat': {'ts': 'not a time'}})) == attention
+    # Reading is always on: a connection stored as switched off reads as any other.
+    assert words(state({**on, 'enabled': False}, {'status': 'synced', 'heartbeat': beat(1)})) == recording
+    every = [state(on, status) for status in ({}, {'status': 'synced'}, {'status': 'synced', 'heartbeat': beat(1)},
+                                               {'status': 'synced', 'heartbeat': beat(600)})]
+    assert {link.state for link in every} == {common.RECORDING, common.NOT_RECORDING, common.ATTENTION}
+    assert not any('Capture Fills' in link.detail or 'Advanced' in link.detail for link in every)
     assert [common.ago(s) for s in (0, 59, 60, 3599, 3600, 90000)] == ['0 s ago', '59 s ago', '1 min ago',
                                                                      '59 min ago', '1 h ago', '1 d ago']
 

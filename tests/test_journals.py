@@ -135,7 +135,7 @@ def test_account_alias_is_display_only_and_named_journal_switch_preserves_indepe
     id = journals.create(capture, 'My journal', [('motivewave', 'paper')])
     named = journals.open_named(capture, id)
     named.set_excursion_unit('points')
-    app = open_app('General')
+    app = open_app('Settings')
     widget(app.sidebar.selectbox, 'Local journal').set_value(id).run()      # in the sidebar once one exists
     assert not app.exception
     assert widget(app.selectbox, 'MAE / MFE Units').value == 'points'

@@ -208,7 +208,7 @@ def test_a_trade_without_mae_mfe_says_the_real_cause_in_the_header_and_under_mor
     assert expected in captions                                           # under the trade's numbers
     assert expected in infos                                              # and More → MAE / MFE, word for word
     said_ = everything(app)
-    for pointer in ('Setup →', 'Accuracy', 'accuracy policy', 'Allow labelled estimates', 'need recorded ticks'):
+    for pointer in ('Settings →', 'Accuracy', 'accuracy policy', 'Allow labelled estimates', 'need recorded ticks'):
         assert pointer not in said_                                       # a trade screen never points at a setting
 
 

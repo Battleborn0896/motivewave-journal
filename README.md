@@ -323,10 +323,12 @@ tags, categories and reviews are kept exactly as they are.
 
 ## Using the journal
 
-The sidebar has three pages: **Trades**, **Stats** and **Setup**. Trades holds the session tools (the bar
+The sidebar has three pages: **Trades**, **Stats** and **Settings**. Trades holds the session tools (the bar
 at the top), the Daily Report Card (click a day's header) and each trade's checklist; Stats holds the
-dashboards (its last tab); Setup holds tags and checklists, rating systems, and data (imports, backups,
-journals, the connection), each two clicks from the sidebar.
+dashboards (its last tab); Settings holds tags and checklists, rating systems, and data (imports, backups,
+journals, the connection), each two clicks from the sidebar. Under the pages, one word says whether the study
+is **Recording**, **Not recording** or **Needs attention** (see *Build and connect the study*); click it to
+open Settings.
 The trade list stays on the left while the selected trade's chart and tags stay on the right.
 Click a row, or use Prev / Next; no separate opening/back-navigation step is needed.
 **Chart & Tags** puts the chart and a grouped, clickable tagging panel side by side. Click a tag to
@@ -334,11 +336,11 @@ toggle it; changes save automatically. **+ Tag** creates a reusable tag and appl
 trade; **+ Category** creates a category. **More Tagging Tools → Copy Tags From Another Trade** adds
 another trade's tags without replacing existing tags or notes. Day tags you explicitly select are
 inherited by trades opened on that local calendar date; otherwise no trade is automatically tagged.
-Setup → Data → Connection also lets you pick a captured instrument instead of retyping its symbol.
+Settings → Data → Connection also lets you pick a recorded instrument instead of retyping its symbol.
 **Notes → Use saved setup** applies an existing setup/playbook name in one selection;
 new setup names can still be entered normally.
 
-**MAE / MFE Units** is on **Setup**: choose account currency, points, ticks or R. The
+**MAE / MFE Units** is on **Settings**: choose account currency, points, ticks or R. The
 preference is remembered independently for Live and Replay, and applies to the trade list, detail
 cards, excursion plots and runner views. Actual net P&L is unchanged.
 
@@ -356,7 +358,7 @@ you held at that moment, from their average entry. Profit banked by a partial ex
   Scale-ins update that average; partial-exit realised profit is not added to price movement.
 - Ticks: those points divided by the contract's confirmed minimum price increment. Outright
   ES/MES/NQ/MNQ are detected automatically; other symbols need a one-time size in MAE/MFE or
-  Setup → Data → Connection. Unknown sizes stay unavailable, not guessed. Average entries can produce fractional ticks.
+  Settings → Data → Connection. Unknown sizes stay unavailable, not guessed. Average entries can produce fractional ticks.
 - R: the currency excursion divided by the **risk to the trade's stop**. No stop means
   unavailable, not zero.
 
@@ -374,7 +376,7 @@ visible tabs and their order per environment (Dashboards always stays). Filters 
 tags, direction, process rating and playbook combinations. Required historical tag aliases still
 resolve after a rename; unknown required names match nothing, not everything.
 
-**Setup → Tags, Playbooks & Checklists** edits names, colors, group membership, order and availability on
+**Settings → Tags, Playbooks & Checklists** edits names, colors, group membership, order and availability on
 trades/days, and deletes a tag or category that nothing uses. Stable tag IDs and aliases preserve historical associations when renamed. Retirement
 hides a tag from new choices without deleting its history; unretire it to restore the choice.
 Exclusive groups allow one current choice; enabling exclusivity does not erase historical conflicts.
@@ -412,7 +414,7 @@ The charcoal workspace, yellow accents, outcome-tinted trade rows and coloured s
 follow the same visual direction as Tradecraft. Selection outlines and signed P&L remain alongside
 colour cues. This workflow is inspired by its [public daily-trades documentation](https://support.tradecraft.club/kb/daily-trades-section/)
 and official tutorials, not its proprietary implementation or brand assets. Study setup, imports
-and backups remain in Setup. See [reference notes and remaining gaps](docs/tradecraft-reference.md).
+and backups remain in Settings. See [reference notes and remaining gaps](docs/tradecraft-reference.md).
 
 **Markets** automatically groups recognised futures expiries: NQZ6/NQM7 → NQ, ESZ6/ESH7 → ES,
 and MNQZ6/MNQM7 → MNQ. Micros remain separate from full-size contracts. Use **Filters → More Filters →
@@ -431,15 +433,15 @@ tag scores, ratings, radar, trades and custom-statistics widgets are independent
 The default uses two independently stacked columns so the calendar doesn't push the equity curve
 below an unnecessarily tall row. Global saved filters, page filters and widget filters intersect;
 they never modify captured trades. Saved tag rules use stable identities. Calendar buttons open
-the exact day's Report Card on Trades. **Setup** sets the time zone, and hides weekends under Advanced.
+the exact day's Report Card on Trades. **Settings** sets the time zone, and hides weekends under Advanced.
 
 Tag scores are signed values configured on each tag. A trade's score is the sum of its selected
-tag scores; a widget can restrict the contributing tags. **Setup → Rating Systems** creates
+tag scores; a widget can restrict the contributing tags. **Settings → Rating Systems** creates
 weighted tag criteria, optionally applicable only when a playbook matches. Ratings are satisfied
 weight / applicable weight × 100, or unavailable when no criterion applies. Manual stars stay
 independent. These are process measures, not P&L, forecasts, or claims of Tradecraft's exact formula.
 
-**Setup → Tags, Playbooks & Checklists → Checklists** contains an offline drag-and-connect node canvas: questions, answers, pass-through
+**Settings → Tags, Playbooks & Checklists → Checklists** contains an offline drag-and-connect node canvas: questions, answers, pass-through
 and counter nodes; selection, duplication, color/text/tag edits, alignment, start-node choice,
 undo/redo, and explicit save. Questions may branch only to answers. Answer loops must reach a
 manual question; automatic endless loops are rejected. Definitions have JSON export/import and
@@ -490,11 +492,11 @@ needs permission to see the desktop.
 
 ### Post-exit runner analysis
 
-The study now defaults to **Always While Study Runs**: every trade print MotiveWave delivers to the
-chart is retained, so 5/15/30-minute post-exit windows do not depend on a separate
-recorder. The lower-storage **Trade + After Exit Only** option keeps a bounded pre-roll, the holding
-window and **After Exit (Minutes)** (30 by default, 0–120 configurable). Neither mode holds a position
-or modifies an order. Both require the chart/study/feed to keep running; `Never` disables ticks.
+The study has nothing to set, and the minutes after an exit come by themselves: once a trade is over, the
+study loads its holding time and the 30 minutes after its exit from MotiveWave's tick history, for the
+chart's current contract, on that contract's own chart or a continuous one alike. So the 5/15/30-minute
+post-exit windows need no separate recorder, and the chart does not have to stay open through them. The
+study never holds a position or modifies an order.
 
 In Trades, open **More → Runner** and expand **Could I Have Let This Trade Run?**. In Stats, open
 **Runners** and expand **Which Tags Have Room for Runners?**. Choose a fixed 5/15/30/60/120-minute horizon. Analysis reports extra peak gross profit,
@@ -514,9 +516,10 @@ achievable-profit claim. No spread/slippage, additional fees, dynamic trailing r
 peak execution is simulated. Tick completeness and actual stop fills remain unverified.
 Do not add hindsight peaks to expectancy; validate a fixed runner rule on unseen trades next.
 
-Prices use the public SDK. Manual-account fill capture uses an allow-listed, read-only adapter to
-MotiveWave internals, **not its supported SDK**; a platform update can break it. Connection status
-shows errors, missing files and stale heartbeats. The observer only sees retained executions, not
+Prices use the public SDK. Reading manual-account fills uses an allow-listed, read-only adapter to
+MotiveWave internals, **not its supported SDK**; a platform update can break it. The connection status
+shows errors as **Needs attention**, and a study that has not reported in for a minute as **Not recording**.
+The observer only sees retained executions, not
 a guaranteed full broker archive. Linked stop order updates are polled and very fast changes can be missed.
 
 ## Start the app
@@ -583,15 +586,29 @@ bash study/scripts/build.sh
 ```
 
 The output is `study/build/libs/motivewave-journal.jar`. A packaged desktop user can click
-**Setup → Install MotiveWave Study**. The app atomically installs only this named JAR, preserves its
+**Settings → Install MotiveWave Study**. The app atomically installs only this named JAR, preserves its
 previous copy and asks for a MotiveWave restart. Manual alternative: use **Study → All Studies →
 Import**. Then add **Journal → MotiveWave Journal** to the chart you trade, the contract's own (`NQZ6`)
 or a continuous one (`NQ`): a trade is measured with the prices of its product (`NQZ6`, `NQ` and a
 continuous `NQ` are all `NQ`; `MNQ` is another product), its exact contract's first when both were
-recorded. There is nothing to set: every setting is under the study's **Advanced** tab and the
-defaults are what the app expects. The app starts watching both files by itself.
-Check **Setup** in the app: it should change from Waiting For Study to one green Connected line. To install the
-study again after an app update, use **Setup → Data → Connection → Install MotiveWave Study**.
+recorded. There is nothing to set: the study's dialog says so and has nothing else on it. By itself the
+study reads every fill of the account, records each trade's prints while the trade is open, and once a
+trade is over loads its holding time and the 30 minutes after its exit from MotiveWave's tick history, for
+the chart's current contract, continuous chart or not. The app starts watching both files by itself and
+always reads them.
+
+Check **Settings** in the app. Its status line, and the word under the sidebar's pages, is one of three:
+
+- **Recording** (green): the study reported in within the last minute. Settings names the contracts it
+  recorded in the last hour: `Recording · NQZ6, ESZ6 · study 0.3.10`.
+- **Not recording** (grey): the study has not reported in yet, or not for over a minute, because MotiveWave
+  is closed or the study is not on a chart. One line under it says the one thing to do: install the study,
+  add it to your chart, open MotiveWave with the study on your chart, or update an older study.
+- **Needs attention** (red): the study or the app's reader reported an error, or something other than the
+  study writes the file. **Settings → Data → Connection** says what.
+
+In Replay the sidebar reads **No replay trades yet** until the first replay trade. To install the study
+again after an app update, use **Settings → Data → Connection → Install MotiveWave Study**.
 See [MotiveWave's import instructions](https://docs.motivewave.com/knowledge-base/study/add-a-custom-study).
 
 Use `MOTIVEWAVE_SDK` for a non-default SDK path and `JAVA_HOME` for the JDK. No SDK/native platform
@@ -609,8 +626,8 @@ Default data folders:
 
 The study writes `bridge/motivewave.ndjson` and `bridge/motivewave.replay.ndjson`; databases are
 `trades.sqlite3` and `replay/trades.sqlite3`. Set `MWJ_HOME` to override the folder, but a desktop
-MotiveWave will not necessarily inherit your terminal environment. If overriding only the app,
-copy the live bridge path shown in Data → Connection into the study's File setting (under Advanced).
+MotiveWave will not necessarily inherit your terminal environment: the study writes into the folder
+`MWJ_HOME` names only when MotiveWave itself is started with it.
 
 **Back up and restore.** Settings → Data → Export & Backup → **Back Up Journal** downloads one zip,
 `MotiveWave Journal backup YYYY-MM-DD.zip`, with Live, Replay and every journal you made (archived ones
@@ -623,27 +640,27 @@ the environment on screen, one row each, for a spreadsheet.
 
 ## Tick accuracy and replay
 
-- **Always While Study Runs** is the default. It records every trade print delivered to the chart,
-  including the time after exit used by runner analytics. It uses more disk, and recording stops if
-  the chart, study or feed stops.
-- **Trade + After Exit Only** keeps a bounded pre-roll, records while the observed position is active,
-  and continues for the configured post-exit window. The account poll also drains observed pre-roll
-  after seeing fills, so a paused replay does not need another tick. Unknown/stalled capture records
-  rather than guessing flat. **Never** disables streaming ticks; history loading is separate.
+The study has nothing to set; this is what it does by itself.
+
+- It records the prints MotiveWave delivers to the chart while you are in a trade, from a few seconds
+  before the entry to a few seconds after the exit, and a short pre-roll from before the entry fill was
+  seen. While you are flat it writes no prints. While it cannot read fills it records every print rather
+  than guess you are flat. Recording stops if the chart, the study or the feed stops.
+- Once a trade is over, it loads the trade's holding time and the 30 minutes after its exit from
+  MotiveWave's tick history, for the closed trades of the last 30 days. A chart loads the trades of its
+  current contract, whether it is that contract's own chart or a continuous one, from the contract the fills
+  were in. These are real ticks, never generated from bars; a window the history has no ticks for stays
+  empty. Availability is up to the data service.
+- When a chart loads, it writes the last 3 days of one-minute bars, as chart context, and no ticks.
 - MotiveWave sends a study each print only while the study receives bar updates. Study 0.3.3 requires
   them. Study 0.3.2 and earlier only offered them as a dialog switch that was off, so they recorded no
-  live or replay prints; Setup asks for the update.
-- Historical one-minute bars load in live mode. Optional historical real-tick loading defaults off
-  and is currently capped at 120 minutes by this implementation, not by a claimed Rithmic limit.
-  It requests real ticks, not manufactured OHLC ticks. Availability is up to the data service.
+  live or replay prints; Settings asks for the update.
 - Replay records only prices already delivered by replay, never a future historical path. Rewinding
   starts a new run; prices from another run cannot measure that trade. Once a replay trade is flat, the
   study loads the real ticks of its holding window from MotiveWave's tick history for that run, up to
-  the replay's current time and never past it (**Backfill Trade Ticks (Days)** under Advanced, 0 = off,
-  counted back from the replay clock). They are asked for as real ticks, never generated from bars, whatever
-  the replay plays; a window the history has no ticks for stays empty. The replay's own prints count
-  as real ticks too; switch **Real Tick Data** off only when the replay is generated from bars, and
-  they are then labelled simulated.
+  the replay's current time and never past it, for the replay trades of the 30 days before the replay
+  clock. They are asked for as real ticks whatever the replay plays. The replay's own prints count as
+  real ticks too.
   See [MotiveWave's replay sources](https://docs.motivewave.com/user-guide/replay-mode).
 - Tick-derived one-minute candles represent the received prints; position-gated candles can be
   partial. OHLC estimates, proxies, simulated replay and observed ticks stay visibly distinct.

@@ -346,7 +346,7 @@ def test_pretrade_draft_never_silently_retags_a_trade_already_in_the_journal(hom
     assert 'Patient' not in journal.annotations()[trade.id]['tags']
 
 
-@pytest.mark.parametrize('view', ['Dashboard', 'Checklists', 'Live session', 'Ratings', 'General'])
+@pytest.mark.parametrize('view', ['Dashboard', 'Checklists', 'Live session', 'Ratings', 'Settings'])
 def test_new_views_render_without_recording_orders_or_raw_trade_changes(home, view):
     journal = seed_preview(home)
     before = journal.executions()

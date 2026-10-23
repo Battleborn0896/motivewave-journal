@@ -94,7 +94,7 @@ def render(journal, trade):
     # categories named after them.
     hidden_names = set() if library.get('starters') else set(LEGACY_CATALOG.values())
     # Also an empty 'Other tags': older versions made it whenever a note was saved. It holds tags
-    # nobody filed in a category, so with none it is not a category anyone made; Setup still lists it.
+    # nobody filed in a category, so with none it is not a category anyone made; Settings still lists it.
     hidden_names.add('Other tags')
 
     def visible_groups(show_starters):
@@ -165,7 +165,7 @@ def render(journal, trade):
                             st.error(str(exc))
             from mwjournal.workspace import tag_score, rating
             st.caption(f'Tag score {tag_score(library, chosen):+g}',
-                       help='The sum of the scores set on each chosen tag in Setup → Tags, Playbooks & Checklists. Separate from P&L and stars.')
+                       help='The sum of the scores set on each chosen tag in Settings → Tags, Playbooks & Checklists, separate from P&L and stars.')
             for definition in journal.workspace()['ratings'].values():
                 value = rating(library, chosen, definition)
                 st.caption(definition['name'] + ': ' + (f'{value:.0f}/100' if value is not None else 'Not applicable'))
@@ -252,7 +252,7 @@ def day_panel(journal, date):
     library = journal.tag_library()
     groups = tagging.ordered_groups(library, level='day')
     if not groups:
-        st.caption('No day tags yet. Turn on “Available on days” for a tag in Setup → Tags, Playbooks & Checklists.')
+        st.caption('No day tags yet. Turn on “Available on days” for a tag in Settings → Tags, Playbooks & Checklists.')
         return
     session = journal.get('sessions').get(f'{date}:{library["session_timezone"]}', {})
     chosen = tagging.inherited(library, session)

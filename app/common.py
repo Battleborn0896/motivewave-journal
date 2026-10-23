@@ -25,14 +25,14 @@ from mwjournal.sync import DEFAULT_CONNECTION
 
 VIEWS = ('Trades', 'Edge', 'Import', 'Connection', 'Daily review', 'Export')
 PRIMARY_VIEWS = ('Trades', 'Analytics', 'Settings')
-NAV_LABELS = {'Trades': 'Trades', 'Analytics': 'Stats', 'Settings': 'Setup'}
-# Every page that is not one of the three, by the name navigation() takes: (its Setup page, the tab it opens).
+NAV_LABELS = {'Trades': 'Trades', 'Analytics': 'Stats', 'Settings': 'Settings'}
+# Every page that is not one of the three, by the name navigation() takes: (its Settings page, the tab it opens).
 # The Daily Report Card, the session tools and running a checklist are on Trades; dashboards are a Stats tab.
-SETUP_ROUTES = {'Setup': ('Setup', None), 'General': ('Setup', None),
-                'Tags': ('Tags', None), 'Checklists': ('Tags', 'Checklists'), 'Ratings': ('Ratings', None),
-                'Data': ('Data', None), 'Import': ('Data', 'Import Trades'), 'Export': ('Data', 'Export & Backup'),
-                'Journals': ('Data', 'Journals & Accounts'), 'Connection': ('Data', 'Connection')}
-TOOLS = tuple(view for view in SETUP_ROUTES if view != 'Setup')
+SETTINGS_ROUTES = {'Settings': ('Settings', None),
+                   'Tags': ('Tags', None), 'Checklists': ('Tags', 'Checklists'), 'Ratings': ('Ratings', None),
+                   'Data': ('Data', None), 'Import': ('Data', 'Import Trades'), 'Export': ('Data', 'Export & Backup'),
+                   'Journals': ('Data', 'Journals & Accounts'), 'Connection': ('Data', 'Connection')}
+TOOLS = tuple(view for view in SETTINGS_ROUTES if view != 'Settings')
 VIEW_KEY = 'journal-view'
 TOOL_KEY = 'journal-settings-page'
 # Requests for the page drawn next, taken by that page as it is drawn: which tab to open (tabs()), and
@@ -52,7 +52,10 @@ TIMEZONES = ['America/New_York', 'America/Chicago', 'America/Los_Angeles', 'UTC'
 PRECISION = {'platform-reported': 'Platform reported', 'observed-ticks': 'Observed ticks',
              'estimated-bars': 'OHLC estimate', 'proxy-estimate': 'Proxy estimate',
              'replay-simulated': 'Replay simulated / source unverified', 'pending': 'Waiting for data'}
-STALE_AFTER = 60           # seconds without a heartbeat; the study sends one every 10
+# The study's three states, as the sidebar, Settings and Data → Connection all say them (link_state).
+RECORDING, NOT_RECORDING, ATTENTION = 'Recording', 'Not recording', 'Needs attention'
+NO_REPLAY_TRADES = 'No replay trades yet'          # the sidebar chip and the trade list of an empty Replay journal
+STALE_AFTER = 60           # seconds after its last heartbeat that the study still counts as recording; it sends one every 10
 # One line under a replay trade that has no real ticks yet: the study loads them once the trade is flat.
 REPLAY_TICKS_LATER = ('The study fills in this replay trade\'s real ticks after it closes, while the study is on '
                       'the replay chart.')
@@ -79,10 +82,10 @@ def go(view: str):
 
 
 def navigation(view: str) -> dict:
-    """The session-state changes that show a view, by any name it has had: a Setup page and its tab, the
+    """The session-state changes that show a view, by any name it has had: a Settings page and its tab, the
     Daily Report Card on Trades, the Dashboards tab of Stats, or one of the three pages."""
-    if view in SETUP_ROUTES:
-        page, tab = SETUP_ROUTES[view]
+    if view in SETTINGS_ROUTES:
+        page, tab = SETTINGS_ROUTES[view]
         return {VIEW_KEY: 'Settings', TOOL_KEY: page, TAB_KEY: tab}
     if view == 'Dashboard':
         return {VIEW_KEY: 'Analytics', TAB_KEY: 'Dashboards'}
@@ -179,7 +182,7 @@ def md(text: str) -> str:
 
 
 def display_zone(journal=None) -> str:
-    """The one time zone every time is shown in: the Time Zone chosen on Setup, else this computer's own
+    """The one time zone every time is shown in: the Time Zone chosen on Settings, else this computer's own
     zone. Stored times stay UTC."""
     try:
         chosen = journal.workspace()['preferences'].get('display_timezone') if journal is not None else None
@@ -707,8 +710,8 @@ def multiplier_form(journal, form_key: str, symbol: str | None = None) -> None:
 
 @dataclass(frozen=True)
 class Link:
-    state: str             # Connected, Waiting For Study, Stale, Needs Attention, No Heartbeat or Paused
-    tone: str              # good, warning, critical or neutral: a key of theme.STATUS
+    state: str             # RECORDING, NOT_RECORDING or ATTENTION
+    tone: str              # good, neutral or critical: a key of theme.STATUS
     detail: str
     version: str = ''      # the study's version, when its heartbeat carries one
     heard: dt.datetime | None = None
@@ -716,7 +719,12 @@ class Link:
 
     @property
     def label(self) -> str:
-        return self.state + (f' · study {self.version}' if self.version and self.state == 'Connected' else '')
+        return self.state + (f' · study {self.version}' if self.version and self.state == RECORDING else '')
+
+
+def recent(heard, now=None) -> bool:
+    """Whether the study reported in within the last STALE_AFTER seconds, so it is on a chart in MotiveWave."""
+    return heard is not None and ((now or dt.datetime.now(dt.timezone.utc)) - heard).total_seconds() <= STALE_AFTER
 
 
 def version_parts(text) -> tuple[int, ...] | None:
@@ -728,7 +736,7 @@ def version_parts(text) -> tuple[int, ...] | None:
 def study_outdated(link) -> bool:
     """The study that reported in is ours and older than the one this app bundles. Studies before 0.3.3
     never receive ticks, before 0.3.4 label replay prints simulated, and before 0.3.6 record no stop order,
-    so Setup asks for the update. Another writer's version numbers are its own."""
+    so Settings asks for the update. Another writer's version numbers are its own."""
     if getattr(link, 'connector', '') != paths.STUDY_CONNECTOR:
         return False
     version = version_parts(getattr(link, 'version', ''))
@@ -754,50 +762,50 @@ def study_connection(journal) -> tuple[str | None, dict | None]:
 
 
 def link_state(profile: dict | None, status: dict | None, *, worker_error: str | None = None, now=None) -> Link:
-    """What the stored sync status and the last heartbeat say about the study, in one word.
+    """What the stored sync status and the last heartbeat say about the study, in one of three words.
 
-    The watcher only rewrites the status when new lines arrive, so freshness comes from the
-    heartbeat's own timestamp: a study that has gone quiet turns Stale without anything being written.
+    Recording: the study reported in within the last minute. Not recording: no bridge file or no events yet, or
+    a last report older than that (MotiveWave is closed, or the study is off its charts). Needs attention: no
+    connection reads the study's file, the reader or the study reported an error, or events arrive with no
+    report from the study at all (an older study or another program). The watcher only rewrites the status when
+    new lines arrive, so freshness comes from the heartbeat's own timestamp.
     """
     status = status or {}
-    if profile is None:
-        return Link('Needs Attention', 'critical', 'No bridge file is being watched. Choose one under Bridge File below.')
-    if not profile.get('enabled'):
-        return Link('Paused', 'neutral', 'Read Trades From MotiveWave is off, so nothing is read. The study keeps '
-                    'writing, and reading carries on from the same place once it is on again.')
-    if worker_error:
-        return Link('Needs Attention', 'critical', f'The background reader failed ({worker_error}) and is retrying.')
     heartbeat = status.get('heartbeat') or {}
     try:
         heard = instant(heartbeat['ts']) if heartbeat.get('ts') else None
     except (ValueError, TypeError, AttributeError):
         heard = None
     now = now or dt.datetime.now(dt.timezone.utc)
-    age = (now - heard).total_seconds() if heard else None
-    version = str(heartbeat.get('connector_version') or '')
-    connector = str(heartbeat.get('connector') or '')
+    known = {'version': str(heartbeat.get('connector_version') or ''), 'heard': heard,
+             'connector': str(heartbeat.get('connector') or '')}
+    if profile is None:
+        return Link(ATTENTION, 'critical', 'No bridge file is being watched. Choose one under Bridge File below.')
+    if worker_error:
+        return Link(ATTENTION, 'critical', f'The background reader failed ({worker_error}) and is retrying.', **known)
     if status.get('error'):
-        return Link('Needs Attention', 'critical', str(status['error']), version, heard, connector)
+        return Link(ATTENTION, 'critical', str(status['error']), **known)
     try:
         exists = Path(profile.get('path') or '').expanduser().is_file()
     except OSError:
         exists = False
     if status.get('status') == 'waiting for study' or not exists:
-        return Link('Waiting For Study', 'warning', 'The bridge file has not appeared yet. It is created when the '
-                    'study is added to a chart in MotiveWave.')
+        return Link(NOT_RECORDING, 'neutral', 'The bridge file has not appeared yet. It is created when the study is '
+                    'added to a chart in MotiveWave.', **known)
     if not status:
-        return Link('Waiting For Study', 'warning', 'The bridge file is there but holds no events yet.')
+        return Link(NOT_RECORDING, 'neutral', 'The bridge file is there but holds no events yet.', **known)
     if heard is None:
-        return Link('No Heartbeat', 'warning', 'Events are being read, but the study has not reported in. Prices '
-                    'still arrive; fills need Capture Fills switched on (the study\'s Advanced tab).')
-    if age > STALE_AFTER:
-        return Link('Stale', 'warning', f'The study was last heard from {ago(age)}. Check that MotiveWave is '
-                    'running and the study is still on a chart.', version, heard, connector)
-    return Link('Connected', 'good', f'Heard from the study {ago(age)}.', version, heard, connector)
+        return Link(ATTENTION, 'critical', 'Events are being read, but the study has not reported in: an older study '
+                    'or another program writes this file. Install the study again under Study below.', **known)
+    age = (now - heard).total_seconds()
+    if not recent(heard, now):
+        return Link(NOT_RECORDING, 'neutral', f'The study was last heard from {ago(age)}. Open MotiveWave with the '
+                    'study on your chart.', **known)
+    return Link(RECORDING, 'good', f'Heard from the study {ago(age)}.', **known)
 
 
 def study_link(journal, *, now=None) -> tuple[str | None, dict | None, dict, Link]:
-    """(connection name, its profile, its stored status, the one-word state) for this environment."""
+    """(connection name, its profile, its stored status, the study's state) for this environment."""
     name, profile = study_connection(journal)
     statuses = journal.get('sync_status')
     status = statuses.get(name, {}) if name else {}

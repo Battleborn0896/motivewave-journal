@@ -324,8 +324,8 @@ def excursion(journal, closed):
     shown = pd.DataFrame(common.display_excursion_rows(journal, closed))
     measured = shown[shown.display_mfe.notna() & shown.display_mae.notna()].copy()
     st.caption(f'{len(measured)} of {len(closed)} closed trades measured',
-               help='Only trades measured from recorded ticks that have a value in your MAE / MFE Units (Setup). '
-                    'Unavailable values are left out, never counted as zero.')
+               help='Only trades measured from recorded ticks with a value in your MAE / MFE Units (Settings); '
+                    'unavailable values are left out, never counted as zero.')
     if measured.empty:
         st.info('No MAE / MFE values in these units yet. They need recorded prices; R also needs a stop, '
                 'and ticks need a known tick size.')
@@ -669,7 +669,7 @@ def period_rows(journal, rows) -> list[dict]:
     """The trades of the period chosen above the stats, by their entry day in the display time zone: this month,
     last month, the last three months (this one and the two before) or all. Every tab of Stats follows it."""
     key = common.key(journal, 'stats-period')
-    remember = common.keep({key: 'All'})            # still chosen after Trades or Setup was open
+    remember = common.keep({key: 'All'})            # still chosen after Trades or Settings was open
     choice = st.segmented_control('Period', PERIODS, key=key, on_change=remember, required=True,
                                   label_visibility='collapsed',
                                   help='Which trades Stats counts, by the day each was entered. A monthly review '

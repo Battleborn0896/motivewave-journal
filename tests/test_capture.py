@@ -89,7 +89,7 @@ def test_generated_replay_ticks_are_labelled_simulated_in_metrics_and_chart(tmp_
 def test_the_replayed_days_minute_bars_draw_every_replay_trades_chart_and_never_measure_them(tmp_path):
     """Study 0.3.7 writes MotiveWave's 1-minute bars of the days a replay plays, the same for every run: a trade of
     any run on those days is drawn from them, as platform candles, MAE / MFE still wait for ticks, and they move
-    neither an open replay trade's clock nor what Setup calls recording."""
+    neither an open replay trade's clock nor what Settings calls recording."""
     from mwjournal.scope import PROVENANCE, REPLAY_BARS, provenance
     from views.trades import default_source
 
