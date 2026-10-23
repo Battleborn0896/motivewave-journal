@@ -104,7 +104,7 @@ def test_unavailable_or_ambiguous_legs_leave_raw_reviews_visible(home):
     assert len(view.trades()) == 2 and view.merge_warnings
 
 
-def test_merge_ui_compound_tagging_checklists_and_json_retain_originals(home):
+def test_merge_ui_compound_tagging_checklists_and_the_originals_stay_stored(home):
     journal = seed_preview(home)
     second(journal)
     app = open_app()
@@ -119,10 +119,7 @@ def test_merge_ui_compound_tagging_checklists_and_json_retain_originals(home):
     from views.checklists import starter
     definition = journal.save_checklist('Plan', starter())
     assert view.start_checklist(definition, merged.id)
-    from views.export import files
-    exported = json.loads(files(view)[0][2]())
-    assert len(exported['trades']) == 1 and len(exported['original_trade_rows']) == 2
-    assert len(exported['executions']) == len(journal.executions())
+    assert len(view.trades()) == 1 and len(journal.trades()) == 2      # the merge is a view: both originals stay
     press(app, 'Split Into Original Trades')
     assert len(merging.ReviewJournal(journal).trades()) == 2
 

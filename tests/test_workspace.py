@@ -2,8 +2,8 @@
 import copy
 import datetime as dt
 import itertools
-import json
 import re
+import zipfile
 from concurrent.futures import ThreadPoolExecutor
 
 import pytest
@@ -12,7 +12,7 @@ import common
 import runtime
 import theme
 from mwjournal import Execution, Journal
-from mwjournal import tagging
+from mwjournal import backup, tagging
 from mwjournal import workspace
 from mwjournal.workspace import (validate_graph, replay_run, tag_score, rating, filter_sample, combine_filters,
                                  validate_filter)
@@ -477,14 +477,14 @@ def test_calendar_tint_steps():
     assert theme.tint(67, 100) == 'up l3' and theme.tint(-100, 100) == 'down l3'
 
 
-def test_export_includes_new_workflow_definitions_and_run_history(home):
+def test_the_backup_includes_workflow_definitions_and_run_history(home):
     journal = seed_preview(home)
     definition = journal.save_checklist('Plan', starter())
     journal.start_checklist(definition)
-    from views.export import files
-    data = json.loads(files(journal)[0][2]())
-    assert len(data['workspace']['runs']) == 1
-    assert definition in data['workspace']['checklists']
+    with zipfile.ZipFile(backup.write(home / 'backup.zip')) as archive:
+        copy = Journal(archive.extract('live.sqlite3', home / 'unzipped'))
+    assert len(copy.workspace()['runs']) == 1
+    assert definition in copy.workspace()['checklists']
 
 
 def test_custom_visualization_scripts_are_opt_in_network_denied_and_do_not_get_account_or_fill_data(home):

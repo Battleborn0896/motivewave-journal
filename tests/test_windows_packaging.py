@@ -3,8 +3,11 @@ from __future__ import annotations
 
 import importlib.util
 import os
+import sys
+import tomllib
 from pathlib import Path
-from unittest.mock import Mock
+from types import SimpleNamespace
+from unittest.mock import MagicMock, Mock
 
 import pytest
 
@@ -93,7 +96,23 @@ def test_backend_arguments_are_loopback_headless_and_do_not_arm_recording(tmp_pa
     assert "--server.headless=true" in arguments
     assert "--global.developmentMode=false" in arguments
     assert "--server.enableStaticServing=true" in arguments      # serves the bundled fonts in app/static
+    assert "--server.maxUploadSize=2000" in arguments            # a backup to restore can be larger than 200 MB
     assert "arm" not in joined and "record" not in joined and "media" not in joined
+
+
+def test_the_upload_limit_is_the_same_with_or_without_the_settings_file(tmp_path):
+    limit = tomllib.loads((ROOT / ".streamlit" / "config.toml").read_text(encoding="utf-8"))["server"]["maxUploadSize"]
+    assert f"--server.maxUploadSize={limit}" in launcher.streamlit_arguments(tmp_path, 9123)
+
+
+def test_native_window_allows_downloads(monkeypatch):
+    """pywebview cancels every download unless ALLOW_DOWNLOADS is on: Back Up Journal and the CSV are downloads."""
+    seen = {}
+    webview = SimpleNamespace(settings={"ALLOW_DOWNLOADS": False}, create_window=Mock(return_value=MagicMock()),
+                              start=lambda **_: seen.update(webview.settings))
+    monkeypatch.setitem(sys.modules, "webview", webview)
+    launcher.open_native_window("http://127.0.0.1:9123/", Mock())
+    assert seen["ALLOW_DOWNLOADS"] is True
 
 
 def test_frozen_bundle_uses_pyinstaller_data_root(monkeypatch, tmp_path):

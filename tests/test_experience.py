@@ -46,10 +46,6 @@ def test_only_recorded_ticks_measure_in_every_unit_and_raw_estimates_remain_in_b
     assert rows[0]['mfe'] is None and rows[0]['mae'] is None
     assert common.display_excursion_rows(journal, rows)[0]['display_mfe'] is None
     assert common.best_display_metric(journal, trade) == {}
-    from views import export
-    payload = json.loads(export.files(journal)[0][2]())
-    assert payload['trades'][0]['mfe'] is None
-    assert payload['measurements'][trade.id][0]['precision'] == 'estimated-bars'
     backup = home / 'snapshot.sqlite3'
     backup.write_bytes(journal.backup())
     snapshot = sqlite3.connect(backup)  # a WAL-mode snapshot needs a real path, not deserialize(:memory:)

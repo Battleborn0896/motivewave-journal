@@ -345,8 +345,8 @@ cards, excursion plots and runner views. Actual net P&L is unchanged.
 Only recorded ticks measure MAE and MFE (since 0.4.8 there is no accuracy to choose): OHLC bounds,
 proxies, platform-only reports, simulated replay and sources with reported capture gaps do not
 qualify. Missing ticks show unavailable, not zero. One-minute candles are chart context only. This is
-a rule about sources, not proof that an observed feed delivered every tick. JSON keeps every stored
-measurement; summary excursions and the CSV are in account currency.
+a rule about sources, not proof that an observed feed delivered every tick. The backup keeps every stored
+measurement; summary excursions and the trades CSV are in account currency.
 
 MAE and MFE mean the same in every unit: how far price went against (MAE) or for (MFE) the contracts
 you held at that moment, from their average entry. Profit banked by a partial exit never counts.
@@ -405,8 +405,8 @@ including empty groups; **+ Tag** creates and immediately applies a reusable tag
 keeps its untouched Setup, Execution and Mindset suggestions hidden unless **Show starter examples**
 (under More Tagging Tools) is on, and shows them when it has no categories of its own. Any starter
 tag already used on a trade remains visible. Renames display the current label but keep the original stored review
-and aliases. Tag libraries, playbooks and day tags are local and live/replay-specific, included in
-JSON/SQLite backup. No destructive schema migration is required.
+and aliases. Tag libraries, playbooks and day tags are local and live/replay-specific, and the backup
+holds them. No destructive schema migration is required.
 
 The charcoal workspace, yellow accents, outcome-tinted trade rows and coloured selected tag groups
 follow the same visual direction as Tradecraft. Selection outlines and signed P&L remain alongside
@@ -612,6 +612,15 @@ The study writes `bridge/motivewave.ndjson` and `bridge/motivewave.replay.ndjson
 MotiveWave will not necessarily inherit your terminal environment. If overriding only the app,
 copy the live bridge path shown in Data → Connection into the study's File setting (under Advanced).
 
+**Back up and restore.** Settings → Data → Export & Backup → **Back Up Journal** downloads one zip,
+`MotiveWave Journal backup YYYY-MM-DD.zip`, with Live, Replay and every journal you made (archived ones
+too), safe to take while trades are recording. **Restore From Backup** takes such a zip, shows its date
+and how many live and replay trades it holds, and **Restore This Backup** puts the whole journal back as
+it was. Before it does, the journal as it is now is saved to `backups/before-restore-<time>.zip` in the
+data folder, so a restore can be undone by restoring that file. A backup from an older version is brought
+up to date as it is restored; one from a newer version is refused. **Export Trades CSV** is the trades of
+the environment on screen, one row each, for a spreadsheet.
+
 ## Tick accuracy and replay
 
 - **Always While Study Runs** is the default. It records every trade print delivered to the chart,
@@ -670,7 +679,8 @@ Never count a fixture chart as proof of that integration.
 
 Stats separates gross/net closed-trade curves and recorded fee drag, including fees in R
 for trades with a stop. Fees are not slippage and a closed-trade curve is not marked
-account equity. The app also offers optional CSV/BYOD imports, daily reviews and JSON/CSV/SQLite backup.
+account equity. The app also offers optional CSV/BYOD imports, daily reviews, a trades CSV, and one-file backup
+and restore.
 
 ## Design and future work
 

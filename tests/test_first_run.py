@@ -228,7 +228,7 @@ def test_money_and_time_are_human_on_the_trades_page_and_in_exports(home):
     show(app, 'Edge')
     assert widget(app.metric, 'Largest Drawdown').value == '$0.00'
     assert not any(s.label == 'Analysis timezone' for s in app.selectbox)
-    table = export.files(journal)[1][2]().splitlines()
+    table = export.trades_csv(common.rows_for(journal), common.display_zone(journal)).splitlines()
     header, row = table[0].split(','), table[1].split(',')
     assert header[-3:] == ['entry_time', 'exit_time', 'time_zone']
     assert row[header.index('opened')].startswith('2026-10-07T14:00:23')                  # raw stays UTC

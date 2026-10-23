@@ -44,11 +44,11 @@ def free_port(preferred):
 
 
 def streamlit_arguments(port: int) -> list[str]:
-    # The bundled IBM Plex Sans (app/static/fonts) is served and used even if Streamlit does not read
-    # the project's .streamlit/config.toml.
+    # The bundled IBM Plex Sans (app/static/fonts) is served and used, and a large backup can be restored, even
+    # if Streamlit does not read the project's .streamlit/config.toml.
     return ['run', 'app/app.py', '--server.address=127.0.0.1', f'--server.port={port}',
             '--server.headless=true', '--browser.gatherUsageStats=false', '--server.fileWatcherType=none',
-            '--global.developmentMode=false', *fonts.streamlit_flags()]
+            '--global.developmentMode=false', '--server.maxUploadSize=2000', *fonts.streamlit_flags()]
 
 
 class Backend:

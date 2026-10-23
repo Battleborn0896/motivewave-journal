@@ -5,6 +5,7 @@ elements exist and what they say, not how the page looks.
 """
 import dataclasses
 import datetime as dt
+import io
 import json
 import re
 import sqlite3
@@ -18,7 +19,7 @@ from streamlit.testing.v1 import AppTest
 import common
 import runtime
 from views import setup
-from mwjournal import Execution, Journal, PriceSample, paths
+from mwjournal import Execution, Journal, PriceSample, backup, paths
 from mwjournal.importers import apply_preview, preview_bridge
 from mwjournal.metrics import measurements
 from mwjournal.sync import DEFAULT_CONNECTION
@@ -203,8 +204,13 @@ def landmarks(app, view, empty):
                 and any(c.value == str(paths.bridge_file(Journal().dataset)) for c in app.main.code))
     if view == 'Daily review':
         return report_open(app)
-    return [b.label for b in app.download_button] == ['Download Journal JSON', 'Download Trades CSV',
-                                                    'Download Full Backup']
+    return backup_controls(app)
+
+
+def backup_controls(app):
+    """Export & Backup on screen: its two downloads and the backup file box."""
+    return ([b.label for b in app.download_button] == ['Back Up Journal', 'Export Trades CSV']
+            and [u.label for u in app.file_uploader] == ['Restore From Backup'])
 
 
 # ---------------------------------------------------------------- every view
@@ -726,24 +732,16 @@ def test_daily_review_opens_on_the_latest_trading_day_and_is_saved(home):
     assert not any(b.label == 'Save Daily Review' for b in app.button)
 
 
-def test_export_files_carry_the_whole_journal_and_are_named_after_the_environment(home):
+def test_the_backup_holds_both_environments_and_the_csv_this_one(home):
     from views import export
     journal = seed_preview(home)
-    (_, json_name, text, _), (_, csv_name, table, _), (_, db_name, backup, _) = export.files(journal)
-    text, table, backup = text(), table(), backup()                # each built only when asked for
-    assert (json_name, csv_name, db_name) == ('motivewave-journal.json', 'motivewave-journal-trades.csv',
-                                              'motivewave-journal.sqlite3')
-    exported = json.loads(text)
-    assert exported['app'] == 'MotiveWave Journal' and exported['dataset'] == 'live'
-    assert len(exported['executions']) == 3 and exported['trades'][0]['setup'] == 'VISUAL TEST ONLY'
+    table = export.trades_csv(common.rows_for(journal), 'UTC')
     assert table.splitlines()[0].startswith('id,account,symbol') and len(table.splitlines()) == 2
-    copy = home / 'copy.sqlite3'
-    copy.write_bytes(backup)
-    assert len(Journal(copy).executions()) == 3
-    assert [f[1] for f in export.files(Journal(dataset='replay'))] == [
-        'motivewave-journal-replay.json', 'motivewave-journal-replay-trades.csv', 'motivewave-journal-replay.sqlite3']
+    assert 'VISUAL TEST ONLY' in table.splitlines()[1]
+    zipped = export.backup_zip()                                   # built only when Back Up Journal is pressed
+    assert backup.read(io.BytesIO(zipped))['trades'] == {'live': 1, 'replay': 0}
     app = open_app('Export', 'Replay')
-    assert len(app.download_button) == 3
+    assert backup_controls(app) and app.download_button[0].proto.type == 'primary'
 
 
 # ---------------------------------------------------------------- the study connection
@@ -1073,9 +1071,8 @@ def test_missing_risk_and_unknown_tick_size_show_unavailable_with_one_time_setup
     assert journal.display_settings()['tick_sizes'] == {'CUSTOM': .5}
     show(app, 'Export')
     from views import export
-    payload = json.loads(next(build() for label, _, build, _ in export.files(journal) if label == 'Download Journal JSON'))
-    assert payload['display_settings']['tick_sizes'] == {'CUSTOM': .5}
-    assert payload['trades'][0]['mfe'] == 6  # original total currency, not relabelled price units
+    table = export.trades_csv(common.rows_for(journal), 'UTC').splitlines()
+    assert float(table[1].split(',')[table[0].split(',').index('mfe')]) == 6  # account currency, not ticks
 
 
 def test_old_tick_metrics_get_points_for_display_and_platform_reports_are_never_shown(home):
