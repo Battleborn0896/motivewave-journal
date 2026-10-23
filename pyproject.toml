@@ -1,6 +1,6 @@
 [project]
 name = "motivewave-journal"
-version = "0.4.16"
+version = "0.4.17"
 description = "A local trade journal for MotiveWave: a study captures live and replay trades, the app reviews them."
 readme = "README.md"
 license = { file = "LICENSE" }

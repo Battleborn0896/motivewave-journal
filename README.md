@@ -7,6 +7,24 @@ Live/paper and replay have separate databases. No routine CSV export/import is r
 MotiveWave Journal is an independent open-source project. It is not affiliated with, endorsed by or
 supported by MotiveWave Software.
 
+## What's new in 0.4.17: one time zone, one grade, and a setup is a tag
+
+Study **0.3.10** stays as it is: nothing to install.
+
+- **One time zone decides every date.** A trade's day is its date in Settings → Time Zone, midnight to
+  midnight, in the trade list, the Daily Report Card, day tags, the calendar and Stats. A 10 PM trade no
+  longer sits on two dates. The extra time-zone boxes are gone.
+- **One grade: the Rating stars**, 1 to 5, for trades and for days. Rating Systems and the "Followed my plan"
+  box are gone. Tag score shows only once you give a tag a score.
+- **The Daily Report Card** has Day tags (a new Day category: Had a Plan, Kept Risk Limits, Respected My Stop),
+  a Rating and your note. Every trade of the day carries its Day tags in Stats and Filters.
+- **A setup is a Setup tag.** The typed Setup box is gone; Stats compares setups by their tags.
+- **Moved for you once:** day reviews to their dates; ticked day checkboxes to Day tags; typed setups to
+  Setup tags; "Followed my plan" answers to Execution tags (Yes is Followed Plan, No is Broke Plan). The
+  first open saves a copy of your journal beside it before changing anything.
+
+**What to do:** install the app over the old one and open it.
+
 ## What's new in 0.4.16: a small journal, one backup file, and a study with nothing to set
 
 This release comes with study **0.3.10**.
