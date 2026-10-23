@@ -8,7 +8,7 @@ import pytest
 
 import common
 import runtime
-from mwjournal import Execution
+from mwjournal import Execution, Journal, tagging
 from test_app import listed, open_app, open_tab, pick, press, said, show, widget
 from test_chart import seed_preview
 from views import checklists, edge, session
@@ -45,6 +45,7 @@ def day_header(app, day):
 # ---------------------------------------------------------------- the Daily Report Card on Trades
 
 def test_a_days_header_opens_its_report_card_in_place_of_the_trade_and_back_returns_to_it(home):
+    Journal().tag_library()                    # a new journal's first read offers the starters, Day among them
     journal = two_days(home)
     app = open_app()
     selected = app.session_state['selected-trade-live']
@@ -54,7 +55,7 @@ def test_a_days_header_opens_its_report_card_in_place_of_the_trade_and_back_retu
     header.click().run()
     assert not app.exception and report_open(app)
     assert widget(app.date_input, 'Trading day').value == dt.date(2026, 10, 7)
-    assert widget(app.selectbox, 'Session time zone').value == NY             # the zone the list groups days by
+    assert not any('zone' in s.label.lower() for s in app.selectbox)   # days follow Settings → Time Zone alone
     assert widget(app.metric, 'Net P&L').value == '+$242.00' and widget(app.metric, 'Trades').value == '1'
     assert not any(m.label == 'MAE' for m in app.metric)                     # the trade made room for it
     assert len(listed(app)) == 2                                              # the list stays beside it
@@ -63,12 +64,13 @@ def test_a_days_header_opens_its_report_card_in_place_of_the_trade_and_back_retu
     # Grade the day, write the note, tag the day: the card is the whole Daily Report Card. There is no Save:
     # going straight back to the trade after typing keeps what was typed.
     assert not any(b.label == 'Save Daily Review' for b in app.button)
-    widget(app.checkbox, 'I had a plan').check()
+    widget(app.pills, 'Day').set_value(['Had a Plan'])
+    widget(app.pills, 'Rating').set_value(4)
     widget(app.text_area, 'What I learned').set_value('Waited for the open.')
-    assert any(p.label == 'Mindset' for p in app.pills) or said(app.caption, 'No day tags yet')
     press(app, '← Back to Trades')
-    saved = journal.get('sessions')['2026-10-07:' + NY]
-    assert saved['planned'] and saved['notes'] == 'Waited for the open.'
+    saved = journal.get('sessions')['2026-10-07']
+    assert saved['day_tag_ids'] == [tagging.identity('Had a Plan')] and saved['rating'] == 4
+    assert saved['notes'] == 'Waited for the open.'
     assert not report_open(app) and app.session_state['selected-trade-live'] == selected
     assert any(m.label == 'MAE' for m in app.metric)
 

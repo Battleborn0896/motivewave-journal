@@ -14,16 +14,17 @@ from contextlib import contextmanager
 from dataclasses import asdict
 from pathlib import Path
 
-from . import paths
+from . import humanize, paths, tagging
 from .matching import match
 from .metrics import carry_on, measurements
 from .model import (NATIVE, Execution, PriceSample, ProtectionEvent, digest, finite, heartbeat_report, instant,
                     product, timestamp, trade_prices)
 from .risk import stop_for_risk
 from .scope import event_mode, allows_source
-from .workspace import Workspace, read as read_workspace
+from .tags import DAY
+from .workspace import Workspace, read as read_workspace, time_zone, write as write_workspace
 
-SCHEMA_VERSION = 3
+SCHEMA_VERSION = 4
 # The rules trades are measured by. Raise it when they change: the watcher then measures every trade of a
 # journal measured under older rules once more, from its stored prices, and records this number in it.
 # 1: a trade's prices are those of its product (model.trade_prices).
@@ -174,7 +175,7 @@ def drop_copies(db, keys) -> int:
     return dropped
 
 
-def _upgrade(db) -> dict:
+def _schema_3(db) -> dict:
     """Schema 3, inside the caller's transaction, and harmless to run twice.
 
     Fills stored by schema 2 lack the platform's position id and entry flag, although the raw event
@@ -211,6 +212,79 @@ def _upgrade(db) -> dict:
         # The trades are grouped differently now; the watcher measures them again from stored prices.
         db.execute("DELETE FROM journal_meta WHERE key='measurement_rules'")
     return {'executions_rewritten': rewritten, 'alarms_cleared': cleared}
+
+
+# The three boxes the Daily Report Card had until schema 4, and the Day tag (tags.DAY) each ticked one became.
+DAY_BOXES = dict(zip(('planned', 'risk_limits', 'stops'), DAY[2]))
+
+
+def _schema_4(db) -> dict:
+    """Schema 4, inside the caller's transaction, and harmless to run twice: one time zone, the journal's own.
+
+    Until schema 4 a trading day had a time zone of its own. Day tags followed the tag library's (New York unless
+    changed) and the Daily Report Card saved each review under the zone chosen on it, so a day was stored as
+    'date:zone'. Now a day is its date in the journal's Time Zone (workspace.time_zone), stored as 'date', and a
+    journal with no Time Zone saved is given this computer's, so its days never move with the computer. Every day
+    moves to its date: the days of one date in different zones become one. Their day tags join, a one-choice
+    category keeping the choice of the day in the Time Zone; of the review, that day's boxes win, empty ones are
+    filled from the others, and different notes are joined with a blank line. A trade near midnight can so fall on
+    the neighbouring date and gain or lose that date's day tags. The tag library loses its own zone and gains the
+    Day category (tagging.upgrade_library), and each ticked box of the old card becomes its Day tag. A stored day
+    rating stays: it is the day's Rating."""
+    workspace = read_workspace(db)
+    if not humanize.valid_zone(workspace['preferences'].get('display_timezone')):
+        workspace['preferences']['display_timezone'] = humanize.local_zone()
+        write_workspace(db, workspace)
+    zone = time_zone(db)
+    days = {}                                      # date: [(not in the Time Zone, its zone, its key, the day)]
+    for key, payload in db.execute('SELECT key, payload FROM sessions').fetchall():
+        date, _, held = key.partition(':')
+        days.setdefault(date, []).append((held not in ('', zone), held, key, json.loads(payload)))
+    ticked = any(day.get(box) for found in days.values() for *_, day in found for box in DAY_BOXES)
+    library, day_tags = tagging.upgrade_library(db, needed=ticked)
+    moved = 0
+    for date, found in days.items():
+        found.sort(key=lambda held: held[:2])      # the day in the Time Zone first
+        merged, chosen, notes = {}, [], []
+        for *_, day in found:
+            tags = [*day.get('day_tag_ids', []), *(day_tags[name] for box, name in DAY_BOXES.items() if day.get(box))]
+            # A one-choice category an earlier day of this date chose in keeps that choice. Within one day nothing
+            # is dropped: conflicting choices made before the category became one-choice stay, as they do on a trade.
+            taken = {library['tags'].get(id, {}).get('group') for id in chosen}
+            for id in tags:
+                group = library['tags'].get(id, {}).get('group')
+                if id not in chosen and not (group in taken and library['groups'].get(group, {}).get('exclusive')):
+                    chosen.append(id)
+            if isinstance(day.get('notes'), str) and day['notes'].strip() and day['notes'].strip() not in notes:
+                notes.append(day['notes'].strip())
+            for field, value in day.items():
+                if field not in ('day_tag_ids', 'notes', 'timezone', *DAY_BOXES) and merged.get(field) in (None, ''):
+                    merged[field] = value
+        if chosen or any('day_tag_ids' in day for *_, day in found):
+            merged['day_tag_ids'] = sorted(chosen)
+        if notes or any('notes' in day for *_, day in found):
+            merged['notes'] = '\n\n'.join(notes)
+        if [key for *_, key, _ in found] != [date] or found[0][3] != merged:
+            db.executemany('DELETE FROM sessions WHERE key=?', [(key,) for *_, key, _ in found])
+            db.execute('INSERT INTO sessions VALUES(?,?)', (date, encode(merged)))
+            moved += 1
+    return {'days': {'zone': zone, 'moved': moved,
+                     'note': f'Days now follow your Time Zone ({zone}); day reviews moved to their dates and the day '
+                             'checkboxes became Day tags.'}}
+
+
+# Each schema step by the version it brings a journal to, run in this order inside one transaction (Journal).
+UPGRADES = {3: _schema_3, 4: _schema_4}
+
+
+def _upgrade(db, version: int) -> dict:
+    """Brings a journal stored under schema `version` to SCHEMA_VERSION, every step it lacks in order, inside the
+    caller's transaction, and returns what the steps did for the upgrade note."""
+    note = {}
+    for reaches, step in sorted(UPGRADES.items()):
+        if version < reaches:
+            note.update(step(db))
+    return note
 
 
 def _stops_from_risks(db) -> int:
@@ -323,10 +397,16 @@ class Journal(Workspace):
                     # Never rewrite a journal that holds data without a finished copy of exactly that journal.
                     raise ValueError('This journal changed while it was being backed up for an upgrade. Open it again.')
                 # The rewrite and the new version number commit together or not at all, so an
-                # interrupted upgrade leaves the journal as it was and simply runs again.
-                note = _upgrade(db)
+                # interrupted upgrade leaves the journal as it was and simply runs again. A new journal takes the
+                # steps too, on nothing: schema 4 saves this computer's time zone in it.
+                note = _upgrade(db, version)
                 if backup is not None:
-                    note = {**note, 'from': version, 'to': SCHEMA_VERSION, 'backup': str(backup),
+                    # Added to the note: a one-time step's own note (each a dict, such as 'packed') stays, and an
+                    # older schema upgrade's figures give way to this one's.
+                    row = db.execute("SELECT value FROM journal_meta WHERE key='schema_upgrade'").fetchone()
+                    note = {**{name: value for name, value in (json.loads(row[0]) if row else {}).items()
+                               if isinstance(value, dict)},
+                            **note, 'from': version, 'to': SCHEMA_VERSION, 'backup': str(backup),
                             'at': dt.datetime.now(dt.timezone.utc).isoformat()}
                     db.execute("INSERT OR REPLACE INTO journal_meta VALUES('schema_upgrade',?)", (encode(note),))
                 db.execute('PRAGMA user_version = %d' % SCHEMA_VERSION)
@@ -381,12 +461,18 @@ class Journal(Workspace):
                 copy.close()
             if copied != version:
                 return None                        # another process upgraded it meanwhile and holds the real backup
-            target, n = self.path.with_name(name + self.path.suffix), 1
-            while target.exists():
-                n += 1
-                target = self.path.with_name(f'{name}-{n}{self.path.suffix}')
-            os.replace(partial, target)            # a copy that was cut short never carries a backup's name
-            return target
+            # The finished copy takes the first free name in one step, a hard link, which fails on a name already
+            # taken instead of replacing that file: openers backing up in the same second never touch one name (Windows
+            # refuses to replace a file another opener or a virus scanner has open), and a copy that was cut short
+            # never carries a backup's name.
+            n = 1
+            while True:
+                target = self.path.with_name(name + (f'-{n}' if n > 1 else '') + self.path.suffix)
+                try:
+                    os.link(partial, target)
+                    return target
+                except FileExistsError:
+                    n += 1
         finally:
             partial.unlink(missing_ok=True)
 
@@ -454,9 +540,10 @@ class Journal(Workspace):
             db.execute("INSERT OR REPLACE INTO journal_meta VALUES('schema_upgrade',?)", (encode(note),))
 
     def upgrade_note(self) -> dict | None:
-        """What upgrading this journal did, or None: the last schema upgrade (from, to, its backup); under
-        'prices', the prints recorded away from trades that were removed once (_trim_prices); and under 'packed',
-        the first packing of the recorded ticks (pack_prices). Each one-time step has a note in plain words."""
+        """What upgrading this journal did, or None: the last schema upgrade (from, to, its backup); under 'days',
+        the move to one time zone (_schema_4); under 'prices', the prints recorded away from trades that were removed
+        once (_trim_prices); and under 'packed', the first packing of the recorded ticks (pack_prices). Each one-time
+        step has a note in plain words."""
         with self.connect() as db:
             row = db.execute("SELECT value FROM journal_meta WHERE key='schema_upgrade'").fetchone()
         return json.loads(row[0]) if row else None
@@ -884,16 +971,17 @@ class Journal(Workspace):
             state = tagging.library(db)
             row = db.execute('SELECT payload FROM annotations WHERE trade_id=?', (trade.id,)).fetchone()
             old = json.loads(row[0]) if row else {}
-            session = db.execute('SELECT payload FROM sessions WHERE key=?', (tagging.session_key(state, trade.opened),)).fetchone()
+            session = db.execute('SELECT payload FROM sessions WHERE key=?',
+                                 (tagging.day_key(trade.opened, time_zone(db)),)).fetchone()
             data = tagging.set_group(state, old, group, chosen, json.loads(session[0]) if session else {})
             db.execute('INSERT OR REPLACE INTO annotations VALUES(?,?)', (trade.id, encode(data)))
 
     def set_day_tag_group(self, date, group, chosen):
-        from . import tagging
+        """Chooses a day's tags in one category. The day is a date in the journal's Time Zone (tagging.day_key)."""
         with self.connect() as db:
             db.execute('BEGIN IMMEDIATE')
             state = tagging.library(db)
-            key = f"{dt.date.fromisoformat(str(date))}:{state['session_timezone']}"
+            key = dt.date.fromisoformat(str(date)).isoformat()
             row = db.execute('SELECT payload FROM sessions WHERE key=?', (key,)).fetchone()
             old = json.loads(row[0]) if row else {}
             if group not in state['groups'] or len(tagging.ids(state, chosen)) != len(set(chosen)):
@@ -905,8 +993,7 @@ class Journal(Workspace):
             if state['groups'][group]['exclusive'] and len(chosen) > 1:
                 raise ValueError('This group permits one choice.')
             other = {id for id in tagging.inherited(state, old) if state['tags'][id]['group'] != group}
-            data = {**old, 'date': str(date), 'timezone': state['session_timezone'],
-                    'day_tag_ids': sorted(other | chosen)}
+            data = {**old, 'date': key, 'day_tag_ids': sorted(other | chosen)}
             db.execute('INSERT OR REPLACE INTO sessions VALUES(?,?)', (key, encode(data)))
 
     def save_playbook(self, name, rules, *, id=None, retired=False, color=None):
@@ -949,7 +1036,8 @@ class Journal(Workspace):
                 raise ValueError('Choose an active playbook.')
             row = db.execute('SELECT payload FROM annotations WHERE trade_id=?', (trade.id,)).fetchone()
             data = json.loads(row[0]) if row else {}
-            row = db.execute('SELECT payload FROM sessions WHERE key=?', (tagging.session_key(state, trade.opened),)).fetchone()
+            row = db.execute('SELECT payload FROM sessions WHERE key=?',
+                             (tagging.day_key(trade.opened, time_zone(db)),)).fetchone()
             session = json.loads(row[0]) if row else {}
             for group, choices in state['playbooks'][id]['rules'].items():
                 active = [i for i in choices if not state['tags'][i]['retired'] and 'trade' in state['tags'][i]['levels']]
@@ -961,17 +1049,8 @@ class Journal(Workspace):
                 data = tagging.set_group(state, data, group, active, session)
             db.execute('INSERT OR REPLACE INTO annotations VALUES(?,?)', (trade.id, encode(data)))
 
-    def set_tag_timezone(self, timezone):
-        from zoneinfo import ZoneInfo
-        from . import tagging
-        ZoneInfo(timezone)
-        with self.connect() as db:
-            db.execute('BEGIN IMMEDIATE')
-            state = tagging.library(db)
-            state['session_timezone'] = timezone
-            tagging.save(db, state)
-
     def update_session(self, key, changes):
+        """Saves fields of one day's review (its Rating, its note), keyed by the day's date 'YYYY-MM-DD'."""
         with self.connect() as db:
             db.execute('BEGIN IMMEDIATE')
             row = db.execute('SELECT payload FROM sessions WHERE key=?', (key,)).fetchone()

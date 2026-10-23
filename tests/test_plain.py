@@ -100,19 +100,20 @@ def test_the_daily_report_card_keeps_what_was_typed_when_another_day_or_a_trade_
     app = open_app()
     app.button(key='open-day-2026-10-07-live').click().run()
     assert not any(b.label == 'Save Daily Review' for b in app.button)
-    widget(app.checkbox, 'I respected my risk limits').check()
+    widget(app.pills, 'Rating').set_value(2)
     widget(app.text_area, 'What I learned').set_value('Too early on the first entry.')
     app.button(key='open-day-2026-10-08-live').click().run()             # another day, straight away
     assert widget(app.date_input, 'Trading day').value == dt.date(2026, 10, 8)
-    oct7 = journal.get('sessions')['2026-10-07:' + NY]
-    assert oct7['risk_limits'] and oct7['notes'] == 'Too early on the first entry.'
+    oct7 = journal.get('sessions')['2026-10-07']
+    assert oct7['rating'] == 2 and oct7['notes'] == 'Too early on the first entry.'
     assert widget(app.text_area, 'What I learned').value == ''             # each day its own card
+    assert widget(app.pills, 'Rating').value is None
     widget(app.text_area, 'What I learned').set_value('Patient.')
     pick(app, listed(app)[0])                                             # a trade, straight away
-    assert journal.get('sessions')['2026-10-08:' + NY]['notes'] == 'Patient.'
+    assert journal.get('sessions')['2026-10-08']['notes'] == 'Patient.'
     app.button(key='open-day-2026-10-07-live').click().run()
     assert widget(app.text_area, 'What I learned').value == 'Too early on the first entry.'
-    assert widget(app.checkbox, 'I respected my risk limits').value
+    assert widget(app.pills, 'Rating').value == 2
 
 
 # ---------------------------------------------------------------- one P&L for an open trade

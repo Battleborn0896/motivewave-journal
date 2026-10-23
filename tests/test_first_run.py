@@ -63,7 +63,7 @@ def test_a_library_that_only_has_the_old_hidden_suggestions_still_opens_on_tags(
     from mwjournal.tags import LEGACY_CATALOG
     journal = Journal()
     round_trip(journal)
-    old = {'version': 1, 'groups': {}, 'playbooks': {}, 'session_timezone': NY, 'tags': {}}  # as 0.4.0 stored it
+    old = {'version': 1, 'groups': {}, 'playbooks': {}, 'tags': {}}  # as 0.4.0 stored it, less its day-tag time zone
     for name, group in LEGACY_CATALOG.items():
         old['tags'][tagging.identity(name)] = {'id': tagging.identity(name), 'name': name, 'aliases': [name],
                                                'group': group, 'retired': False, 'levels': ['trade'],

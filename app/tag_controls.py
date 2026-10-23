@@ -45,6 +45,14 @@ def save_group(journal, trade, group, widget_key):
     journal.set_trade_tag_group(trade, group, [selected] if isinstance(selected, str) else selected)
 
 
+def stars(value, **widget):
+    """The Rating of a trade or of a day: 1 to 5 stars, none until one is clicked. `widget` gives its key and what
+    saves it."""
+    # A Material star icon: IBM Plex Sans has no '★', so the browser drew it in another font.
+    st.pills('Rating', [1, 2, 3, 4, 5], default=value, format_func=lambda n: f'{n} :material/star:',
+             help='How well you followed your process, 1 to 5.', **widget)
+
+
 def _starter_ids(library):
     """The untouched hidden suggestions of a library from 0.4.0 or earlier; a library that was
     offered the starter categories shows all of its tags, so it has none."""
@@ -80,15 +88,19 @@ def render(journal, trade):
     annotations = journal.annotations()
     annotation = annotations.get(trade.id, {})
     library = journal.tag_library()
-    session = journal.get('sessions').get(tagging.session_key(library, trade.opened), {})
+    session = journal.get('sessions').get(tagging.day_key(trade.opened, common.display_zone(journal)), {})
     chosen = tagging.effective(library, annotation, session)
     show_starters_key = common.key(journal, 'show-starter-tags')
     starter = _starter_ids(library)
     referenced = _referenced_ids(library, annotation, session)
     ordered = sorted(library['groups'], key=lambda group: library['groups'][group]['order'])
-    every = {group: sorted((tag for tag in library['tags'].values()
-                            if tag['group'] == group and 'trade' in tag['levels'] and not tag['retired']),
-                           key=lambda tag: tag['order']) for group in ordered}
+    every = {}
+    for group in ordered:
+        tags = [tag for tag in library['tags'].values() if tag['group'] == group]
+        if tags and not any('trade' in tag['levels'] for tag in tags):
+            continue                           # a category of day tags, such as Day: chosen on the Daily Report Card
+        every[group] = sorted((tag for tag in tags if 'trade' in tag['levels'] and not tag['retired']),
+                              key=lambda tag: tag['order'])
 
     # Only a library from 0.4.0 or earlier hides anything: its untouched suggestions, and the empty
     # categories named after them.
@@ -114,8 +126,8 @@ def render(journal, trade):
     st.markdown(PANEL_CSS + theme.tag_group_css(groups) + theme.tag_colors_css(group_tags)
                 + headers_css({g: group_colour(g, tags) for g, tags in group_tags.items()}), unsafe_allow_html=True)
     with st.container(key='tag-panel-' + trade.id):
-        st.markdown('### Tags', help='Click a tag to apply it, click again to remove it. Changes save at once. '
-                                     f'Day tags follow the trading day in {library["session_timezone"]}.')
+        st.markdown('### Tags', help="Click a tag to apply or remove it, saved at once; day tags come from the trade's "
+                                     'date in your Time Zone.')
         if not groups:
             st.info('No tag categories yet. Use + Category below to make one.')
         with st.container(key='tag-cards-' + trade.id):
@@ -135,10 +147,8 @@ def render(journal, trade):
                              help='One choice at a time.' + (' This trade has older conflicting choices; picking one '
                                                              'resolves them.' if conflict else '') if exclusive else None)
         rating_key = common.key(journal, 'rating-' + trade.id)
-        st.pills('Process rating', [1, 2, 3, 4, 5], default=annotation.get('rating'), key=rating_key,
-                 # A Material star icon: IBM Plex Sans has no '★', so the browser drew it in another font.
-                 format_func=lambda n: f'{n} :material/star:', on_change=save_field,
-                 args=(journal, trade.id, 'rating', rating_key), help='How well you followed your process, 1 to 5.')
+        stars(annotation.get('rating'), key=rating_key, on_change=save_field,
+              args=(journal, trade.id, 'rating', rating_key))
         with st.container(horizontal=True, gap='small'):
             _creation_tools(journal, trade, groups)
         with st.expander('More Tagging Tools'):
@@ -249,16 +259,18 @@ def playbook_panel(journal, trade, library, chosen):
 
 
 def day_panel(journal, date):
+    """The day's tags, every category of day tags (Day, and any tag made available on days), on its Daily Report
+    Card. `date` is the day in the journal's Time Zone; each click saves."""
     library = journal.tag_library()
     groups = tagging.ordered_groups(library, level='day')
     if not groups:
         st.caption('No day tags yet. Turn on “Available on days” for a tag in Settings → Tags, Playbooks & Checklists.')
         return
-    session = journal.get('sessions').get(f'{date}:{library["session_timezone"]}', {})
+    session = journal.get('sessions').get(str(date), {})
     chosen = tagging.inherited(library, session)
-    day = common.day_label(date, library['session_timezone'], weekday=True)
-    st.markdown('### Day Tags', help=f'Every trade opened on {day} ({library["session_timezone"]}) gets these, '
-                                     'including trades captured later. A choice made on a trade wins over the day.')
+    day = common.day_label(date, common.display_zone(journal), weekday=True)
+    st.markdown('### Day Tags', help=f'Every trade opened on {day} in your Time Zone gets these, including trades '
+                                     'recorded later; a choice made on a trade wins.')
     st.markdown(theme.tag_colors_css(groups), unsafe_allow_html=True)
     for group, tags in groups.items():
         choices = [t['name'] for t in tags]

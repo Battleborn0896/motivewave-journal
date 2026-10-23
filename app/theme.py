@@ -40,7 +40,8 @@ UP = '#45BF89'
 DOWN = '#E16E6B'
 SERIES = ['#60A9E8', '#ED9B55', '#45BF89', '#E2CF32', '#DA83B4', '#85BD72', '#AF92DF', '#E16E6B']
 STATUS = {'good': UP, 'warning': '#E2CF32', 'critical': DOWN, 'neutral': MUTED}
-TAG_COLOURS = {'Setup': '#65CA98', 'Execution': '#EBAB66', 'Mindset': '#BD9DE8', 'Other tags': '#73B6EB'}
+TAG_COLOURS = {'Setup': '#65CA98', 'Execution': '#EBAB66', 'Mindset': '#BD9DE8', 'Day': '#E48DB9',
+               'Other tags': '#73B6EB'}
 # A trade's process rating, 5 stars green down to 1 star red, wherever Stats lists or narrows by it.
 RATING_COLOURS = {5: UP, 4: SERIES[5], 3: SERIES[3], 2: SERIES[1], 1: DOWN}
 FONT = fonts.STACK         # IBM Plex Sans, with system fallbacks only until the bundled files load

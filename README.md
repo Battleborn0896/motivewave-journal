@@ -364,10 +364,22 @@ Click a row, or use Prev / Next; no separate opening/back-navigation step is nee
 toggle it; changes save automatically. **+ Tag** creates a reusable tag and applies it to the current
 trade; **+ Category** creates a category. **More Tagging Tools → Copy Tags From Another Trade** adds
 another trade's tags without replacing existing tags or notes. Day tags you explicitly select are
-inherited by trades opened on that local calendar date; otherwise no trade is automatically tagged.
+inherited by trades opened on that date in your Time Zone; otherwise no trade is automatically tagged.
 Settings → Data → Connection also lets you pick a recorded instrument instead of retyping its symbol.
 **Notes → Use saved setup** applies an existing setup/playbook name in one selection;
 new setup names can still be entered normally.
+
+**Time Zone** is on **Settings**. Every time is shown in it, and every trading day runs from midnight to
+midnight there, in Live and Replay: the trade list's days, the calendar, Stats' dates, the Daily Report Card
+and day tags all use the same date for a trade. A new journal starts on this computer's zone and keeps it, so
+taking the computer elsewhere moves no trade to another day; change it here when you want another.
+
+The **Daily Report Card** opens from a day's header in the trade list, or a day in a dashboard calendar. Beside
+that day's result it holds the day's **Day Tags**, its **Rating** (1 to 5 stars, as a trade has) and a note.
+The **Day** category comes with **Had a Plan**, **Kept Risk Limits** and **Respected My Stop**; any other tag
+made available on days is offered there too. Every trade opened that day wears the day's tags, so they show in
+the trade's chips, Stats → Compare and the filters; a choice made on the trade in the same one-choice category
+wins.
 
 **MAE / MFE Units** is on **Settings**: choose account currency, points, ticks or R. The
 preference is remembered independently for Live and Replay, and applies to the trade list, detail
@@ -409,9 +421,10 @@ resolve after a rename; unknown required names match nothing, not everything.
 trades/days, and deletes a tag or category that nothing uses. Stable tag IDs and aliases preserve historical associations when renamed. Retirement
 hides a tag from new choices without deleting its history; unretire it to restore the choice.
 Exclusive groups allow one current choice; enabling exclusivity does not erase historical conflicts.
-Day tags use the entry's calendar date in the configured timezone (not an exchange-session roll).
-Trade-level choices and unchecked inherited tags override the day. Changing the timezone does not
-migrate existing daily reviews or selections.
+Day tags use the entry's date in your Time Zone, midnight to midnight (not an exchange-session roll).
+Trade-level choices and unchecked inherited tags override the day. Changing the Time Zone keeps each day's
+tags and review on its date; a trade near midnight can then fall on the neighbouring date and wear that
+date's day tags. A new tag made in a category of day tags, such as Day, is a day tag too.
 
 Playbooks accept alternatives within each participating group (OR), require every participating
 group (AND), and ignore other groups. Matching is automatic; applying a combination is explicit.
@@ -437,7 +450,7 @@ keeps its untouched Setup, Execution and Mindset suggestions hidden unless **Sho
 (under More Tagging Tools) is on, and shows them when it has no categories of its own. Any starter
 tag already used on a trade remains visible. Renames display the current label but keep the original stored review
 and aliases. Tag libraries, playbooks and day tags are local and live/replay-specific, and the backup
-holds them. No destructive schema migration is required.
+holds them. A journal is upgraded to a new schema only after a copy of it is saved beside it.
 
 The charcoal workspace, yellow accents, outcome-tinted trade rows and coloured selected tag groups
 follow the same visual direction as Tradecraft. Selection outlines and signed P&L remain alongside
@@ -462,7 +475,8 @@ tag scores, ratings, radar, trades and custom-statistics widgets are independent
 The default uses two independently stacked columns so the calendar doesn't push the equity curve
 below an unnecessarily tall row. Global saved filters, page filters and widget filters intersect;
 they never modify captured trades. Saved tag rules use stable identities. Calendar buttons open
-the exact day's Report Card on Trades. **Settings** sets the time zone, and hides weekends under Advanced.
+the exact day's Report Card on Trades. **Settings** sets the Time Zone the calendar's days follow, and hides
+weekends under Advanced.
 
 Tag scores are signed values configured on each tag. A trade's score is the sum of its selected
 tag scores; a widget can restrict the contributing tags. **Settings → Rating Systems** creates

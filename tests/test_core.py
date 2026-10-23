@@ -475,12 +475,12 @@ def test_current_schema_and_a_newer_database_is_refused_untouched(tmp_path):
     journal = Journal(tmp_path / 'trades.db')
     journal.ingest([(fill('a', 'buy', 1, 100), {})])
     with sqlite3.connect(journal.path) as db:
-        assert db.execute('PRAGMA user_version').fetchone()[0] == 3
-        db.execute('PRAGMA user_version=4')
+        assert db.execute('PRAGMA user_version').fetchone()[0] == store.SCHEMA_VERSION == 4
+        db.execute('PRAGMA user_version=5')
     with pytest.raises(ValueError, match='newer version of MotiveWave Journal'):
         Journal(journal.path)
     with sqlite3.connect(journal.path) as db:
-        assert db.execute('PRAGMA user_version').fetchone()[0] == 4
+        assert db.execute('PRAGMA user_version').fetchone()[0] == 5
         assert db.execute('SELECT count(*) FROM executions').fetchone()[0] == 1
     assert not [p.name for p in tmp_path.iterdir() if 'backup' in p.name]
 

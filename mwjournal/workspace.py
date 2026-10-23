@@ -11,7 +11,7 @@ import json
 import re
 import uuid
 
-from . import tagging
+from . import humanize, tagging
 from .model import finite, instant, timestamp
 from .risk import stop_for_risk
 
@@ -42,6 +42,15 @@ def read(db):
 def write(db, state):
     db.execute("INSERT OR REPLACE INTO journal_meta VALUES('workspace',?)",
                (json.dumps(state, sort_keys=True, allow_nan=False),))
+
+
+def time_zone(db) -> str:
+    """The one time zone of this journal, read on `db` (inside a caller's transaction, its own view): every time is
+    shown in it and every trading day runs from midnight to midnight there. The Time Zone saved on Settings; a
+    journal saves this computer's when it is made or upgraded to schema 4, so its days never move with a computer
+    taken elsewhere. This computer's zone only when none valid is saved."""
+    chosen = read(db)['preferences'].get('display_timezone')
+    return chosen if humanize.valid_zone(chosen) else humanize.local_zone()
 
 
 # Saved-filter fields a trade passes by having any one of the values listed: its account, exact contract,
@@ -244,6 +253,11 @@ class Workspace:
         with self.connect() as db:
             return read(db)
 
+    def time_zone(self) -> str:
+        """The journal's Time Zone: what every time is shown in and where every trading day starts (time_zone)."""
+        with self.connect() as db:
+            return time_zone(db)
+
     def _workspace_edit(self, operation):
         with self.connect() as db:
             db.execute('BEGIN IMMEDIATE')
@@ -427,7 +441,7 @@ class Workspace:
         trades = self.trades() if trades is None else trades
         with self.connect() as db:
             db.execute('BEGIN IMMEDIATE')
-            state, library = read(db), tagging.library(db)
+            state, library, zone = read(db), tagging.library(db), time_zone(db)
             armed = [d for d in state['drafts'].values() if d['state'] in ('armed', 'ambiguous')]
             before = [(d['state'], d.get('trade_id')) for d in armed]
             candidates = {d['id']: [t for t in trades if (t.provider, t.account, t.symbol) ==
@@ -444,7 +458,8 @@ class Workspace:
                 trade = possible[0]
                 previous = db.execute('SELECT payload FROM annotations WHERE trade_id=?', (trade.id,)).fetchone()
                 review = tagging.project(library, json.loads(previous[0]) if previous else {})
-                session = db.execute('SELECT payload FROM sessions WHERE key=?', (tagging.session_key(library, trade.opened),)).fetchone()
+                session = db.execute('SELECT payload FROM sessions WHERE key=?',
+                                     (tagging.day_key(trade.opened, zone),)).fetchone()
                 session = json.loads(session[0]) if session else {}
                 # Existing manually chosen groups take precedence over a pre-trade draft.
                 existing = tagging.selected(library, review)

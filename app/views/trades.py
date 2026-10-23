@@ -285,15 +285,14 @@ def trade_list(journal, shown, zone) -> None:
 
     report_key = common.key(journal, REPORT)
     reporting = bool(st.session_state.get(report_key))
-    day_key, zone_key = common.key(journal, 'review-day'), common.key(journal, 'review-tz')
+    day_key = common.key(journal, 'review-day')
 
     def pick(id):
         st.session_state[selected] = id
         st.session_state[report_key] = False
 
     def open_day(day):
-        # The report card's own boxes take this day, in the zone the list groups days by.
-        st.session_state.update({report_key: True, day_key: day, zone_key: zone})
+        st.session_state.update({report_key: True, day_key: day})       # the report card's date box takes this day
 
     drawn = 0
     with st.container(key='trade-list'):
@@ -301,7 +300,7 @@ def trade_list(journal, shown, zone) -> None:
             if drawn >= limit:
                 break
             day_rows = list(day_rows)
-            chosen_day = reporting and st.session_state.get(day_key) == day and st.session_state.get(zone_key) == zone
+            chosen_day = reporting and st.session_state.get(day_key) == day
             with st.container(key='trade-day-' + day.isoformat()):
                 st.markdown(day_html(day, day_rows, zone, chosen_day), unsafe_allow_html=True)
                 st.button(common.md(f'Daily Report Card for {common.day_label(day, zone, weekday=True)}'),
