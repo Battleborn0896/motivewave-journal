@@ -328,6 +328,14 @@ def test_tag_tables_follow_the_filters_and_leave_retired_tags_out_of_the_chips()
     assert narrowed(app) == 'With Pullback · 1 of 2 closed trades'
 
 
+def test_typed_tags_have_a_plain_row_for_the_trades_without_one():
+    journal = tagged_trades()
+    journal.update_annotation(traded(journal)['f1'].id, {}, add_tags=['Scalp'])     # typed: filed under Other tags
+    app = open_tab(open_app('Edge'), 'Compare')
+    other = dict(tables(app))['Other tags']
+    assert list(other) == ['Scalp', 'No Other tag'] and other['No Other tag'][0] == '2'
+
+
 def test_the_trade_list_opens_a_trade_on_trades_and_shows_more_on_request(monkeypatch):
     tagged_trades()
     trades = traded(Journal())

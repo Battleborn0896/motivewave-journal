@@ -57,16 +57,17 @@ COMPARE_CSS = f"""<style>
 [class*="st-key-edge-chip-"] button p {{ color:inherit !important; font-size:12.5px; }}
 .st-key-edge-tag-chips .mwj-card-title {{ font-family:{theme.FONT}; font-size:12.5px; font-weight:650; }}
 .st-key-edge-narrowed [data-testid="stCaptionContainer"] p {{ color:{theme.INK_2}; font-size:13px; }}
-/* The tag tables share a row, each at least TABLE_WIDTH wide; one that does not fit moves to the next row. */
-.st-key-edge-tables {{ gap:14px !important; }}
-.st-key-edge-tables > [data-testid="stElementContainer"] {{ flex:1 1 {TABLE_WIDTH}px !important;
-    min-width:min({TABLE_WIDTH}px, 100%) !important; }}
+/* The tag tables share a row, as many as fit at TABLE_WIDTH or wider, all one width: a table alone on the last row
+   keeps that width instead of stretching across the page. */
+.st-key-edge-tables {{ display:grid !important; gap:14px !important;
+    grid-template-columns:repeat(auto-fill, minmax(min({TABLE_WIDTH}px, 100%), 1fr)); }}
+.st-key-edge-tables > [data-testid="stElementContainer"] {{ width:auto !important; min-width:0; }}
 .mwj-edge-table {{ width:100%; border-collapse:collapse; background:{theme.SURFACE}; border:1px solid {theme.BORDER};
     font-family:{theme.FONT}; font-size:12.5px; line-height:1.3; color:{theme.INK}; {theme.TABULAR}; margin:0; }}
 .mwj-edge-table th, .mwj-edge-table td {{ padding:5px 8px; text-align:right; white-space:nowrap;
     border:0; border-bottom:1px solid {theme.HAIRLINE}; }}
 .mwj-edge-table th {{ color:{theme.MUTED}; font-size:11.5px; font-weight:500; }}
-.mwj-edge-table th.t {{ font-size:12.5px; font-weight:650; white-space:nowrap; }}
+.mwj-edge-table th.t {{ font-size:12.5px; font-weight:650; }}
 .mwj-edge-table .t {{ text-align:left; white-space:normal; }}
 .mwj-edge-table tbody tr:last-child td {{ border-bottom:0; }}
 .mwj-edge-table .up {{ color:{theme.UP}; }}
@@ -97,7 +98,8 @@ LIST_CSS = f"""<style>
 .mwj-edge-trade .s .short {{ color:{theme.SERIES[1]}; }}
 .mwj-edge-trade .p {{ min-width:6.6em; text-align:right; font-weight:600; white-space:nowrap; }}
 .mwj-edge-trade .r {{ min-width:5.2em; color:{theme.MUTED}; white-space:nowrap; }}
-.mwj-edge-trade .g {{ display:flex; flex-wrap:wrap; gap:4px; }}
+/* The tags take the rest of the row, or all of a second line when that is under 320px: the same for every row. */
+.mwj-edge-trade .g {{ flex:1 1 320px; display:flex; flex-wrap:wrap; gap:4px; }}
 .mwj-edge-trade .tag {{ padding:0 7px; border-radius:3px; font-size:11.5px; line-height:18px; white-space:nowrap;
     background:{theme.SURFACE_2}; color:{theme.INK_2}; }}
 .mwj-edge-trade .mwj-win {{ color:{theme.UP}; }}
@@ -545,7 +547,8 @@ def tag_tables(narrowed, groups, currency) -> None:
                 none.append(row)
         rows = [line(c['name'], c['color'], trades[c['id']]) for c in chips]
         if none:
-            rows.append(line('Not rated' if group == RATING else f'No {group} tag', None, none))
+            # 'No Mindset tag'; Other tags, where typed tags go, reads 'No Other tag', not 'No Other tags tag'.
+            rows.append(line('Not rated' if group == RATING else f'No {group.removesuffix(" tags")} tag', None, none))
         tables.append((group, theme.INK_2 if group == RATING else tag_controls.group_colour(group, chips), rows))
     with st.container(key='edge-tables', horizontal=True):
         for title, colour, rows in tables:
