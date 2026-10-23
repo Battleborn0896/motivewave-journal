@@ -340,9 +340,10 @@ def _reviews_to_tags(db, flag: str, group: str, tag_for) -> int:
 
 
 def _typed_setup(review) -> str | None:
-    """What was typed in the Setup box of 0.4.16 and earlier, as a tag name (at most 64 characters), or None."""
+    """What was typed in the Setup box of 0.4.16 and earlier, as a tag name (at most 64 characters, one space between
+    words, so 'Opening  Range' is the tag Opening Range), or None."""
     text = review.get('setup')
-    return text.strip()[:64].strip() if isinstance(text, str) and text.strip() else None
+    return ' '.join(text.split())[:64].strip() if isinstance(text, str) and text.strip() else None
 
 
 def _setups_to_tags(db) -> int:

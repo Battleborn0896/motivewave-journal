@@ -540,10 +540,11 @@ def test_a_typed_setup_reuses_a_tag_of_that_name_in_any_case_category_or_former_
     hesitant, range_ = tagging.identity('Hesitant'), tagging.identity('Range')
     library['tags'][hesitant]['retired'] = True
     library = tagging.edit_tag(library, range_, name='Range day')        # Range is now a former name
-    as_0_4_16(path, {'a': {'setup': 'patient'}, 'b': {'setup': 'HESITANT'}, 'c': {'setup': 'range'}}, library=library)
+    as_0_4_16(path, {'a': {'setup': 'patient'}, 'b': {'setup': 'HESITANT'}, 'c': {'setup': 'range'},
+                     'd': {'setup': ' range   DAY '}}, library=library)
     journal = Journal(path)
     reviews = journal.annotations()
-    assert [reviews[id]['tags'] for id in 'abc'] == [['Patient'], ['Hesitant'], ['Range day']]
+    assert [reviews[id]['tags'] for id in 'abcd'] == [['Patient'], ['Hesitant'], ['Range day'], ['Range day']]
     after = journal.tag_library()
     assert len(after['tags']) == len(library['tags'])                     # no tag made
     assert after['tags'][PATIENT]['group'] == 'Mindset' and after['tags'][hesitant]['retired']
