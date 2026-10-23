@@ -284,7 +284,6 @@ def test_the_status_uses_one_controlled_line_instead_of_a_raw_error_or_path(monk
     for state in (common.NOT_RECORDING, common.ATTENTION):
         monkeypatch.setattr(setup.common, 'study_link',
                             lambda journal, state=state: ('MotiveWave', {'path': raw}, {'error': raw}, link(state, 'critical', '')))
-        monkeypatch.setattr(setup.common, 'other_problems', lambda journal, name: 0)
         monkeypatch.setattr(setup.theme, 'status', lambda *args, **kwargs: shown.append((args, kwargs)))
         setup.render_status(SimpleNamespace(dataset='live'))
     rendered = str(shown)
@@ -293,8 +292,7 @@ def test_the_status_uses_one_controlled_line_instead_of_a_raw_error_or_path(monk
     assert set(setup.STATUS_COPY) == {common.RECORDING, common.NOT_RECORDING, common.ATTENTION}
     assert all(len(copy.split('. ')) <= 2 for copy in setup.STATUS_COPY.values())      # one line each
     # No line asks the trader to change a setting of the study.
-    for text in [*setup.STATUS_COPY.values(), *(part for step in setup.STEPS.values() for part in step),
-                 connection.LIMITS]:
+    for text in [*setup.STATUS_COPY.values(), *(part for step in setup.STEPS.values() for part in step)]:
         assert not any(word in text for word in ('Capture Fills', 'Real Tick Data', 'Advanced tab', "study's Advanced"))
 
 
@@ -386,9 +384,9 @@ LANDMARKS = {
     'Live session': lambda app: (any(b.key == 'session-timer-live-play' for b in app.button)
                                  and [p.proto.popover.label for p in app.main.get('popover')][:3]
                                  == ['Check-Ins', 'Drafts', 'Checklist']),
-    'Connection': lambda app: any(t.label.startswith('Live bridge file') for t in app.text_input),
+    'Connection': lambda app: any(e.label == 'Troubleshooting' for e in app.expander),
     'Journals': lambda app: any(t.label == 'New journal name' for t in app.text_input),
-    'Import': lambda app: any(s.label == 'Import format' for s in app.selectbox),
+    'Import': lambda app: any(u.label == 'Fills CSV or Bridge File' for u in app.file_uploader),
     'Export': lambda app: backup_controls(app),
     'Settings': lambda app: any(s.label == 'Time Zone' for s in app.selectbox),
 }
@@ -686,7 +684,7 @@ def test_the_connection_tab_has_no_switch_to_stop_reading_trades_and_no_study_se
     assert not hasattr(connection, 'READ_TRADES') and not hasattr(connection, 'reading')
     assert states(app.main) == ['Not recording'] and said(app.main.markdown, 'Not recording')
     texts = ' '.join([*(e.value for kind in ('markdown', 'caption', 'warning') for e in getattr(app.main, kind)),
-                      *(t.help or '' for t in app.main.text_input), connection.LIMITS])
+                      *(t.help or '' for t in app.main.text_input)])
     assert 'File setting' not in texts and 'Real Tick Data' not in texts and 'Capture Fills' not in texts
 
 
@@ -709,6 +707,40 @@ def test_the_study_can_be_installed_again_from_connection_after_it_has_reported_
     app.button(key='connection-study-install').click().run()                     # again: the copy there is kept
     assert said(app.success, 'The previous copy was kept as a backup.')
     assert (extensions / 'motivewave-journal.jar.previous').is_file()
+
+
+def test_what_an_upgrade_did_is_said_once_at_the_top_of_settings_until_ok():
+    journal = Journal()
+    journal._note('packed', {'prints': 3, 'note': 'Packed the recorded ticks, and every tick is kept.'})
+    journal.put('profiles', 'Broker export', {'path': '/nowhere/fills.csv', 'mode': 'executions', 'enabled': True})
+    with journal.connect() as db:                         # as 0.4.16 left it: one more step to take at the next open
+        db.execute("DELETE FROM journal_meta WHERE key='one_connection'")
+    app = open_app('Settings')
+    said_once = ('Packed the recorded ticks, and every tick is kept. The journal now reads only the study\'s own file; '
+                 '1 other watched file (Broker export) was removed, and the trades read from it stay.')
+    assert app.main.caption[0].value == said_once                               # one quiet line, at the top
+    assert not app.main.info and not app.main.get('dialog')
+    app.button(key='setup-upgrade-notes-ok').click().run()
+    assert not app.exception and not said(app.main.caption, 'Packed the recorded ticks')
+    assert Journal().unseen_notes() == {} and set(Journal().upgrade_note()) >= {'packed', 'connections'}
+    assert not said(open_app('Settings').main.caption, 'Packed the recorded ticks')          # seen: never again
+    # A journal with nothing to say shows nothing.
+    app.radio(key='journal-environment').set_value('Replay').run()
+    assert not app.exception and not any(b.key == 'setup-upgrade-notes-ok' for b in app.button)
+
+
+def test_a_step_a_named_journal_and_its_captures_both_took_is_said_once():
+    from mwjournal import journals
+    capture = Journal()
+    named = journals.open_named(capture, journals.create(capture, 'Practice', [('motivewave', 'paper')]))
+    days = 'Days now follow your Time Zone (America/New_York); day reviews moved to their dates.'
+    for journal in (capture, named):
+        journal._note('days', {'note': days})
+    app = open_app('Settings')
+    widget(app.sidebar.selectbox, 'Local journal').set_value(named.path.parent.name).run()
+    assert not app.exception and app.main.caption[0].value == days
+    app.button(key='setup-upgrade-notes-ok').click().run()
+    assert not app.exception and capture.unseen_notes() == named.unseen_notes() == {}
 
 
 def test_about_is_one_line_with_both_versions_and_the_data_folder_then_the_fine_print():

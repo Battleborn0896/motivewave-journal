@@ -387,7 +387,7 @@ A trade's setup is a **Setup** tag: click it, or make a new one with **+ Tag**. 
 1 to 5 stars for how well you traded your plan, the one grade a trade has; Stats compares and filters by it.
 **Tag score**, the sum of scores you give tags in Settings → Tags, Playbooks & Checklists, shows only once a
 tag has a score.
-Settings → Data → Connection also lets you pick a recorded instrument instead of retyping its symbol.
+A trade whose contract has no dollars-per-point multiplier asks for one on the trade itself.
 
 **Time Zone** is on **Settings**. Every time is shown in it, and every trading day runs from midnight to
 midnight there, in Live and Replay: the trade list's days, the calendar, Stats' dates, the Daily Report Card
@@ -418,8 +418,8 @@ you held at that moment, from their average entry. Profit banked by a partial ex
 - Points: directional price move from the **currently held average entry**, regardless of size.
   Scale-ins update that average; partial-exit realised profit is not added to price movement.
 - Ticks: those points divided by the contract's confirmed minimum price increment. Outright
-  ES/MES/NQ/MNQ are detected automatically; other symbols need a one-time size in MAE/MFE or
-  Settings → Data → Connection. Unknown sizes stay unavailable, not guessed. Average entries can produce fractional ticks.
+  ES/MES/NQ/MNQ are detected automatically; other symbols need their tick size set once, on a trade of that
+  contract. Unknown sizes stay unavailable, not guessed. Average entries can produce fractional ticks.
 - R: the currency excursion divided by the **risk to the trade's stop**. No stop means
   unavailable, not zero.
 
@@ -536,6 +536,14 @@ Experimental. Fixture tests exercise the Java writer through the Python reader a
 method-contract check resolves the installed MotiveWave method names, but neither test proves
 capture of your actual Rithmic/manual or replay fills inside a running MotiveWave session.
 That acceptance check is still required. The study never places, changes or cancels orders.
+
+What the study can and cannot see: it reads fills from MotiveWave internals outside its supported SDK, so a
+MotiveWave update can stop it reading fills; Settings → Data → Connection then shows the study's own message,
+and prices keep recording. A stop order counts when it is on your position's account and contract and on its
+closing side (a sell stop for a long, a buy stop for a short); take-profit orders are not read. Fees can be the
+platform's estimates, and such trades are flagged. Put the study on the chart you trade, contract or continuous:
+its prices go with trades of the same product whatever the contract month, and one study reads every fill of the
+account.
 
 ## SCS-style capture, with MotiveWave
 
@@ -681,6 +689,12 @@ Check **Settings** in the app. Its status line, and the word under the sidebar's
 
 In Replay the sidebar reads **No replay trades yet** until the first replay trade. To install the study
 again after an app update, use **Settings → Data → Connection → Install MotiveWave Study**.
+
+**Settings → Data → Connection** shows the same state, when the study last reported in and how many fills the
+journal holds, and installs the study again. Under it, a closed **Troubleshooting** holds the file being read, the
+journal's database, the study's own messages and any ticks it reported dropped. The app reads one file, the study's:
+there is no other file to watch and no path to type. A journal that watched other files in 0.4.16 or earlier stops
+reading them the first time it opens, keeps the trades they brought in, and Settings says so once.
 See [MotiveWave's import instructions](https://docs.motivewave.com/knowledge-base/study/add-a-custom-study).
 
 Use `MOTIVEWAVE_SDK` for a non-default SDK path and `JAVA_HOME` for the JDK. No SDK/native platform
@@ -711,6 +725,15 @@ data folder, so a restore can be undone by restoring that file. A backup from an
 up to date as it is restored; one from a newer version is refused. This zip, not the bridge file, is how a
 journal is recovered: the bridge file only holds what the app has not read yet. **Export Trades CSV** is the trades of
 the environment on screen, one row each, for a spreadsheet.
+
+**Import trades.** Settings → Data → **Import Trades** has one box for any file. A bridge file the study wrote
+(`.ndjson`, or lines of JSON) brings its events; one from the other environment is refused. Anything else is read
+as a CSV of fills, one row per fill: its columns are found by their names, and **Column Mapping** opens only when
+one it needs (Time, Contract, Side, Contracts, Price) is not found. Times written without an offset are read in the
+time zone chosen for the file, which starts on your Time Zone. Nothing is stored until the whole file has been read.
+Never import fills the study already recorded: they would count twice. **Add One Fill by Hand** takes a date and a
+time in your Time Zone. Prices cannot be imported, as MAE / MFE come only from the ticks the study records; prices
+imported by an earlier version stay stored.
 
 ## Tick accuracy and replay
 
@@ -770,7 +793,7 @@ Never count a fixture chart as proof of that integration.
 
 Stats separates gross/net closed-trade curves and recorded fee drag, including fees in R
 for trades with a stop. Fees are not slippage and a closed-trade curve is not marked
-account equity. The app also offers optional CSV/BYOD imports, daily reviews, a trades CSV, and one-file backup
+account equity. The app also offers optional CSV imports of fills, daily reviews, a trades CSV, and one-file backup
 and restore.
 
 ## Design and future work

@@ -489,12 +489,6 @@ def test_the_read_receipt_says_what_the_journal_holds_once_it_is_stored_and_only
         fh.write(lines([tick(5001, ts='2022-01-03T14:33:00Z')]))
     worker.poll()
     assert receipt_of(path) == (path.stat().st_size, path.read_bytes()[-256:])
-    # A watched CSV has none: only a bridge file is ever emptied.
-    csv = tmp_path / 'fills.csv'
-    csv.write_text('Account,Instrument,Side,Quantity,Avg Price,Date,Time,Trade ID\n')
-    journal.put('profiles', 'fills', {'mode': 'executions', 'path': str(csv), 'enabled': True})
-    worker.poll()
-    assert not (tmp_path / 'fills.csv.read').exists()
 
 
 def test_a_bridge_file_emptied_once_read_loses_no_line_and_gives_none_twice(tmp_path):

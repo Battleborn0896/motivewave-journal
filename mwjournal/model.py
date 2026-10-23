@@ -170,7 +170,7 @@ class Execution:
         if side not in ('buy', 'sell'):
             raise ValueError('Side must be buy or sell.')
         object.__setattr__(self, 'side', side)
-        object.__setattr__(self, 'qty', finite(self.qty, 'Quantity', True))
+        object.__setattr__(self, 'qty', finite(self.qty, 'Contracts', True))
         object.__setattr__(self, 'price', finite(self.price, 'Price'))
         object.__setattr__(self, 'commission', finite(self.commission, 'Commission'))
         object.__setattr__(self, 'ts', timestamp(self.ts))

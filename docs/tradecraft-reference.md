@@ -108,7 +108,7 @@ are explicitly defined, not asserted to be the vendor's exact calculations.
 | Custom scripts | Opt-in, two-second Web Worker; filtered display values; text/line/bar result | Deliberately not arbitrary DOM/CDN execution or vendor script compatibility |
 | Trade legs | Raw matching handles scale-ins and partial exits, exact fill roles/time/SL/TP, chart paths | Manual merge/explode of separately imported round trips with reversible provenance-aware excursions |
 | Multiple journals/accounts | Separate Live/Replay databases, currency/account filters and named dashboard/filter views | Named isolated journals, rename/clone/export/import across journal workspaces; account aliases |
-| Imports / sync | Manual fills, mapped CSV/history, watched files, experimental MotiveWave bridge | Dedicated parsers/connectors for every vendor-supported platform; direct R-Trader/Sierra/other integrations |
+| Imports / sync | Manual fills, mapped CSV of fills, experimental MotiveWave bridge | Dedicated parsers/connectors for every vendor-supported platform; direct R-Trader/Sierra/other integrations |
 | Backups | One zip of every journal (Live, Replay, named and archived) with tag library + workspace definitions/runs/check-ins/drafts/videos; restore from it after a copy of the current journal is saved; trades CSV | Media files in the backup and cloud synchronization (not required for the free local target) |
 
 This table is intentionally not all green. It is the acceptance checklist for subsequent work;

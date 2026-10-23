@@ -7,11 +7,10 @@ import pytest
 
 from mwjournal import Execution, Journal, PriceSample
 from mwjournal.chart import chart_window, closing_pairs, minute_candles, protection_segments, trade_chart
-from mwjournal.importers import apply_preview, preview_bridge, preview_csv, preview_prices_csv
+from mwjournal.importers import apply_preview, preview_bridge, preview_csv
 from mwjournal.metrics import excursions
 from mwjournal.matching import match
 from mwjournal.model import ENTRY_MISSING, ProtectionEvent, instant
-from mwjournal.sync import SyncWorker
 
 
 def round_trip(journal):
@@ -63,18 +62,14 @@ def seed_ticks(journal):
     return journal
 
 
-def test_ohlcv_survives_bridge_csv_and_sqlite(tmp_path):
+def test_ohlcv_survives_the_bridge_and_sqlite_and_a_revised_candle_replaces_it(tmp_path):
     event = {'type': 'bar', 'provider': 'motivewave-bars:1m', 'symbol': 'ESZ6',
              'ts': '2026-10-07T14:00:00Z', 'resolution_seconds': 60,
              'open': 5000, 'high': 5004, 'low': 4999, 'close': 5002, 'volume': 123}
     journal = Journal(tmp_path / 'journal.sqlite3')
     assert apply_preview(journal, preview_bridge(json.dumps(event)))['prices'] == 1
     assert journal.prices('ESZ6', 'motivewave-bars:1m')[0] == bar()
-    csv = 'Date,Time,Open,High,Low,Close,Volume\n2026-10-07,10:00:00,5000,5004,4999,5002,123\n'
-    preview = preview_prices_csv(csv, 'ESZ6', 'motivewave-bars:1m', timezone='America/New_York')
-    assert not preview.errors and preview.prices == [bar()]
-    revised = preview_prices_csv(csv.replace('5002,123', '5003,125'), 'ESZ6', 'motivewave-bars:1m',
-                                 timezone='America/New_York')
+    revised = preview_bridge(json.dumps({**event, 'close': 5003, 'volume': 125}))
     assert apply_preview(journal, revised)['prices'] == 1
     assert len(journal.prices('ESZ6', 'motivewave-bars:1m')) == 1
     assert journal.prices('ESZ6', 'motivewave-bars:1m')[0].close == 5003
@@ -225,22 +220,6 @@ def test_unlinked_protective_order_is_an_import_error():
     event['entry_execution_id'] = 'entry'
     preview = preview_bridge(json.dumps(event))
     assert not preview.errors and preview.count == 1
-
-
-def test_price_csv_watcher_imports_updates_and_recalculates(tmp_path):
-    journal = Journal(tmp_path / 'journal.sqlite3')
-    trade = round_trip(journal)
-    path = tmp_path / 'motivewave-bars.csv'
-    path.write_text('Date,Time,Open,High,Low,Close,Volume\n2026-10-07,14:00:00,5000,5004,4999,5002,123\n')
-    journal.put('profiles', 'prices', {'enabled': True, 'mode': 'prices', 'path': str(path),
-                                    'symbol': 'ESZ6', 'provider': 'mw-csv', 'timezone': 'UTC',
-                                    'resolution_seconds': 60})
-    worker = SyncWorker(journal)
-    worker.poll()
-    assert journal.prices('ESZ6', 'mw-csv')[0].open == 5000
-    assert journal.best_metric(trade)['precision'] == 'estimated-bars'
-    worker.poll()
-    assert len(journal.prices('ESZ6', 'mw-csv')) == 1
 
 
 def test_motivewave_style_execution_csv_supports_separate_date_and_time():

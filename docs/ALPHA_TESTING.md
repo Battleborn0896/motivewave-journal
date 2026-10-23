@@ -33,7 +33,8 @@ alpha is not Authenticode-signed.
    holding time and the 30 minutes after its exit from MotiveWave's tick history, for the chart's current
    contract, continuous chart or not.
 5. Settings should now read **Recording** in green. **Not recording** (grey) has one line under it saying
-   what to do; **Needs attention** (red) means **Settings → Data → Connection** says what went wrong.
+   what to do; **Needs attention** (red) means **Settings → Data → Connection** says what went wrong. There is
+   nothing to type there: the app reads the study's own file, and **Troubleshooting** holds the details.
 6. If Settings says the study is out of date, click **Install MotiveWave Study**: a study from 0.3.6 on hands
    over to the new one by itself; with an older one, Settings tells you to quit MotiveWave and open it again.
 
@@ -47,7 +48,15 @@ Any older version updates straight to the newest; there is no need to install th
    Trades, reviews, tags and settings stay: they live in the app's data folder, not inside the app, and the
    new version brings them up to date by itself the first time it opens.
 3. Open the app. If Settings says the study is out of date, click **Install MotiveWave Study**, as in step 6.
+   Anything the update changed in your journal is said once in one line at the top of Settings; **OK** hides it.
 4. What changed in each version is under *What's new* at the top of the README and on each release's page.
+
+### Import trades
+
+For trades the study did not record, open **Settings → Data → Import Trades** and drop the file in its one box: a
+CSV with one row per fill, or a bridge file the study wrote. The app tells which it is and refuses a bridge file from
+the other environment. **Column Mapping** opens only when a column it needs is not found. Never import fills the
+study already recorded: they would count twice. **Add One Fill by Hand** takes a date and a time in your Time Zone.
 
 ### Back up and restore
 
@@ -103,7 +112,7 @@ with missing prices, recorded capture gaps or ambiguous OHLC stop ordering.
 - Live simulation or Replay, plus whether Replay used real tick data
 - Exact contract (for example `NQZ6`) and the chart type/timeframe
 - Steps to reproduce and what was expected
-- A screenshot of the error, if useful
+- A screenshot of the error, if useful, and of **Settings → Data → Connection → Troubleshooting**
 - The app's `desktop/backend.log`, after checking it for anything the tester does not want to share
 
 Never include broker passwords, API keys or unrelated account data. A tester may redact account IDs

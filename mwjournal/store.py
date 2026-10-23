@@ -26,6 +26,8 @@ from .tags import DAY
 from .workspace import Workspace, read as read_workspace, time_zone, write as write_workspace
 
 SCHEMA_VERSION = 4
+# The one connection a journal reads, the study's bridge file (sync.py): its row in 'profiles' and 'sync_status'.
+DEFAULT_CONNECTION = 'MotiveWave'
 # The rules trades are measured by. Raise it when they change: the watcher then measures every trade of a
 # journal measured under older rules once more, from its stored prices, and records this number in it.
 # 1: a trade's prices are those of its product (model.trade_prices).
@@ -420,6 +422,24 @@ def _prints_away_from_trades(db) -> int:
     return removed
 
 
+def _one_connection(db) -> None:
+    """Once per journal, inside the caller's transaction. In 0.4.16 and earlier a journal could also watch CSV files
+    and other bridge files. Now it reads one file, the study's (sync.ensure_default_connection, which also points it
+    at the file study 0.3.10 always writes): every other connection goes, with its last status and read position.
+    Fills and prices already read stay. Nothing stored is rewritten, so this needs no backup; the upgrade note says
+    what was removed under 'connections'."""
+    removed = [name for (name,) in db.execute('SELECT name FROM profiles WHERE name<>?', (DEFAULT_CONNECTION,))]
+    for table in ('profiles', 'sync_status', 'bridge_offsets'):
+        db.executemany(f'DELETE FROM {table} WHERE name=?', [(name,) for name in removed])
+    db.execute("INSERT OR REPLACE INTO journal_meta VALUES('one_connection',?)", (str(len(removed)),))
+    if removed:
+        one = len(removed) == 1
+        note = (f"The journal now reads only the study's own file; {len(removed)} other watched "
+                f'file{"" if one else "s"} ({", ".join(removed)}) {"was" if one else "were"} removed, and the trades '
+                f'read from {"it" if one else "them"} stay.')
+        _add_note(db, 'connections', {'removed': removed, 'note': note})
+
+
 def _add_note(db, name: str, data: dict):
     """Records what a one-time step did in the upgrade note (Journal.upgrade_note) under `name`, inside the caller's
     transaction."""
@@ -487,6 +507,8 @@ class Journal(Workspace):
             if not db.execute("SELECT 1 FROM journal_meta WHERE key='stops_from_risks'").fetchone():
                 _stops_from_risks(db)
             _answers_to_tags(db)
+            if not db.execute("SELECT 1 FROM journal_meta WHERE key='one_connection'").fetchone():
+                _one_connection(db)
             trim = not db.execute("SELECT 1 FROM journal_meta WHERE key='prices_trimmed'").fetchone()
         if trim:
             self._trim_prices()
@@ -614,12 +636,32 @@ class Journal(Workspace):
     def upgrade_note(self) -> dict | None:
         """What upgrading this journal did, or None: the last schema upgrade (from, to, its backup); under 'days',
         the move to one time zone (_schema_4); under 'prices', the prints recorded away from trades that were removed
-        once (_trim_prices); under 'packed', the first packing of the recorded ticks (pack_prices); and under
-        'answers', the typed setups and 'Followed my plan' answers that became tags (_answers_to_tags). Each one-time
-        step has a note in plain words."""
+        once (_trim_prices); under 'packed', the first packing of the recorded ticks (pack_prices); under
+        'answers', the typed setups and 'Followed my plan' answers that became tags (_answers_to_tags); and under
+        'connections', the watched files that were removed (_one_connection). Each one-time step has a note in plain
+        words, which Settings shows once (unseen_notes)."""
         with self.connect() as db:
             row = db.execute("SELECT value FROM journal_meta WHERE key='schema_upgrade'").fetchone()
         return json.loads(row[0]) if row else None
+
+    def unseen_notes(self) -> dict[str, str]:
+        """The plain sentence of each one-time step (upgrade_note) the trader has not seen yet, by step, oldest
+        first. Settings shows them in one line until its OK marks them seen (notes_seen)."""
+        with self.connect() as db:
+            row = db.execute("SELECT value FROM journal_meta WHERE key='notes_seen'").fetchone()
+        seen = set(json.loads(row[0])) if row else set()
+        steps = sorted((str(step.get('at', '')), name, step['note'])
+                       for name, step in (self.upgrade_note() or {}).items()
+                       if isinstance(step, dict) and isinstance(step.get('note'), str) and name not in seen)
+        return {name: note for _, name, note in steps}
+
+    def notes_seen(self, names) -> None:
+        """Marks these steps' notes seen, so Settings no longer shows them."""
+        with self.connect() as db:
+            db.execute('BEGIN IMMEDIATE')
+            row = db.execute("SELECT value FROM journal_meta WHERE key='notes_seen'").fetchone()
+            seen = sorted({*(json.loads(row[0]) if row else []), *names})
+            db.execute("INSERT OR REPLACE INTO journal_meta VALUES('notes_seen',?)", (encode(seen),))
 
     def pack_prices(self) -> int:
         """Packs the study's prints stored before the previous pass into one row per symbol, source and minute
@@ -1505,12 +1547,6 @@ class Journal(Workspace):
             raise ValueError('Unsupported journal table.')
         with self.connect() as db:
             return {r[0]: json.loads(r[1]) for r in db.execute(f'SELECT * FROM {table}')}
-
-    def remove_profile(self, name: str):
-        with self.connect() as db:
-            # Its last status and read position go too, or a removed connection keeps reporting.
-            for table in ('profiles', 'sync_status', 'bridge_offsets'):
-                db.execute(f'DELETE FROM {table} WHERE name=?', (name,))
 
     def clear_status(self, name: str):
         with self.connect() as db:

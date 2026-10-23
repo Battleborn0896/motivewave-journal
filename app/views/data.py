@@ -2,7 +2,7 @@
 
 Import Trades, Export & Backup (one zip that backs up the whole journal and puts it back, and this
 environment's trades as a CSV), Journals & Accounts, and Connection (what the study reports, installing it
-again, the bridge file, other watched files and multipliers). Only the open tab is drawn: reading a chosen backup
+again, and troubleshooting). Only the open tab is drawn: reading a chosen backup
 is not free. Settings links each tab from its tile, and common.navigation opens any of them by its old name.
 """
 

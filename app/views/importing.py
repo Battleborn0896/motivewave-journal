@@ -1,53 +1,40 @@
-"""Import: fills from a CSV with a column mapper, a bridge file by hand, your own prices, one manual fill.
+"""Import, on the Data page: one box takes a file and tells what it holds; one fill can also be added by hand.
 
-Everything is previewed first; nothing reaches the journal until the whole file has parsed.
+A bridge file the study wrote (.ndjson, .jsonl, or lines of JSON objects) brings its events, and one from the other
+environment is refused. Anything else is read as a CSV of fills, one row per fill: its columns are found by their
+names, and Column Mapping opens only when a required one is not found. Times written without an offset are read in
+the time zone chosen for the file, which opens on the journal's Time Zone. Everything is previewed first; nothing
+reaches the journal until the whole file has parsed.
 """
 
 from __future__ import annotations
 
 import datetime as dt
+import hashlib
 
 import pandas as pd
 import streamlit as st
 
 import common
 import theme
-from mwjournal import Execution
-from mwjournal.importers import (ALIASES, apply_preview, csv_rows, mapping_for, preview_bridge, preview_csv,
-                                 preview_prices_csv)
-
-FORMATS = {'executions': 'Execution CSV · map columns', 'bridge': 'Bridge file · NDJSON'}
+from mwjournal import Execution, humanize
+from mwjournal.importers import (LABELS, apply_preview, csv_rows, is_bridge, mapping_for, missing_columns,
+                                 preview_bridge, preview_csv)
+from mwjournal.model import timestamp
 
 
 def render(journal, rows) -> None:
-    theme.section('Import Trades', help='For trades the study did not capture. One row per fill; an export of '
-                  'cumulative order totals is not a list of fills. Fills the study already captured must not be '
-                  'imported again from a CSV: the two sources cannot be recognised as the same trades.')
-    mode = st.selectbox('Import format', list(FORMATS), format_func=FORMATS.get, key=common.key(journal, 'import-format'))
-    timezone = st.text_input('Export time zone for dates without an offset', 'America/New_York',
-                             key=common.key(journal, 'import-tz'),
-                             help='Times written without an offset, such as 10:00:23, are read in this zone.')
-    provider = st.text_input('Source identity', 'csv', key=common.key(journal, 'import-provider'),
-                             help='Keep this the same across imports so repeated execution IDs are recognised.')
-    upload = st.file_uploader('Executions / bridge events', type=['csv', 'txt', 'jsonl', 'ndjson'],
+    theme.section('Import Trades')
+    st.caption('For trades the study did not record: a CSV with one row per fill, or a bridge file. Never import '
+               'fills the study already recorded: they would count twice.')
+    upload = st.file_uploader('Fills CSV or Bridge File', type=['csv', 'txt', 'jsonl', 'ndjson'],
                               key=common.key(journal, 'import-file'))
     if upload:
         try:
             text = upload.getvalue().decode('utf-8-sig')
-            if mode == 'bridge':
-                preview = preview_bridge(text, timezone=timezone, dataset=journal.dataset)
-            else:
-                headers, raw = csv_rows(text)
-                guessed = mapping_for(headers)
-                with st.expander('Column Mapping', expanded=True):
-                    columns = st.columns(3)
-                    mapping = {name: columns[i % 3].selectbox(name, [''] + headers,
-                               index=([''] + headers).index(guessed.get(name, '')), key='map-' + name)
-                               for i, name in enumerate(ALIASES)}
-                st.dataframe(pd.DataFrame(raw).head(12), hide_index=True)
-                st.session_state[common.MAPPING_KEY] = mapping   # offered again for a watched CSV
-                preview = preview_csv(text, timezone=timezone, mapping=mapping, provider=provider)
-            st.write(f'{preview.count} records ready · {preview.skipped} empty/unfilled events skipped')
+            preview = (preview_bridge(text, dataset=journal.dataset) if is_bridge(upload.name, text)
+                       else fills_preview(journal, text))
+            st.write(f'{preview.count} records ready' + (f' · {preview.skipped} skipped' if preview.skipped else ''))
             for error in preview.errors[:10]:
                 st.error(error)
             if st.button('Import Into My Journal', disabled=bool(preview.errors) or not preview.count,
@@ -56,46 +43,57 @@ def render(journal, rows) -> None:
                 common.recalculate(journal)
         except (ValueError, UnicodeError) as exc:
             st.error(str(exc))
-    with st.expander('Import My Own Prices'):
-        symbol = st.text_input('Traded instrument symbol', 'ESZ6', key=common.key(journal, 'prices-symbol'))
-        source = st.text_input('Price source label', 'my-data', key=common.key(journal, 'prices-source'))
-        resolution = st.selectbox('Price file resolution', [0, 1, 60, 300, 900], key=common.key(journal, 'prices-resolution'),
-                                  format_func=lambda s: 'Ticks' if s == 0 else f'{s} second bars')
-        proxy = st.checkbox('Price file uses a continuous contract/proxy', key=common.key(journal, 'prices-proxy'))
-        prices_file = st.file_uploader('Prices CSV · timestamp, open/high/low/close + volume, or price ticks; '
-                                       'optional bid/ask', type=['csv'], key=common.key(journal, 'prices-file'),
-                                       help='Prices must already be on the traded instrument\'s price scale. Never '
-                                            'import ETF or other-asset prices as futures prices.')
-        if prices_file and st.button('Import Prices', key=common.key(journal, 'prices-apply'),
-                                     help='Stores the prices and measures MAE / MFE of the trades they cover.'):
-            try:
-                preview = preview_prices_csv(prices_file.getvalue().decode('utf-8-sig'), symbol, source,
-                                             timezone=timezone, resolution_seconds=resolution, proxy=proxy)
-                for error in preview.errors[:10]:
-                    st.error(error)
-                if not preview.errors:
-                    common.show_result(apply_preview(journal, preview))
-                    common.recalculate(journal)
-            except (ValueError, UnicodeError) as exc:
-                st.error(str(exc))
+    manual_fill(journal)
+
+
+def fills_preview(journal, text: str):
+    """A CSV of fills: the file's time zone, its columns under their plain names, its first rows, and the preview."""
+    headers, raw = csv_rows(text)
+    zone = common.display_zone(journal)
+    choices = common.timezone_choices(zone)
+    timezone = st.selectbox('Time Zone of the File', choices, index=choices.index(zone), format_func=common.zone_label,
+                            key=common.key(journal, 'import-tz'),
+                            help='Times written without an offset, such as 10:00:23, are read in this zone.')
+    guessed = mapping_for(headers)
+    found = hashlib.sha256('\n'.join(headers).encode()).hexdigest()[:8]     # another file's columns: new boxes
+    options = ['', *headers]
+    with st.expander('Column Mapping', expanded=bool(missing_columns(guessed))):
+        columns = st.columns(3)
+        mapping = {name: columns[i % 3].selectbox(label, options, index=options.index(guessed[name]),
+                                                  key=common.key(journal, f'map-{found}-{name}'))
+                   for i, (name, label) in enumerate(LABELS.items())}
+    st.dataframe(pd.DataFrame(raw).head(12), hide_index=True)
+    return preview_csv(text, timezone=timezone, mapping=mapping)
+
+
+def manual_fill(journal) -> None:
+    """One fill typed in, its date and time read in the journal's Time Zone."""
+    zone = common.display_zone(journal)
     with st.expander('Add One Fill by Hand'):
-        # The suggested time is fixed once per visit: a default that moved with the clock would make
-        # the box a new widget on every run, and the time typed into it would be dropped on submit.
-        stamp = common.key(journal, 'manual-ts')
-        st.session_state.setdefault(stamp, dt.datetime.now(dt.timezone.utc).isoformat(timespec='seconds'))
+        # The suggested day and time are fixed once per visit: a default that moved with the clock would make the
+        # boxes new widgets on every run, and what was typed into them would be dropped on submit.
+        day_key, time_key = common.key(journal, 'manual-day'), common.key(journal, 'manual-time')
+        now = humanize.to_zone(dt.datetime.now(dt.timezone.utc), zone)
+        st.session_state.setdefault(day_key, now.date())
+        st.session_state.setdefault(time_key, now.time().replace(second=0, microsecond=0))
         with st.form(common.key(journal, 'manual-fill')):
             c1, c2, c3 = st.columns(3)
-            account = c1.text_input('Account', 'personal')
-            symbol = c2.text_input('Symbol', 'ESZ6')
-            side = c3.selectbox('Side', ['buy', 'sell'])
+            account = c1.text_input('Account', placeholder='SIM')
+            symbol = c2.text_input('Contract', placeholder='ESZ6')
+            side = c3.selectbox('Side', ['buy', 'sell'], format_func=str.title)
             c1, c2, c3 = st.columns(3)
-            qty = c1.number_input('Quantity', min_value=.0001, value=1.)
-            price = c2.number_input('Fill price', value=0., format='%.4f')
-            fees = c3.number_input('Fill commission/fees', min_value=0., value=0.)
-            ts = st.text_input('Fill timestamp with timezone', key=stamp)
+            contracts = c1.number_input('Contracts', min_value=.0001, value=1.)
+            price = c2.number_input('Price', value=0., format='%.4f')
+            fees = c3.number_input('Fees', min_value=0., value=0.)
+            c1, c2, _ = st.columns(3)
+            day = c1.date_input('Date', key=day_key)
+            clock = c2.time_input(f'Time · {zone}', key=time_key, step=60)
             if st.form_submit_button('Record Fill'):
                 try:
-                    fill = Execution('manual', account, symbol, side, qty, price, ts, commission=fees)
+                    if not account.strip() or not symbol.strip():
+                        raise ValueError('Enter the account and the contract.')
+                    fill = Execution('manual', account, symbol, side, contracts, price,
+                                     timestamp(f'{day.isoformat()} {clock.isoformat()}', zone), commission=fees)
                     count = journal.ingest([(fill, {'entered_manually': True})])
                     common.recalculate(journal)
                     st.success(f'Recorded {count} new fill.' if count else 'That fill is already in the journal.')

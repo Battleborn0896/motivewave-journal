@@ -1,4 +1,7 @@
-"""Preview before commit: nothing reaches the journal until a whole file or batch has parsed."""
+"""Preview before commit: nothing reaches the journal until a whole file or batch has parsed.
+
+A file is a bridge file the study wrote (is_bridge) or a CSV of fills, one row per fill, its columns found by their
+names (ALIASES) or chosen by the trader under their plain names (LABELS)."""
 
 from __future__ import annotations
 
@@ -10,6 +13,12 @@ from dataclasses import dataclass, field
 from .model import Execution, PriceSample, ProtectionEvent, finite, instant, timestamp
 from .scope import event_mode
 
+# Each field of a fill, by the name a trader knows it by, in the order Column Mapping asks for them.
+LABELS = {'ts': 'Time', 'date': 'Date', 'symbol': 'Contract', 'side': 'Side', 'qty': 'Contracts', 'price': 'Price',
+          'commission': 'Fees', 'account': 'Account', 'execution_id': 'Fill ID', 'order_id': 'Order ID',
+          'point_value': 'Dollars per point', 'currency': 'Currency'}
+REQUIRED = ('ts', 'symbol', 'side', 'qty', 'price')
+# The column names each field is found by, without asking.
 ALIASES = {
     'symbol': ('symbol', 'instrument', 'ticker'),
     'side': ('side', 'buy/sell', 'action', 'direction'),
@@ -59,9 +68,25 @@ def csv_rows(text: str) -> tuple[list[str], list[dict]]:
         raise ValueError(f'The CSV could not be read: {exc}. Check its quoting and delimiter.') from exc
 
 
+def is_bridge(name: str, text: str) -> bool:
+    """A bridge file: named .ndjson or .jsonl, or its first line a JSON object. Anything else is read as a CSV."""
+    if name.lower().endswith(('.ndjson', '.jsonl')):
+        return True
+    first = next((line for line in text.split('\n') if line.strip()), '')
+    try:
+        return isinstance(json.loads(first), dict)
+    except ValueError:
+        return False
+
+
 def mapping_for(headers: list[str]) -> dict:
     lower = {h.strip().lower(): h for h in headers}
     return {field: next((lower[a] for a in aliases if a in lower), '') for field, aliases in ALIASES.items()}
+
+
+def missing_columns(mapping: dict) -> list[str]:
+    """The plain names of the required fields no column is chosen for."""
+    return [LABELS[name] for name in REQUIRED if not mapping.get(name)]
 
 
 def preview_csv(text: str, *, timezone='America/New_York', mapping=None,
@@ -69,9 +94,9 @@ def preview_csv(text: str, *, timezone='America/New_York', mapping=None,
     """One row per individual fill. Cumulative per-order exports are not fills and do not belong here."""
     headers, rows = csv_rows(text)
     columns = mapping if mapping is not None else mapping_for(headers)
-    missing = [name for name in ('symbol', 'side', 'qty', 'price', 'ts') if not columns.get(name)]
+    missing = missing_columns(columns)
     if missing:
-        raise ValueError('Map these required columns: ' + ', '.join(missing))
+        raise ValueError('Choose a column for ' + ', '.join(missing) + ' under Column Mapping.')
     result = Preview()
     for n, raw in enumerate(rows, start=2):
         if not any(v for v in raw.values()):
@@ -86,10 +111,10 @@ def preview_csv(text: str, *, timezone='America/New_York', mapping=None,
             if value('date') and str(columns.get('ts', '')).strip().lower() in ('time', 'fill time'):
                 stamp = value('date') + ' ' + stamp
             fill = Execution(provider, value('account', account), value('symbol'), value('side'),
-                             finite(value('qty'), 'Quantity'), finite(value('price'), 'Price'),
+                             finite(value('qty'), 'Contracts'), finite(value('price'), 'Price'),
                              timestamp(stamp, timezone), value('execution_id'), value('order_id'),
-                             finite(value('commission', 0), 'Commission'),
-                             finite(pv, 'Point value', True) if pv is not None and pv != '' else None,
+                             finite(value('commission', 0), LABELS['commission']),
+                             finite(pv, LABELS['point_value'], True) if pv is not None and pv != '' else None,
                              value('currency', 'USD'), commission_known=value('commission') != '')
             result.fills.append((fill, raw))
         except (ValueError, TypeError) as exc:
@@ -242,31 +267,3 @@ def apply_preview(journal, preview: Preview) -> dict:
         reports += 1
     return {'executions': added, 'prices': prices, 'metrics': reports, 'gaps': gaps, 'protection': protection,
             'duplicates': len(preview.fills) - added, 'relabelled': relabelled, 'unresolved': unresolved}
-
-
-def preview_prices_csv(text: str, symbol: str, source: str, *, timezone='UTC', resolution_seconds=60,
-                       proxy=False) -> Preview:
-    headers, rows = csv_rows(text)
-    columns = {h.strip().lower(): h for h in headers}
-    def get(row, names, default=None):
-        return next((row[columns[n]] for n in names if n in columns and row[columns[n]] != ''), default)
-    result = Preview()
-    for n, row in enumerate(rows, 2):
-        try:
-            stamp = get(row, ['ts', 'timestamp', 'datetime', 'date'])
-            # A MotiveWave data export may split Date and Time into separate columns.
-            if 'date' in columns and 'time' in columns and not any(k in columns for k in ('ts', 'timestamp', 'datetime')):
-                stamp = f"{get(row, ['date'], '')} {get(row, ['time'], '')}"
-            if stamp is None:
-                raise ValueError('Need a timestamp/datetime column.')
-            row_symbol = get(row, ['symbol'], symbol)
-            price = get(row, ['last', 'price', 'close'])
-            high, low = get(row, ['high'], price), get(row, ['low'], price)
-            result.prices.append(PriceSample(row_symbol, timestamp(stamp, timezone), source, high, low,
-                                            resolution_seconds, get(row, ['bid']), get(row, ['ask']), proxy,
-                                            get(row, ['open']) if resolution_seconds else None,
-                                            get(row, ['close']) if resolution_seconds else None,
-                                            get(row, ['volume'])))
-        except (ValueError, TypeError) as exc:
-            result.errors.append(f'Row {n}: {exc}')
-    return result
