@@ -56,8 +56,8 @@ def render(journal, rows) -> None:
     tag_controls.day_panel(journal, date)
     if timezone != tag_zone and tagging.ordered_groups(library, level='day'):
         st.caption(f'Day tags follow calendar days in {tag_zone}, the day-tag time zone.',
-                   help='Set under Setup → Tags, Playbooks & Checklists → Categories. A trade opened late in the '
-                        'evening can fall on another date there than in the session time zone above.')
+                   help='Set under Settings → Tags, Playbooks & Checklists → Categories; a late-evening trade can '
+                        'fall on another date there than in the time zone above.')
     # Each box saves when it changes, as a trade's notes do: nothing typed is lost by clicking a trade or
     # another day. The keys carry the day and zone, so each day shows its own review.
     def save(field, widget):

@@ -1,7 +1,7 @@
-"""Setup: one status line, the one step that is missing, Time Zone and MAE / MFE Units with a small Advanced
-heading, three pages of real setup, one About line, and a sidebar with nothing to unfold. Everything that
-was a Setup page before 0.4.5 stays two clicks from the sidebar. Disposable journals only, in a temporary
-data home."""
+"""Settings: one status line in one of three words, the one step that is missing in one line, Time Zone and
+MAE / MFE Units with a small Advanced heading, three pages of real setup, one About line, and a sidebar with
+nothing to unfold. Everything that was its own page before 0.4.5 stays two clicks from the sidebar. Disposable
+journals only, in a temporary data home."""
 
 import datetime as dt
 from types import SimpleNamespace
@@ -13,6 +13,7 @@ import runtime
 from mwjournal import Execution, Journal, PriceSample, paths
 from test_app import (CREDIT, backup_controls, heartbeat, helped, listed, open_app, press, said, show, states,
                       status_of, study_writes, wait_until, widget)
+from test_capture import fill, lines
 from test_chart import seed_preview, seed_ticks
 from views import connection, setup
 
@@ -24,8 +25,8 @@ def home(tmp_path, monkeypatch):
     runtime.stop_all()
 
 
-def link(state='Connected', tone='good', version='0.3.1', *, heard=None, connector=paths.STUDY_CONNECTOR):
-    label = state + (f' · study {version}' if state == 'Connected' and version else '')
+def link(state='Recording', tone='good', version='0.3.1', *, heard=None, connector=paths.STUDY_CONNECTOR):
+    label = state + (f' · study {version}' if state == 'Recording' and version else '')
     return SimpleNamespace(state=state, tone=tone, label=label, version=version, heard=heard, connector=connector)
 
 
@@ -36,8 +37,8 @@ def order(app, *texts):
 
 
 def steps_shown(app):
-    """The titles of the setup steps on the page."""
-    return [title for title, _, _ in setup.STEPS.values() if said(app.main.markdown, f'**{title}**')]
+    """The steps on the page, known by the ? beside their line: never more than one."""
+    return [name for name, (_, explained) in setup.STEPS.items() if helped(app.main.markdown, explained)]
 
 
 def status_line(app):
@@ -64,11 +65,13 @@ def live_bar(symbol, price, ts):
 # ---------------------------------------------------------------- the first page
 
 def test_the_first_page_reads_status_then_the_missing_step_then_two_settings_then_advanced_then_the_pages():
-    app = open_app('Setup')
-    assert states(app.main) == ['Waiting For Study'] and steps_shown(app) == ['Install the Study']
-    status, step, settings, advanced, pages = order(
-        app, "data-state='Waiting For Study'", '**Install the Study**', '>Settings<', '>Advanced<', '>More Setup<')
-    assert status < step < settings < advanced < pages
+    app = open_app('Settings')
+    assert states(app.main) == ['Not recording'] and steps_shown(app) == ['install']
+    status, step, advanced, pages = order(
+        app, "data-state='Not recording'", 'then add the study to your chart', '>Advanced<', '>More Settings<')
+    assert status < step < advanced < pages
+    # No heading repeats the page's name, and the step is one plain line: no box, no title.
+    assert not said(app.main.markdown, "<div class='mwj-section'>Settings<") and not said(app.main.markdown, '**Install')
     # Time Zone and MAE / MFE Units, then hide weekends under Advanced: nothing else to set here. There is no
     # MAE / MFE Accuracy: only recorded ticks measure a trade.
     assert [s.label for s in app.main.selectbox] == ['Time Zone', 'MAE / MFE Units']
@@ -78,10 +81,11 @@ def test_the_first_page_reads_status_then_the_missing_step_then_two_settings_the
     assert not any('filter' in s.label.lower() for s in app.main.selectbox)  # the saved filter lives in Filters
     assert [b.label for b in app.main.button if b.key and b.key.startswith('setup-open-')] == [
         'Tags, Playbooks & Checklists ›', 'Rating Systems ›', 'Data ›']
+    assert common.NAV_LABELS['Settings'] == 'Settings' and setup.LABELS[setup.HOME] == 'Settings'
 
 
 def test_the_first_page_has_no_paths_raw_errors_or_paragraphs_of_jargon():
-    app = open_app('Setup')
+    app = open_app('Settings')
     visible = ' '.join(e.value for kind in ('markdown', 'info', 'code') for e in getattr(app.main, kind))
     assert str(paths.bridge_file('live')) not in visible and 'motivewave.ndjson' not in visible
     assert 'Scale-ins and partial exits' not in visible                    # how trades are made is in the ?
@@ -89,18 +93,18 @@ def test_the_first_page_has_no_paths_raw_errors_or_paragraphs_of_jargon():
     assert helped(app.main.markdown, "real ticks of its holding time from MotiveWave's history")
 
 
-def test_when_the_study_records_setup_is_one_green_line_naming_the_contracts_and_nothing_else():
+def test_when_the_study_records_settings_is_one_green_line_naming_the_contracts_and_nothing_else():
     now = dt.datetime.now(dt.timezone.utc).replace(microsecond=0)
     at = lambda minutes: (now - dt.timedelta(minutes=minutes)).isoformat()
     study_writes([heartbeat(), live_bar('ESZ6', 5000, at(2)), live_bar('NQZ6', 20000, at(2)),
                   live_fill('n1', 'NQZ6', 'buy', 20000, at(6)), live_fill('n2', 'NQZ6', 'sell', 20004, at(4))])
-    app = open_app('Setup')
+    app = open_app('Settings')
     wait_until(lambda: status_of().get('heartbeat') and Journal().trades())
     app.run()
     line = status_line(app)
-    assert states(app.main) == ['Connected']
-    assert f'>Connected · recording NQZ6, ESZ6 · study {paths.STUDY_VERSION}<' in line     # traded first
-    assert "data-state='Connected'" in line and f'color:{setup.theme.UP}' in line             # green
+    assert states(app.main) == ['Recording'] and states(app.sidebar) == ['Recording']
+    assert f'>Recording · NQZ6, ESZ6 · study {paths.STUDY_VERSION}<' in line              # traded first
+    assert "data-state='Recording'" in line and f'color:{setup.theme.UP}' in line            # green
     assert 'mwj-status-note' not in line and steps_shown(app) == []                          # one line, no step
     assert not any(b.label == setup.INSTALL for b in app.button)
     assert helped(app.main.markdown, 'prices or fills for in the last hour')
@@ -108,66 +112,92 @@ def test_when_the_study_records_setup_is_one_green_line_naming_the_contracts_and
 
 def test_a_study_that_has_reported_no_prices_yet_leaves_the_contracts_out():
     study_writes([heartbeat()])
-    app = open_app('Setup')
+    app = open_app('Settings')
     wait_until(lambda: status_of().get('heartbeat'))
     app.run()
-    assert f'>Connected · study {paths.STUDY_VERSION}<' in status_line(app) and steps_shown(app) == []
+    assert f'>Recording · study {paths.STUDY_VERSION}<' in status_line(app) and steps_shown(app) == []
 
 
-def test_before_the_study_reports_in_setup_asks_to_install_it_then_to_add_it_to_a_chart(extensions_folder):
-    app = open_app('Setup')
-    assert steps_shown(app) == ['Install the Study'] and said(app.main.markdown, 'then add the study to your chart')
+def test_before_the_study_reports_in_settings_asks_to_install_it_then_to_add_it_to_a_chart(extensions_folder):
+    app = open_app('Settings')
+    assert steps_shown(app) == ['install'] and said(app.main.markdown, 'then add the study to your chart')
     assert 'mwj-status-note' not in status_line(app)                  # the step says what to do, once
+    assert f'color:{setup.theme.MUTED}' in status_line(app)           # grey: nothing is wrong, nothing records yet
     if connection.JAR.is_file():
         press(app, setup.INSTALL)
         assert (extensions_folder / 'motivewave-journal.jar').read_bytes() == connection.JAR.read_bytes()
         # The click itself redraws the page: the next step is already shown, and the button is gone.
-        assert steps_shown(app) == ['Add It to Your Chart'] and not app.success
-        assert said(app.main.markdown, 'Add **Journal → MotiveWave Journal** to the chart you trade')
+        assert steps_shown(app) == ['chart'] and not app.success
         assert not any(b.label == setup.INSTALL for b in app.button)
     else:
         install_the_study(extensions_folder)
     app.run()
-    assert steps_shown(app) == ['Add It to Your Chart'] and states(app.main) == ['Waiting For Study']
-    step = next(m for m in app.main.markdown if '**Add It to Your Chart**' in m.value)
-    assert ('add **Journal → MotiveWave Journal** to the chart you trade' in step.value
-            or 'Add **Journal → MotiveWave Journal** to the chart you trade' in step.value)
+    assert steps_shown(app) == ['chart'] and states(app.main) == ['Not recording']
+    step = next(m for m in app.main.markdown if 'Add **Journal → MotiveWave Journal**' in m.value)
+    assert step.value.startswith('Add **Journal → MotiveWave Journal** to the chart you trade.')
     assert 'contract chart (ESZ6) or a continuous one (ES) both work' in step.proto.help
     # Shown only until the study reports in, so it never lingers once the study is on a chart.
     assert "Not in MotiveWave's study list yet? Quit MotiveWave and open it again." in step.value
     assert 'There is nothing to set.' in step.value and 'File' not in step.value
-    assert 'To install it again, use Data → Connection.' in step.proto.help
     assert not any(b.label == setup.INSTALL for b in app.button)
 
 
-def test_replay_waiting_for_a_replay_chart_asks_for_the_chart_once_live_has_heard_the_study():
+def test_an_empty_replay_journal_says_no_replay_trades_yet_until_its_first_trade():
     study_writes([heartbeat()])
-    app = open_app('Setup')
+    app = open_app()
     wait_until(lambda: status_of().get('heartbeat'))
     app.radio(key='journal-environment').set_value('Replay').run()
-    assert not app.exception and states(app.main) == ['Waiting For Study']
-    assert steps_shown(app) == ['Add It to Your Chart']           # installed: Live hears it, whatever the folder
-    assert said(app.main.markdown, 'to the chart you replay')
+    assert not app.exception and states(app.sidebar) == ['No replay trades yet']
+    chip = next(m.value for m in app.sidebar.markdown if 'data-state=' in m.value)
+    assert f'color:{setup.theme.MUTED}' in chip and 'Settings ›' in chip                       # grey
+    assert said(app.info, 'No replay trades yet. Start a replay in MotiveWave with the study on its chart.')
+    assert not said(app.info, 'Replay journal')                     # no banner on every page
+    # Settings has the same three words and steps as Live: no replay variant of the step.
+    show(app, 'Settings')
+    assert states(app.main) == ['Not recording'] and steps_shown(app) == ['chart']   # installed: Live hears it
+    assert said(app.main.markdown, 'to the chart you trade') and not said(app.main.markdown, 'chart you replay')
     assert not any(b.label == setup.INSTALL for b in app.button)
+    # The first replay trade: the chip says the study's state again.
+    study_writes([heartbeat(mode='replay'), fill('r1')], 'replay')
+    wait_until(lambda: Journal(dataset='replay').executions() and status_of('replay').get('heartbeat'))
+    app.run()
+    assert not app.exception and states(app.sidebar) == ['Recording']
 
 
-def test_a_study_that_has_gone_quiet_gets_only_the_quiet_step():
+def test_a_study_that_has_gone_quiet_is_asked_to_open_motivewave():
     study_writes([heartbeat(age=600)])
-    app = open_app('Setup')
+    app = open_app('Settings')
     wait_until(lambda: status_of().get('heartbeat'))
     app.run()
-    assert states(app.main) == ['Stale'] and steps_shown(app) == ['The Study Has Gone Quiet']
-    assert said(app.main.markdown, 'Check that MotiveWave is open and the study is still on your chart.')
+    assert states(app.main) == ['Not recording'] and steps_shown(app) == ['open']
+    assert said(app.main.markdown, 'Open MotiveWave with the study on your chart.')
+    assert f'color:{setup.theme.MUTED}' in status_line(app)
     assert not any(b.label == setup.INSTALL for b in app.button)
+
+
+def test_a_bridge_file_the_app_cannot_read_needs_attention_and_never_asks_to_install_the_study_again():
+    """A failed read keeps the study's last report, so Settings says what is wrong and does not send a study that is
+    on its chart back to Install or to adding it to a chart."""
+    study_writes([heartbeat()])
+    app = open_app('Settings')
+    wait_until(lambda: status_of().get('heartbeat'))
+    app.run()
+    assert states(app.main) == ['Recording'] and steps_shown(app) == []
+    study_writes([{'version': 1, 'type': 'tick', 'mode': 'live'}])          # a line the reader cannot take
+    wait_until(lambda: status_of().get('error'))
+    assert status_of().get('heartbeat')                                     # what the study said last is kept
+    app.run()
+    assert states(app.main) == ['Needs attention'] and said(app.main.markdown, 'Open Data → Connection')
+    assert steps_shown(app) == [] and not any(b.label == setup.INSTALL for b in app.button)
 
 
 @pytest.mark.parametrize('version', ['0.3.6', '0.3.5', '0.3.2', '0.1.0'])
 def test_a_study_older_than_the_bundled_one_gets_only_the_update_step(version):
     study_writes([heartbeat(version=version)])
-    app = open_app('Setup')
+    app = open_app('Settings')
     wait_until(lambda: status_of().get('heartbeat'))
     app.run()
-    assert states(app.main) == ['Connected'] and steps_shown(app) == ['Update the Study']
+    assert states(app.main) == ['Recording'] and steps_shown(app) == ['update']
     line = f'Study {version} is out of date; this app comes with {paths.STUDY_VERSION}'
     assert said(app.main.markdown, line)
     assert 'mwj-status-note' not in status_line(app)
@@ -180,14 +210,14 @@ def test_a_study_older_than_the_bundled_one_gets_only_the_update_step(version):
                      if version == '0.3.6' else       # a study from 0.3.6 on hands over to the new one by itself
                      f'Study {paths.STUDY_VERSION} is installed and MotiveWave is still running {version}. '
                      'Quit MotiveWave completely and open it again.')
-        assert steps_shown(app) == ['Update the Study'] and not said(app.main.markdown, 'click Install')
+        assert steps_shown(app) == ['update'] and not said(app.main.markdown, 'click Install')
         assert said(app.main.markdown, installed)
         assert not any(b.label == setup.INSTALL for b in app.main.button)
         app.run()
-        assert steps_shown(app) == ['Update the Study'] and said(app.main.markdown, installed)
+        assert steps_shown(app) == ['update'] and said(app.main.markdown, installed)
         # Another window, or the app opened again: the study in the Extensions folder says the same.
-        again = open_app('Setup')
-        assert steps_shown(again) == ['Update the Study'] and said(again.main.markdown, installed)
+        again = open_app('Settings')
+        assert steps_shown(again) == ['update'] and said(again.main.markdown, installed)
         assert not any(b.label == setup.INSTALL for b in again.main.button)
 
 
@@ -198,58 +228,100 @@ def test_the_installed_studys_line_says_what_motivewave_does_next(extensions_fol
         pytest.skip('No built study jar in this checkout.')
     extensions_folder.mkdir(parents=True, exist_ok=True)
     (extensions_folder / connection.JAR.name).write_bytes(connection.JAR.read_bytes())
-    on = lambda state, version: SimpleNamespace(connector=paths.STUDY_CONNECTOR, version=version, state=state)
-    assert setup.update_line(on('Connected', '0.3.6')).endswith('MotiveWave switches to it in a few seconds.')
-    assert setup.update_line(on('Connected', '0.3.5')).endswith(
+    now = dt.datetime.now(dt.timezone.utc)
+    on = lambda heard, version: SimpleNamespace(connector=paths.STUDY_CONNECTOR, version=version, heard=heard)
+    assert setup.update_line(on(now, '0.3.6')).endswith('MotiveWave switches to it in a few seconds.')
+    assert setup.update_line(on(now, '0.3.5')).endswith(
         'still running 0.3.5. Quit MotiveWave completely and open it again.')
-    assert setup.update_line(on('Stale', '0.3.6')).endswith('open MotiveWave and it starts the new one.')
+    assert setup.update_line(on(now - dt.timedelta(minutes=10), '0.3.6')).endswith(
+        'open MotiveWave and it starts the new one.')
 
 
 def test_the_bundled_study_or_another_writer_gets_no_update_step():
     study_writes([heartbeat()])
-    app = open_app('Setup')
+    app = open_app('Settings')
     wait_until(lambda: status_of().get('heartbeat'))
     app.run()
-    assert states(app.main) == ['Connected'] and steps_shown(app) == []
+    assert states(app.main) == ['Recording'] and steps_shown(app) == []
     on = lambda **fields: SimpleNamespace(**{'connector': paths.STUDY_CONNECTOR, 'version': '', **fields})
     assert common.study_outdated(on(version='0.3.2')) and common.study_outdated(on(version='0.2.10'))
     assert not common.study_outdated(on(version=paths.STUDY_VERSION)) and not common.study_outdated(on(version='0.3.10'))
     assert not common.study_outdated(on(version='0.4.0')) and not common.study_outdated(on())
     assert not common.study_outdated(on(version='0.3.2-beta'))                 # not a version this app wrote
     assert not common.study_outdated(on(version='0.1.0', connector='another-writer'))
-    assert not common.study_outdated(SimpleNamespace(state='Connected'))
+    assert not common.study_outdated(SimpleNamespace(state='Recording'))
     assert setup.update_line(on(version='0.3.2')).startswith(f'Study 0.3.2 is out of date; this app comes with {paths.STUDY_VERSION}: ')
     assert setup.update_line(on(version=paths.STUDY_VERSION)) is None
 
 
-def test_exactly_one_step_is_needed_at_a_time_and_none_while_recording():
-    heard = dt.datetime.now(dt.timezone.utc)
+def test_the_step_follows_what_is_known_of_the_study_never_the_name_of_its_state():
+    now = dt.datetime.now(dt.timezone.utc)
+    quiet = now - dt.timedelta(seconds=common.STALE_AFTER + 5)
     current = paths.STUDY_VERSION
-    assert setup.needed_step(link(version=current), installed=True) is None
-    assert setup.needed_step(link(version=current), installed=False) is None     # it reports in: it is installed
-    assert setup.needed_step(link(version='0.3.2'), installed=True) == 'update'
-    assert setup.needed_step(link('Stale', 'warning', '0.3.2', heard=heard), installed=True) == 'update'
-    assert setup.needed_step(link('Stale', 'warning', current, heard=heard), installed=True) == 'quiet'
-    assert setup.needed_step(link('Waiting For Study', 'warning', ''), installed=False) == 'install'
-    assert setup.needed_step(link('Waiting For Study', 'warning', ''), installed=True) == 'chart'
-    for state in ('No Heartbeat', 'Paused', 'Needs Attention'):                  # the status line says what to do
-        assert setup.needed_step(link(state, 'warning', ''), installed=True) is None
-        assert state in setup.STATUS_COPY
+    # Recording: nothing to do, whatever the Extensions folder holds (a study that reports in is installed).
+    assert setup.needed_step(link(version=current, heard=now), installed=True) is None
+    assert setup.needed_step(link(version=current, heard=now), installed=False) is None
+    # Not installed, then installed but never heard from, then heard from before but gone quiet.
+    assert setup.needed_step(link('Not recording', 'neutral', ''), installed=False) == 'install'
+    assert setup.needed_step(link('Not recording', 'neutral', ''), installed=True) == 'chart'
+    assert setup.needed_step(link('Not recording', 'neutral', current, heard=quiet), installed=True) == 'open'
+    # An older study: the update comes first, recording or not.
+    assert setup.needed_step(link(version='0.3.2', heard=now), installed=True) == 'update'
+    assert setup.needed_step(link('Not recording', 'neutral', '0.3.2', heard=quiet), installed=True) == 'update'
+    # The same facts under any word give the same step.
+    for state in (common.RECORDING, common.NOT_RECORDING, common.ATTENTION, 'Anything'):
+        assert setup.needed_step(link(state, version=current, heard=quiet), installed=True) == 'open'
+        assert setup.needed_step(link(state, version=current, heard=now), installed=True) is None
     assert setup.needed_step(None, installed=True) is None
+    assert set(setup.STEPS) == {'install', 'chart', 'open', 'update'}
+    assert setup.STEPS['open'][0] == 'Open MotiveWave with the study on your chart.'
+    assert setup.STEPS['chart'][0].endswith("Not in MotiveWave's study list yet? Quit MotiveWave and open it again.")
 
 
 def test_the_status_uses_one_controlled_line_instead_of_a_raw_error_or_path(monkeypatch):
     shown = []
     raw = '/Users/someone/private/motivewave.ndjson could not be opened'
-    for state in ('Waiting For Study', 'Needs Attention'):
+    for state in (common.NOT_RECORDING, common.ATTENTION):
         monkeypatch.setattr(setup.common, 'study_link',
-                            lambda journal, state=state: ('MotiveWave', {'path': raw}, {'error': raw}, link(state, 'warning', '')))
+                            lambda journal, state=state: ('MotiveWave', {'path': raw}, {'error': raw}, link(state, 'critical', '')))
         monkeypatch.setattr(setup.common, 'other_problems', lambda journal, name: 0)
         monkeypatch.setattr(setup.theme, 'status', lambda *args, **kwargs: shown.append((args, kwargs)))
         setup.render_status(SimpleNamespace(dataset='live'))
     rendered = str(shown)
-    assert 'Waiting For Study' in rendered and 'Open Data → Connection' in rendered and raw not in rendered
+    assert 'Not recording' in rendered and 'Open Data → Connection' in rendered and raw not in rendered
+    assert shown[0][1]['notes'] == [] and shown[1][1]['notes'] == [(setup.STATUS_COPY[common.ATTENTION], True)]
+    assert set(setup.STATUS_COPY) == {common.RECORDING, common.NOT_RECORDING, common.ATTENTION}
     assert all(len(copy.split('. ')) <= 2 for copy in setup.STATUS_COPY.values())      # one line each
+    # No line asks the trader to change a setting of the study.
+    for text in [*setup.STATUS_COPY.values(), *(part for step in setup.STEPS.values() for part in step),
+                 connection.LIMITS]:
+        assert not any(word in text for word in ('Capture Fills', 'Real Tick Data', 'Advanced tab', "study's Advanced"))
+
+
+def test_the_status_is_one_element_in_every_state_so_its_five_second_redraw_leaves_nothing_behind():
+    """status_fragment redraws the status every five seconds. A redraw with fewer elements than the one before can
+    leave the old ones on screen (theme.status), so each state draws exactly one element at the same place, its
+    lines inside it; only the step under it, drawn with the whole page, comes and goes."""
+    app = open_app('Settings')
+
+    def status():
+        shown = [m.value for m in app.main.markdown]
+        found = [i for i, value in enumerate(shown) if 'data-state=' in value]
+        assert not app.exception and len(found) == 1
+        return found[0], shown[found[0]]
+
+    where, line = status()
+    assert "data-state='Not recording'" in line and 'mwj-status-note' not in line
+    study_writes([heartbeat()])
+    wait_until(lambda: status_of().get('heartbeat'))
+    app.run()
+    assert status()[0] == where and "data-state='Recording'" in status()[1]
+    study_writes([heartbeat('error', detail='Unsupported MotiveWave version')])
+    wait_until(lambda: status_of().get('error'))
+    app.run()
+    assert status()[0] == where and "data-state='Needs attention'" in status()[1]
+    assert 'Open Data → Connection' in status()[1] and 'mwj-status-note warn' in status()[1]
+    assert not said(app.main.markdown, 'Unsupported MotiveWave version')       # the raw error is on Connection
 
 
 def test_recording_names_the_contracts_the_study_wrote_recently_traded_ones_first(tmp_path):
@@ -283,21 +355,21 @@ def test_recording_names_the_contracts_the_study_wrote_recently_traded_ones_firs
 # ---------------------------------------------------------------- the pages, two clicks from the sidebar
 
 @pytest.mark.parametrize('page', [p for p in setup.PAGES if p != setup.HOME])
-def test_each_setup_page_is_one_click_from_the_first_and_one_click_back(page):
-    app = open_app('Setup')
+def test_each_settings_page_is_one_click_from_the_first_and_one_click_back(page):
+    app = open_app('Settings')
     button = app.button(key='setup-open-' + page)
     assert button.label == setup.LABELS[page] + ' ›' and button.help == setup.PAGE_HELP[page]
     button.click().run()
     assert not app.exception and app.session_state[common.TOOL_KEY] == page
-    assert any(b.key == 'setup-back' for b in app.button)
+    assert app.button(key='setup-back').label == '← Settings'
     app.button(key='setup-back').click().run()
     assert not app.exception and app.session_state[common.TOOL_KEY] == setup.HOME
-    assert said(app.main.markdown, '>Settings<')
+    assert said(app.main.markdown, '>More Settings<')
 
 
 @pytest.mark.parametrize('page,tab', [(page, tab) for page, tabs in setup.TABS.items() for tab in tabs])
-def test_every_tab_of_a_setup_page_has_its_own_link_on_the_first_page(page, tab):
-    app = open_app('Setup')
+def test_every_tab_of_a_settings_page_has_its_own_link_on_the_first_page(page, tab):
+    app = open_app('Settings')
     link_button = app.button(key=f'setup-tab-{page}-{tab}')
     assert link_button.label == tab
     link_button.click().run()
@@ -315,16 +387,16 @@ LANDMARKS = {
     'Live session': lambda app: (any(b.key == 'session-timer-live-play' for b in app.button)
                                  and [p.proto.popover.label for p in app.main.get('popover')][:3]
                                  == ['Check-Ins', 'Drafts', 'Checklist']),
-    'Connection': lambda app: any(t.label == connection.READ_TRADES for t in app.toggle),
+    'Connection': lambda app: any(t.label.startswith('Live bridge file') for t in app.text_input),
     'Journals': lambda app: any(t.label == 'New journal name' for t in app.text_input),
     'Import': lambda app: any(s.label == 'Import format' for s in app.selectbox),
     'Export': lambda app: backup_controls(app),
-    'General': lambda app: any(s.label == 'Time Zone' for s in app.selectbox),
+    'Settings': lambda app: any(s.label == 'Time Zone' for s in app.selectbox),
 }
 
 
 @pytest.mark.parametrize('view', LANDMARKS)
-def test_every_page_that_was_on_setup_is_at_most_two_clicks_from_the_sidebar(home, view):
+def test_every_page_that_was_on_settings_is_at_most_two_clicks_from_the_sidebar(home, view):
     """show() clicks the sidebar, then at most one link, tab or day header: what a person would click."""
     seed_preview(home)
     app = open_app('Edge')                         # somewhere else first, so the sidebar click is a real move
@@ -333,34 +405,38 @@ def test_every_page_that_was_on_setup_is_at_most_two_clicks_from_the_sidebar(hom
 
 
 def test_every_name_the_app_routes_by_has_a_place():
-    for view in (*common.TOOLS, 'Setup', 'Dashboard', 'Daily review', 'Live session', 'Edge', 'Trades'):
+    for view in (*common.TOOLS, 'Settings', 'Dashboard', 'Daily review', 'Live session', 'Edge', 'Trades'):
         route = common.navigation(view)
         assert route[common.VIEW_KEY] in common.PRIMARY_VIEWS
         if route[common.VIEW_KEY] == 'Settings':
             assert route[common.TOOL_KEY] in setup.PAGES and setup.page_for(view) == route[common.TOOL_KEY]
             assert route[common.TAB_KEY] is None or route[common.TAB_KEY] in setup.TABS[route[common.TOOL_KEY]]
-    assert setup.page_for('General') == setup.page_for(None) == setup.page_for('Unknown') == setup.HOME
+    # One name for the first page. A page kept under a name it no longer has (Setup, General) opens the first.
+    assert [view for view, (page, _) in common.SETTINGS_ROUTES.items() if page == setup.HOME] == ['Settings']
+    assert setup.page_for('Setup') == setup.page_for('General') == setup.page_for(None) == setup.HOME
+    assert setup.page_for('Unknown') == setup.HOME
     assert set(setup.LABELS) == set(setup.PAGES) == {setup.HOME, *setup.PAGE_HELP}
     assert common.navigation('Dashboard') == {common.VIEW_KEY: 'Analytics', common.TAB_KEY: 'Dashboards'}
     assert common.navigation('Daily review') == {common.VIEW_KEY: 'Trades', common.REPORT_KEY: True}
 
 
-def test_choosing_setup_in_the_sidebar_always_opens_its_first_page():
+def test_choosing_settings_in_the_sidebar_always_opens_its_first_page():
     app = open_app('Tags')
     show(app, 'Trades')
     app.segmented_control(key=common.VIEW_KEY).set_value('Settings').run()
     assert not app.exception and app.session_state[common.TOOL_KEY] == setup.HOME
-    # Clicking Setup again while one of its pages is open clears the control in a browser, which AppTest
+    # Clicking Settings again while one of its pages is open clears the control in a browser, which AppTest
     # cannot do; that path was checked by hand in the browser.
 
 
-def test_the_connection_badge_opens_setup_from_any_page(home):
+def test_the_connection_badge_opens_settings_from_any_page(home):
     seed_preview(home)
     app = open_app('Edge')
-    assert states(app.sidebar) == ['Waiting For Study'] and said(app.sidebar.markdown, 'Setup ›')
+    assert states(app.sidebar) == ['Not recording'] and said(app.sidebar.markdown, 'Settings ›')
+    assert app.button(key='connection-badge-open').label == 'Open Settings'
     app.button(key='connection-badge-open').click().run()
     assert not app.exception and app.segmented_control(key=common.VIEW_KEY).value == 'Settings'
-    assert app.session_state[common.TOOL_KEY] == setup.HOME and states(app.main) == ['Waiting For Study']
+    assert app.session_state[common.TOOL_KEY] == setup.HOME and states(app.main) == ['Not recording']
 
 
 def test_the_parent_draws_every_page_but_the_first(monkeypatch):
@@ -376,20 +452,20 @@ def test_the_parent_draws_every_page_but_the_first(monkeypatch):
     monkeypatch.setattr(setup, 'st', fake)
     monkeypatch.setattr(setup, 'home', lambda *args, **kwargs: drawn.append('home'))
     setup.render(object(), [], tool=drawn.append)
-    assert drawn == ['Tags'] and fake.buttons == ['← Setup']
+    assert drawn == ['Tags'] and fake.buttons == ['← Settings']
     fake.session_state[common.TOOL_KEY] = 'Import'                         # an old page name: its new page
     setup.render(object(), [], tool=drawn.append)
     assert drawn == ['Tags', 'Data'] and fake.session_state[common.TOOL_KEY] == 'Data'
-    fake.session_state[common.TOOL_KEY] = 'General'                        # display settings: the first page
+    fake.session_state[common.TOOL_KEY] = 'Setup'                          # the first page's old name: the first page
     setup.render(object(), [], tool=drawn.append)
     assert drawn == ['Tags', 'Data', 'home'] and fake.session_state[common.TOOL_KEY] == setup.HOME
 
 
 # ---------------------------------------------------------------- the two settings, and the saved filter
 
-def test_units_and_the_time_zone_are_set_on_setup_and_saved_for_the_journal(home):
+def test_units_and_the_time_zone_are_set_on_settings_and_saved_for_the_journal(home):
     journal = seed_ticks(seed_preview(home))              # recorded ticks: what MAE / MFE are measured from
-    app = open_app('Setup')
+    app = open_app('Settings')
     widget(app.selectbox, 'MAE / MFE Units').set_value('points').run()
     widget(app.selectbox, 'Time Zone').set_value('Europe/London').run()
     assert not app.exception
@@ -401,7 +477,7 @@ def test_units_and_the_time_zone_are_set_on_setup_and_saved_for_the_journal(home
 
 def test_hide_weekends_is_under_advanced_and_saved_for_the_calendar(home):
     journal = seed_preview(home)
-    app = open_app('Setup')
+    app = open_app('Settings')
     widget(app.checkbox, 'Hide Weekends in Calendar').check().run()
     assert not app.exception and journal.workspace()['preferences']['hide_weekends'] is True
     show(app, 'Dashboard')                          # the default page's calendar leaves the weekend out
@@ -418,7 +494,7 @@ def test_the_saved_filter_is_chosen_in_the_filters_menu_and_applies_to_every_pag
     assert choice.options == ['All trades', 'Shorts only']
     choice.set_value('Shorts only').run()
     assert not app.exception and said(app.main.caption, 'Saved filter: Shorts only')
-    for other in ('Trades', 'Edge', 'Setup'):          # the selectbox is drawn on two pages; the choice holds on all
+    for other in ('Trades', 'Edge', 'Settings'):       # the selectbox is drawn on two pages; the choice holds on all
         show(app, other)
         assert said(app.main.caption, 'Saved filter: Shorts only')
     show(app, 'Edge')
@@ -575,7 +651,7 @@ def title_case(label):
     return all(w[0].isupper() or w in SMALL for w in words)
 
 
-@pytest.mark.parametrize('view', ['Setup', 'Tags', 'Checklists', 'Ratings', 'Import', 'Export', 'Journals', 'Connection'])
+@pytest.mark.parametrize('view', ['Settings', 'Tags', 'Checklists', 'Ratings', 'Import', 'Export', 'Journals', 'Connection'])
 def test_buttons_menus_tabs_and_settings_on_every_setup_page_are_title_case(home, view):
     seed_preview(home)
     app = open_app(view)
@@ -583,7 +659,7 @@ def test_buttons_menus_tabs_and_settings_on_every_setup_page_are_title_case(home
     labels += [p.proto.popover.label for p in app.main.get('popover')]
     labels += [e.label for e in app.main.expander]
     labels += [t.label for t in app.main.tabs]
-    if view == 'Setup':
+    if view == 'Settings':
         labels += [w.label for w in (*app.main.selectbox, *app.main.checkbox)]
     if view == 'Connection':
         labels += [t.label for t in app.main.toggle]
@@ -604,21 +680,21 @@ def test_dropped_tick_reports_read_in_display_time_on_the_connection_tab():
                                        'Source': 'motivewave-ticks'}
 
 
-def test_reading_trades_from_motivewave_is_an_advanced_switch_on_the_connection_tab_and_on_by_default():
+def test_the_connection_tab_has_no_switch_to_stop_reading_trades_and_no_study_setting_to_change():
     app = open_app('Connection')
-    toggle = widget(app.toggle, connection.READ_TRADES)
-    assert toggle.value is True and 'the study keeps writing' in toggle.help
-    assert not any(t.label == 'Capture enabled' for t in app.toggle)
-    multiplier, advanced = order(app, '>Instrument Multiplier<', "<div class='mwj-subsection'>Advanced</div>")
-    assert multiplier < advanced                                   # last on the tab, under its own heading
-    assert setup.STATUS_COPY['Paused'].endswith('under Data → Connection → Advanced.')
+    assert not app.main.toggle and not said(app.main.markdown, "<div class='mwj-subsection'>Advanced</div>")
+    assert not hasattr(connection, 'READ_TRADES') and not hasattr(connection, 'reading')
+    assert states(app.main) == ['Not recording'] and said(app.main.markdown, 'Not recording')
+    texts = ' '.join([*(e.value for kind in ('markdown', 'caption', 'warning') for e in getattr(app.main, kind)),
+                      *(t.help or '' for t in app.main.text_input), connection.LIMITS])
+    assert 'File setting' not in texts and 'Real Tick Data' not in texts and 'Capture Fills' not in texts
 
 
 def test_the_study_can_be_installed_again_from_connection_after_it_has_reported_in(home, monkeypatch):
     extensions = home / 'extensions'
     monkeypatch.setenv('MOTIVEWAVE_EXTENSIONS', str(extensions))
     study_writes([heartbeat()])
-    app = open_app('Setup')                                   # the app starts the reader that hears the study
+    app = open_app('Settings')                                # the app starts the reader that hears the study
     wait_until(lambda: status_of().get('heartbeat'))
     app.run()
     assert steps_shown(app) == [] and not any(b.label == setup.INSTALL for b in app.button)
@@ -628,7 +704,7 @@ def test_the_study_can_be_installed_again_from_connection_after_it_has_reported_
     install = app.button(key='connection-study-install')
     assert install.label == setup.INSTALL and 'kept beside it as a backup' in install.help
     install.click().run()
-    assert not app.exception and said(app.success, 'Installed. If Setup still names an older study')
+    assert not app.exception and said(app.success, 'Installed. If Settings still names an older study')
     assert (extensions / 'motivewave-journal.jar').read_bytes() == connection.JAR.read_bytes()
     app.button(key='connection-study-install').click().run()                     # again: the copy there is kept
     assert said(app.success, 'The previous copy was kept as a backup.')
@@ -636,7 +712,7 @@ def test_the_study_can_be_installed_again_from_connection_after_it_has_reported_
 
 
 def test_about_is_one_line_with_both_versions_and_the_data_folder_then_the_fine_print():
-    app = open_app('Setup')
+    app = open_app('Settings')
     captions = [c.value for c in app.main.caption]
     assert captions[-3] == (f'{paths.APP_NAME} {paths.VERSION} · study {paths.STUDY_VERSION} · data folder '
                             f'{paths.data_home()}')

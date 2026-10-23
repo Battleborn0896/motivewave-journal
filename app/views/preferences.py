@@ -1,4 +1,4 @@
-"""Setup's settings: Time Zone and MAE / MFE Units side by side, then hiding weekends under a small Advanced
+"""The first page of Settings: Time Zone and MAE / MFE Units side by side, then hiding weekends under a small Advanced
 heading. MAE / MFE are measured from recorded ticks only: there is no accuracy to choose. Also the saved filter every page uses, which is chosen and saved in the
 Filters menus of Trades and Stats, where filtering lives. Each choice saves the moment it is made. Nothing
 here changes a fill or a review."""

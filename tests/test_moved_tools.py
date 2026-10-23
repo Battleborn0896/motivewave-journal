@@ -1,4 +1,4 @@
-"""What moved off Setup in 0.4.5, where it is used: the Daily Report Card, a trade's checklist and the session
+"""What moved off Settings in 0.4.5, where it is used: the Daily Report Card, a trade's checklist and the session
 tools on Trades, and the dashboards on Stats. Disposable journals only, in a temporary data home."""
 
 import datetime as dt

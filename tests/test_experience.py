@@ -67,7 +67,7 @@ def test_ticks_measure_never_platform_reports_and_a_reported_capture_gap_leaves_
 def test_there_is_no_accuracy_to_choose_and_candles_never_measure_even_where_0_4_7_allowed_them(home):
     journal = seed_preview(home)
     journal._update_display_settings({'excursion_policy': 'best-available'})   # 'Allow labelled estimates', saved by 0.4.7
-    app = open_app('General')
+    app = open_app('Settings')
     assert not any(s.label == 'MAE / MFE Accuracy' for s in app.selectbox)
     show(app, 'Trades')
     assert widget(app.metric, 'MAE').value == widget(app.metric, 'MFE').value == '—'
@@ -90,7 +90,7 @@ def test_ticks_survive_unit_change_and_selected_trade_remains_visible_with_list(
     assert widget(app.metric, 'MFE').value == '4.00 pts' and listed(app) == [journal.trades()[0].id]
     display_setting(app, 'MAE / MFE Units', 'ticks')
     assert widget(app.metric, 'MFE').value == '16.00 ticks'
-    show(app, 'General')
+    show(app, 'Settings')
     assert not any(s.label == 'MAE / MFE Accuracy' for s in app.selectbox)
 
 

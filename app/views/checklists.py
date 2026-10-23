@@ -1,4 +1,4 @@
-"""Checklist definitions and the offline node canvas (Setup → Tags, Playbooks & Checklists), and runs that keep a
+"""Checklist definitions and the offline node canvas (Settings → Tags, Playbooks & Checklists), and runs that keep a
 snapshot of their checklist: on a trade in its Checklist tab on Trades, or for the session from the Checklist
 menu above the trade list."""
 import json

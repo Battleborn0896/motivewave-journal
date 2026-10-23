@@ -1,11 +1,10 @@
 """Connection, on the Data page: the study writes a file on this computer and the app reads it. Nothing has to be
 typed.
 
-The app starts watching the study's default bridge file by itself (runtime.start). This tab says what it
-currently hears from the study, in detail, and holds the less common settings in titled sections: installing
-the study again, another bridge file, extra watched CSV files, the instrument multiplier, and under Advanced
-whether the app reads trades from MotiveWave at all. Setup's first page shows the one step that is missing
-before the study records (views/setup.py).
+The app starts watching the study's default bridge file by itself (runtime.start), and always reads it. This tab
+says what it currently hears from the study, in detail, and holds the less common settings in titled sections:
+installing the study again, another bridge file, extra watched CSV files and the instrument multiplier. The first
+page of Settings shows the one step that is missing before the study records (views/setup.py).
 """
 
 from __future__ import annotations
@@ -26,7 +25,6 @@ from mwjournal.model import instant
 from mwjournal.sync import DEFAULT_CONNECTION
 
 JAR = Path(__file__).resolve().parents[2] / 'study' / 'build' / 'libs' / 'motivewave-journal.jar'
-READ_TRADES = 'Read Trades From MotiveWave'
 FORMATS = {'executions': 'Execution CSV', 'prices': 'Prices CSV', 'bridge': 'Another bridge file · NDJSON'}
 RESERVED = (DEFAULT_CONNECTION, 'worker')      # 'worker' is the status row of the background reader itself
 
@@ -77,16 +75,15 @@ def install_study(jar: Path = JAR, destination: Path | None = None) -> tuple[Pat
 
 
 LIMITS = ('The study is read-only: it never places, changes or cancels an order. Fills are read from MotiveWave '
-          'internals that are not part of its supported SDK, so a MotiveWave update can stop fill capture; the '
-          'status above then shows the study\'s own message, and prices keep recording either way. A stop order '
-          'counts when it is on your position\'s account and contract and on its closing side (a sell stop for a '
+          'internals that are not part of its supported SDK, so a MotiveWave update can stop the study reading '
+          'fills; the status above then shows the study\'s own message, and prices keep recording either way. '
+          'A stop order counts when it is on your position\'s account and contract and on its closing side (a sell stop for a '
           'long, a buy stop for a short); take-profit orders are not read. Fees can be the platform\'s estimates; such trades are flagged. Prices are recorded per chart: put '
           'the study on the chart you trade, contract or continuous; prices go with trades of the same product, '
           'whatever the contract month, and one study reads the account for all of them. Replay prices are '
-          'recorded as they play, and rewinding starts a new run. They count as real ticks unless the study\'s '
-          'Real Tick Data box is switched off, for a replay generated from bars. Once a replay trade is flat, the study '
+          'recorded as they play, and rewinding starts a new run. Once a replay trade is flat, the study '
           'also loads the real ticks of its holding time from MotiveWave\'s history, up to the replay\'s current '
-          'time and no further; those count as real ticks of that run either way. Studies before 0.3.3 recorded no '
+          'time and no further; those count as real ticks of that run. Studies before 0.3.3 recorded no '
           'live or replay ticks, before 0.3.4 labelled replay prints simulated, and before 0.3.6 recorded no stop '
           'order at all: install the study again from this page. From 0.3.6 on, a new study takes over from the old '
           'one in a few seconds; an older one stops recording prices until MotiveWave is quit and opened again.')
@@ -95,7 +92,7 @@ LIMITS = ('The study is read-only: it never places, changes or cancels an order.
 def render(journal, rows) -> None:
     theme.section('Connection')
     status_card(journal.dataset)
-    name, profile, _, _ = common.study_link(journal)
+    name = common.study_connection(journal)[0]
     st.caption('What the study can and cannot see', help=LIMITS)
     gaps = journal.capture_gaps()
     if gaps:
@@ -108,25 +105,10 @@ def render(journal, rows) -> None:
     theme.section('Instrument Multiplier')
     common.multiplier_form(journal, 'multiplier')
     st.caption(f'Journal database: {journal.path}')
-    if profile is not None:
-        theme.subsection('Advanced')
-        reading(journal, name, profile)
-
-
-def reading(journal, name: str, profile: dict) -> None:
-    """Whether the app reads the study's bridge file. On unless someone switched it off; the study writes
-    either way."""
-    enabled = st.toggle(READ_TRADES, value=bool(profile.get('enabled')), key=common.key(journal, 'capture-enabled'),
-                        help='Off stops this journal reading the file the study writes, so no new trades or prices '
-                             'appear. Nothing is lost: the study keeps writing, and reading carries on from the same '
-                             'place when this is on again. Live and Replay each have their own switch.')
-    if enabled != bool(profile.get('enabled')):
-        journal.put('profiles', name, {**profile, 'enabled': enabled})
-        st.rerun()
 
 
 def study_section() -> None:
-    """Installing the study again, whatever its state: Setup offers the install only while the study is
+    """Installing the study again, whatever its state: Settings offers the install only while the study is
     missing or older than the one this app bundles, so this is where any other install lives."""
     theme.section('Study')
     if not JAR.is_file():
@@ -137,7 +119,7 @@ def study_section() -> None:
                       'already there is kept beside it as a backup.'):
         try:
             _, backup = install_study()
-            st.success('Installed. If Setup still names an older study in a few seconds, quit MotiveWave completely '
+            st.success('Installed. If Settings still names an older study in a few seconds, quit MotiveWave completely '
                        'and open it again.'
                        + (' The previous copy was kept as a backup.' if backup else ''))
         except (OSError, ValueError) as exc:
@@ -146,7 +128,7 @@ def study_section() -> None:
 
 @st.fragment(run_every='5s')
 def status_card(dataset: str) -> None:
-    """Redrawn every few seconds, so starting the study turns this to Connected without a click."""
+    """Redrawn every few seconds, so starting the study turns this to Recording without a click."""
     journal = common.open_journal(dataset)
     if journal is None:
         return
@@ -160,7 +142,7 @@ def status_card(dataset: str) -> None:
     theme.status(link.label, link.tone, link.state, big=True, notes=(
         [(link.detail, False)]
         + [('The study says: ' + said, False)] * bool(said and not status.get('error'))
-        # What the study skipped or could not link while capture works: fills it could not read, or a working
+        # What the study skipped or could not link while it records: fills it could not read, or a working
         # stop no position takes (MotiveWave's log says why, one line per stop). Not drawn as a warning: on a prop
         # account 'fills with an assumed currency' is said at every heartbeat, and nothing is wrong.
         + [(f'The study also says: {warned}.', False)] * bool(warned and not status.get('error'))
@@ -233,14 +215,13 @@ def watch(live_file: Path) -> str | None:
 def bridge_file_form(journal) -> None:
     current = live_bridge()
     if paths.chosen_home() is not None:
-        st.warning('This app was started with MWJ_HOME, so it does not use the standard folder. MotiveWave sees '
-                   'MWJ_HOME only when it is started from the same environment. Otherwise copy this path into the '
-                   'study\'s File setting:')
+        st.warning('This app was started with MWJ_HOME, so it does not use the standard folder. The study writes '
+                   'this file only when MotiveWave is started with the same MWJ_HOME:')
         st.code(str(paths.bridge_file('live')), language=None)
     with st.form(common.key(journal, 'bridge-file')):
-        typed = st.text_input('Live bridge file · the full path from the study\'s File setting', str(current),
-                              help='Only needed when the study\'s File setting was changed: both must name the same '
-                                   f'file. The replay file is found beside it: {paths.replay_bridge(current).name}')
+        typed = st.text_input('Live bridge file · full path', str(current),
+                              help='The file the study writes; the replay file beside it, '
+                                   f'{paths.replay_bridge(current).name}, is read too.')
         c1, c2, _ = st.columns([1, 1, 2])
         chosen = c1.form_submit_button('Watch This File', type='primary')
         default = c2.form_submit_button('Use the Default File')

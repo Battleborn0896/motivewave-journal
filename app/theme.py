@@ -133,7 +133,7 @@ h3 {{ font-size:15px !important; font-weight:600 !important; color:{INK} !import
    paragraphs above would otherwise turn every result grey. */
 .st-key-trade-result-positive [data-testid="stMetricValue"], .st-key-trade-result-positive [data-testid="stMetricValue"] p {{ color:{UP}; }}
 .st-key-trade-result-negative [data-testid="stMetricValue"], .st-key-trade-result-negative [data-testid="stMetricValue"] p {{ color:{DOWN}; }}
-/* The connection badge in the sidebar is one button: an invisible button lies over the chip and opens Setup. */
+/* The connection badge in the sidebar is one button: an invisible button lies over the chip and opens Settings. */
 .st-key-connection-badge {{ position:relative; gap:0 !important; border-radius:4px; }}
 .st-key-connection-badge [data-testid="stElementContainer"]:has(.stButton) {{ position:absolute !important; inset:0;
     z-index:2; margin:0 !important; }}
@@ -150,7 +150,7 @@ h3 {{ font-size:15px !important; font-weight:600 !important; color:{INK} !import
 [class*="st-key-tile-"][class*="-negative"] [data-testid="stMetricValue"] p {{ color:{DOWN}; }}
 .st-key-cost-tiles [data-testid="stMetricValue"] {{ font-size:17px; }}
 .st-key-cost-tiles [data-testid="stMetricLabel"] p {{ font-size:12px; }}
-/* Setup's three pages: a tile each, its title a link, the tabs it opens small links under it. */
+/* The three pages under Settings: a tile each, its title a link, the tabs it opens small links under it. */
 [class*="st-key-setup-page-"] {{ gap:4px !important; }}
 [class*="st-key-setup-page-"] [data-testid="stVerticalBlock"] {{ gap:2px; }}
 [class*="st-key-setup-page-"] [data-testid="stHorizontalBlock"] {{ gap:4px 14px !important; }}
@@ -300,7 +300,7 @@ def status(label: str, tone: str, state: str, notes=(), *, big: bool = False, he
     """A status chip and the lines under it, as one element however many lines there are.
 
     The status is drawn by fragments that redraw themselves every few seconds. A fragment that draws
-    fewer elements than last time can leave the old ones on screen (seen in the sidebar: 'Connected'
+    fewer elements than last time can leave the old ones on screen (seen in the sidebar: 'Recording'
     above the note of the state before it), so what varies is kept inside a single element.
     `notes` are (text, is_warning) pairs; `help` is the ? beside it.
     """

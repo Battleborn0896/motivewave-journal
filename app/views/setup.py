@@ -1,13 +1,13 @@
-"""Setup: is the study recording, the two settings, and the three pages of real setup.
+"""Settings: is the study recording, the two settings, and the three pages of real setup.
 
-The first page reads top to bottom: one status line, green and alone when the study is recording; the one
-step that is missing when something is (install the study, add it to a chart, update an older study, or a
-study that has gone quiet); Time Zone and MAE / MFE Units, with hide weekends under a small Advanced
-heading; a tile each for Tags, Playbooks & Checklists, Rating Systems and Data, with a link to each
-of their tabs; and one About line. Bridge paths and raw errors are on Data → Connection. The other pages are
-drawn by the parent through ``tool``, under a button back to this one.
+The first page reads top to bottom: one status line, Recording, Not recording or Needs attention, green and alone
+when the study records; under it, one line saying the one thing to do when there is something (install the study,
+add it to a chart, open MotiveWave, or update an older study); Time Zone and MAE / MFE Units, with hide weekends
+under a small Advanced heading; a tile each for Tags, Playbooks & Checklists, Rating Systems and Data, with a link
+to each of their tabs; and one About line. Bridge paths and raw errors are on Data → Connection. The other pages
+are drawn by the parent through ``tool``, under a button back to this one.
 
-Everything that was a Setup page before 0.4.5 is still at most two clicks from the sidebar: Setup, then a
+Everything that was its own page before 0.4.5 is still at most two clicks from the sidebar: Settings, then a
 tile or one of its links. The Daily Report Card, the session tools and running a checklist moved to Trades;
 dashboards to Stats; the saved filter to the Filters menus (common.navigation knows every old name).
 """
@@ -28,9 +28,9 @@ from views import connection
 PageRenderer = Callable[[str], None]
 DisplayRenderer = Callable[[Any, list[dict]], None]
 
-HOME = 'Setup'
+HOME = 'Settings'
 PAGES = (HOME, 'Tags', 'Ratings', 'Data')
-LABELS = {HOME: 'Setup', 'Tags': 'Tags, Playbooks & Checklists', 'Ratings': 'Rating Systems', 'Data': 'Data'}
+LABELS = {HOME: 'Settings', 'Tags': 'Tags, Playbooks & Checklists', 'Ratings': 'Rating Systems', 'Data': 'Data'}
 PAGE_HELP = {
     'Tags': 'Tag categories, tags, playbooks and day tags, and the branching checklists you run on a trade.',
     'Ratings': 'Weighted process ratings built from your tags, for dashboard widgets.',
@@ -41,15 +41,12 @@ TABS = {'Tags': ('Tags', 'Categories', 'Playbooks', 'Checklists'),
         'Data': ('Import Trades', 'Export & Backup', 'Journals & Accounts', 'Connection')}
 BLURB = {'Ratings': 'Score how well a trade followed your rules, from its tags.'}
 
-# One line each: what the state means and what to do about it. Never a path or a raw error. A state with a
-# step (below) says what to do in the step; the others say it under the status.
+# One line per state: what it means, first in the status line's ?. Needs attention also says it under the status;
+# Not recording has the one step to take there instead (STEPS). Never a path or a raw error.
 STATUS_COPY = {
-    'Connected': 'MotiveWave is sending data. Trade as usual: each trade appears in Trades by itself.',
-    'Waiting For Study': 'Waiting for the MotiveWave Journal study. Do the step below; this turns green by itself.',
-    'Stale': 'The study has gone quiet. Check that MotiveWave is open and the study is still on your chart.',
-    'No Heartbeat': 'Prices arrive but the study is not reporting in. Switch on Capture Fills under the study\'s Advanced tab.',
-    'Paused': 'Reading is off. Switch Read Trades From MotiveWave back on under Data → Connection → Advanced.',
-    'Needs Attention': 'Capture needs attention. Open Data → Connection to see what the study reported.',
+    common.RECORDING: 'MotiveWave is sending data. Trade as usual: each trade appears in Trades by itself.',
+    common.NOT_RECORDING: 'The study is not sending data. Do the step under this line; it turns green by itself.',
+    common.ATTENTION: 'Something stops the recording. Open Data → Connection to see what.',
 }
 FLAT_TO_FLAT = ('One trade runs flat to flat for one provider, account and exact contract. The first fill that moves '
                 'the position away from zero opens it. Scale-ins and partial exits stay inside that same trade. The '
@@ -58,46 +55,37 @@ FLAT_TO_FLAT = ('One trade runs flat to flat for one provider, account and exact
                 'is kept in the separate Replay journal. Once a replay trade is flat, the study loads the real ticks '
                 'of its holding time from MotiveWave\'s history, never past the replay\'s current time, so its MAE / '
                 'MFE comes from real ticks, where that history has them, even when the replay itself plays from bars.')
-RECORDING = 'Recording: the contracts the study wrote prices or fills for in the last hour.'
-RECORDING_REPLAY = ('Recording: the contracts of the replay run the study wrote last, within an hour of replay time '
-                    'of its newest price or fill.')
+CONTRACTS = 'The contracts named are those the study wrote prices or fills for in the last hour.'
+CONTRACTS_REPLAY = ('The contracts named are those of the replay run the study wrote last, within an hour of replay '
+                    'time of its newest price or fill.')
 INSTALL = 'Install MotiveWave Study'
-# The one step a setup that is not recording needs: (title, the line saying what to do, the ? beside it).
+# The one thing to do when the study is not recording or is older than this app's: (the line, the ? beside it).
 STEPS = {
-    'install': ('Install the Study',
-                'Click Install MotiveWave Study, restart MotiveWave if it is open, then add the study to your chart.',
-                'Copies the study into your MotiveWave Extensions folder and keeps the previous copy. By hand '
-                'instead: in MotiveWave choose Study → All Studies → Import and pick motivewave-journal.jar.'),
-    'chart': ('Add It to Your Chart',
-              'Add **Journal → MotiveWave Journal** to the chart you trade. There is nothing to set. Not in '
+    'install': ('Click Install MotiveWave Study, restart MotiveWave if it is open, then add the study to your chart.',
+                'Copies the study into your MotiveWave Extensions folder and keeps the previous copy; by hand, use '
+                'Study → All Studies → Import in MotiveWave.'),
+    'chart': ('Add **Journal → MotiveWave Journal** to the chart you trade. There is nothing to set. Not in '
               'MotiveWave\'s study list yet? Quit MotiveWave and open it again.',
-              'A contract chart (ESZ6) or a continuous one (ES) both work: prices go with trades of the same '
-              'product, whatever the contract month. Live and paper trades go to the '
-              'Live journal, replay trades to the Replay journal. Restart MotiveWave first if the study was just '
-              'installed. To install it again, use Data → Connection.'),
-    'update': ('Update the Study', '',
-               'Studies before 0.3.3 never received MotiveWave\'s live or replay prints, so MAE and MFE had only '
-               'the trade tick backfill. Studies before 0.3.4 labelled replay prints simulated, which hides '
-               'replay MAE and MFE. Studies before 0.3.6 never recorded a stop order, so trades had no R unless '
-               'you typed the stop. From 0.3.6 on, a new study takes over from the old one without a restart. The '
-               'previous copy is kept beside the new one.'),
-    'quiet': ('The Study Has Gone Quiet',
-              'Check that MotiveWave is open and the study is still on your chart.',
-              'Nothing has been heard from the study for over a minute. It reports every ten seconds while it is '
-              'on a chart, also when the market is closed. Data → Connection shows when it last reported.'),
+              'A contract chart (ESZ6) or a continuous one (ES) both work; live and paper trades go to Live, replay '
+              'trades to Replay.'),
+    'open': ('Open MotiveWave with the study on your chart.',
+             'The study reports every ten seconds while it is on a chart; Data → Connection shows when it last did.'),
+    'update': ('',
+               'Older studies miss prints, stops or replay prices; from 0.3.6 on, a new study takes over from the old '
+               'one without a restart.'),
 }
 DRAWN = 'setup-step-drawn'          # the step the page was drawn with, per environment: see status_fragment
 HANDS_OVER = (0, 3, 6)              # a running study from this version on hands over to a new one by itself
 
 
 def update_line(link) -> str | None:
-    """One line for a study older than the one this app bundles, else None. What each older version misses is in
-    the step's help (STEPS['update']). Once the new study is in the Extensions folder, the line says what is
-    left: MotiveWave runs the old one until it starts the new (from 0.3.6 on, by itself in a few seconds)."""
+    """One line for a study older than the one this app bundles, else None. Once the new study is in the
+    Extensions folder, the line says what is left: MotiveWave runs the old one until it starts the new (from
+    0.3.6 on, by itself in a few seconds)."""
     if not common.study_outdated(link):
         return None
     if connection.bundled_study_installed():
-        if link.state != 'Connected':                    # MotiveWave is closed, or the study is off its charts
+        if not common.recent(link.heard):                # MotiveWave is closed, or the study is off its charts
             return f'Study {paths.STUDY_VERSION} is installed: open MotiveWave and it starts the new one.'
         if (common.version_parts(link.version) or ()) >= HANDS_OVER:
             return f'Study {paths.STUDY_VERSION} is installed: MotiveWave switches to it in a few seconds.'
@@ -109,20 +97,20 @@ def update_line(link) -> str | None:
 
 
 def needed_step(link, installed: bool) -> str | None:
-    """The one step to show, or None when nothing is missing (or the status line already says what to do).
+    """The one thing to do, or None, from what is known of the study rather than from its state's name.
 
-    `installed` is whether the study's jar is in MotiveWave's Extensions folder: before the study has ever
-    reported in, that tells installing it apart from adding it to a chart."""
+    An older study is updated first. A study heard from within the last minute needs nothing else. Otherwise: not
+    installed (its jar is not in MotiveWave's Extensions folder and it has never reported in), install it; never
+    heard from, add it to a chart; heard from before, open MotiveWave with it on the chart."""
     if link is None:
         return None
-    heard = link.state == 'Connected' or getattr(link, 'heard', None) is not None
-    if heard and common.study_outdated(link):
+    if common.study_outdated(link):
         return 'update'
-    if link.state == 'Stale':
-        return 'quiet'
-    if link.state == 'Waiting For Study':
-        return 'chart' if installed else 'install'
-    return None
+    if common.recent(link.heard):
+        return None
+    if not installed:
+        return 'install'
+    return 'chart' if link.heard is None else 'open'
 
 
 def study_installed() -> bool:
@@ -140,13 +128,13 @@ def study_installed() -> bool:
 
 
 def page_for(view: str | None) -> str:
-    """The Setup page that shows a view, by any name it has had; anything else opens the first page."""
-    page = common.SETUP_ROUTES.get(view, (view, None))[0] if view else HOME
+    """The Settings page that shows a view, by any name it has had; anything else opens the first page."""
+    page = common.SETTINGS_ROUTES.get(view, (view, None))[0] if view else HOME
     return page if page in PAGES else HOME
 
 
 def open_page(page: str, tab: str | None = None):
-    """An on_click handler that shows one Setup page, at one of its tabs."""
+    """An on_click handler that shows one Settings page, at one of its tabs."""
     return lambda: st.session_state.update({common.TOOL_KEY: page, common.TAB_KEY: tab})
 
 
@@ -156,8 +144,8 @@ def render(journal, rows: list[dict], *, tool: PageRenderer | None = None,
     page = page_for(st.session_state.get(common.TOOL_KEY))
     st.session_state[common.TOOL_KEY] = page
     if page != HOME and tool is not None:
-        st.button('← Setup', key='setup-back', type='tertiary', on_click=open_page(HOME),
-                  help='Back to the study status, the settings and the other Setup pages.')
+        st.button('← Settings', key='setup-back', type='tertiary', on_click=open_page(HOME),
+                  help='Back to the study status, Time Zone, MAE / MFE Units and the other pages.')
         tool(page)
         return
     home(journal, rows, display=display, links=tool is not None)
@@ -166,8 +154,7 @@ def render(journal, rows: list[dict], *, tool: PageRenderer | None = None,
 def home(journal, rows: list[dict], *, display: DisplayRenderer | None = None, links: bool = True) -> None:
     capture = getattr(journal, 'capture_journal', journal)
     link = live_status(capture)
-    step(link, getattr(capture, 'dataset', ''))
-    theme.section('Settings')
+    step(link)
     if display is None:
         from views import preferences
         display = preferences.render
@@ -194,32 +181,29 @@ def status_fragment(dataset: str) -> None:
     if journal is None:
         return
     link = render_status(journal)
-    # The step under the line is drawn with the whole page. When the study's state calls for another step
-    # (it turns green, goes quiet, or is installed), the page is drawn again so the step follows.
+    # The step under the line is drawn with the whole page. When the study calls for another step (it starts
+    # recording, goes quiet, or is installed), the page is drawn again so the step follows.
     if needed_step(link, study_installed()) != st.session_state.get(f'{DRAWN}-{dataset}'):
         st.rerun()
 
 
 def headline(link, contracts=()) -> str:
-    """'Connected · recording NQZ6, ESZ6 · study 0.3.4' while the study records; else the state's own label."""
-    if link.state != 'Connected':
+    """'Recording · NQZ6, ESZ6 · study 0.3.10' while the study records; else the state's own word."""
+    if link.state != common.RECORDING:
         return link.label
     shown = list(contracts[:4]) + ([f'+{len(contracts) - 4} more'] if len(contracts) > 4 else [])
-    return ' · '.join(['Connected', *(['recording ' + ', '.join(shown)] if shown else []),
+    return ' · '.join([link.state, *([', '.join(shown)] if shown else []),
                        *([f'study {link.version}'] if link.version else [])])
 
 
 def render_status(journal):
-    """The state in one line, and under it what to do when no step says so. No bridge path or raw error."""
+    """The state in one line, and under it what to do when it needs attention. No bridge path or raw error."""
     name, _, _, link = common.study_link(journal)
     try:
-        contracts = journal.recent_contracts() if link.state == 'Connected' else []
+        contracts = journal.recent_contracts() if link.state == common.RECORDING else []
     except (AttributeError, TypeError, ValueError, OSError):
         contracts = []
-    notes = []
-    if link.state not in ('Connected', 'Waiting For Study', 'Stale'):      # those have a step, or need nothing
-        notes.append((STATUS_COPY.get(link.state, 'Waiting for the MotiveWave study to report its capture status.'),
-                      link.tone == 'critical'))
+    notes = [(STATUS_COPY[common.ATTENTION], True)] if link.state == common.ATTENTION else []
     try:
         others = common.other_problems(journal, name)
     except (AttributeError, TypeError, KeyError):
@@ -227,45 +211,41 @@ def render_status(journal):
     if others:
         notes.append((f'{others} other watched file{"s" if others > 1 else ""} could not be read. '
                       'See Data → Connection.', True))
-    recording = (RECORDING_REPLAY if getattr(journal, 'dataset', '') == 'replay' else RECORDING) if contracts else ''
+    named = (CONTRACTS_REPLAY if getattr(journal, 'dataset', '') == 'replay' else CONTRACTS) if contracts else ''
     # Always one element: theme.status explains why a redrawn fragment must not change its element count.
     theme.status(headline(link, contracts), link.tone, link.state, big=True, notes=notes,
-                 help=' '.join(part for part in (STATUS_COPY.get(link.state, ''), recording, FLAT_TO_FLAT) if part))
+                 help=' '.join(part for part in (STATUS_COPY.get(link.state, ''), named, FLAT_TO_FLAT) if part))
     return link
 
 
-def step(link, dataset: str = '') -> None:
-    """The one step that is missing, with one line saying what to do; nothing when the study is recording."""
+def step(link) -> None:
+    """The one thing to do, in one line under the status; nothing when the study is recording."""
     which = needed_step(link, study_installed())
     if which is None:
         return
-    title, line, explained = STEPS[which]
-    installed = connection.bundled_study_installed()
+    line, explained = STEPS[which]
     if which == 'update':
         line = update_line(link)
-    elif which == 'chart' and dataset == 'replay':
-        line = ('Add **Journal → MotiveWave Journal** to the chart you replay. There is nothing to set. Not in '
-                'MotiveWave\'s study list yet? Quit MotiveWave and open it again.')
     elif which == 'install' and not connection.JAR.is_file():
         line = ('In MotiveWave choose **Study → All Studies → Import** and pick motivewave-journal.jar, then add '
                 'the study to your chart.')
-    with st.container(border=True, key='setup-step-' + which):
-        st.markdown(f'**{title}**  \n{line}', help=explained)
-        if which in ('install', 'update') and connection.JAR.is_file() and not installed:
+    with st.container(key='setup-step-' + which):
+        st.markdown(line, help=explained)
+        if which in ('install', 'update') and connection.JAR.is_file() and not connection.bundled_study_installed():
             if st.button(INSTALL, type='primary', key='simple-study-install'):
                 try:
                     connection.install_study()
                 except (OSError, ValueError) as exc:
                     st.error('The study could not be installed: ' + str(exc))
                 else:
-                    # Drawn again at once, so the step says what is left and the button goes: never 'click
+                    # Drawn again at once, so the line says what is left and the button goes: never 'click
                     # Install' beside a study that is installed.
                     st.rerun()
 
 
 def pages() -> None:
     """Tags, Playbooks & Checklists; Rating Systems; Data: a tile each, with a link to each of its tabs."""
-    theme.section('More Setup')
+    theme.section('More Settings')
     for column, page in zip(st.columns(len(PAGES) - 1), PAGES[1:]):
         with column.container(border=True, height='stretch', key='setup-page-' + page.lower()):
             st.button(LABELS[page] + ' ›', key='setup-open-' + page, type='tertiary', on_click=open_page(page),

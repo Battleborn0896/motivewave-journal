@@ -65,17 +65,23 @@ def _same_file(a, b) -> bool:
 
 
 def ensure_default_connection(journal: Journal) -> bool:
-    """Watch the study's default bridge file with no setup. True when the connection was just created.
+    """Watch the study's default bridge file with no setup, and keep reading it: reading trades is always on.
+    True when the connection was just created.
 
-    The list of connections stays the user's: one that already names that file is left exactly as
-    it is, so a disabled one stays disabled, and a 'MotiveWave' connection pointed elsewhere is kept.
+    The study's connection is the 'MotiveWave' one, wherever it points, else one that already names that file
+    under another name; it is kept where it points and only switched back on when it was off (earlier versions
+    had a switch for that). Run at every start, so a second run changes nothing.
     """
     target = paths.bridge_file(journal.dataset)
     profiles = journal.get('profiles')
-    if DEFAULT_CONNECTION in profiles or any(_same_file(p.get('path') or '', target) for p in profiles.values()):
-        return False
-    journal.put('profiles', DEFAULT_CONNECTION, {'path': str(target), 'mode': 'bridge', 'enabled': True})
-    return True
+    name = DEFAULT_CONNECTION if DEFAULT_CONNECTION in profiles else next(
+        (n for n, p in profiles.items() if _same_file(p.get('path') or '', target)), None)
+    if name is None:
+        journal.put('profiles', DEFAULT_CONNECTION, {'path': str(target), 'mode': 'bridge', 'enabled': True})
+        return True
+    if not profiles[name].get('enabled'):
+        journal.put('profiles', name, {**profiles[name], 'enabled': True})
+    return False
 
 
 class SyncWorker:
@@ -224,7 +230,11 @@ class SyncWorker:
                                'status': 'needs attention', 'error': 'The watched file does not exist.'}
                 self.journal.put('sync_status', name, {'checked': now, **waiting})
             except (OSError, ValueError, UnicodeError) as exc:
-                self.journal.put('sync_status', name, {'status': 'needs attention', 'checked': now, 'error': str(exc)})
+                # A file that cannot be read does not undo the study's last report: Settings still knows it was
+                # heard from, and does not ask to install the study or add it to a chart again.
+                heard = self.journal.get('sync_status').get(name, {}).get('heartbeat')
+                self.journal.put('sync_status', name, {'status': 'needs attention', 'checked': now, 'error': str(exc),
+                                                       **({'heartbeat': heard} if heard else {})})
         # Drafts are matched at every poll, as cancelling one can settle another; from the kept trades.
         self.journal.reconcile_drafts(self.trades())
         self.recalculate()

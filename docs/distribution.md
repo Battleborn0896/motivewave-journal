@@ -7,7 +7,7 @@ contains no screen, video or audio recorder.
 ## What a tester installs
 
 1. Install and open **MotiveWave Journal**.
-2. Open **Setup** and click **Install MotiveWave study**.
+2. Open **Settings** and click **Install MotiveWave Study**.
 3. Restart MotiveWave.
 4. Add **Journal → MotiveWave Journal** to the chart you trade on, the contract's own (`NQZ6`) or a
    continuous one (`NQ`). There is nothing to set: the app and study use the same per-user folder.
@@ -74,7 +74,7 @@ PyInstaller cannot cross-compile, so the Windows artifact is built and smoke-tes
 
 Use a simulation account, not a live account:
 
-1. Confirm Setup says **Connected** with a fresh study version.
+1. Confirm Settings says **Recording** with the study version this app comes with.
 2. Buy two contracts, exit one, add one, then flatten two.
 3. Confirm exactly one completed trade appears with four fills and the correct maximum quantity.
 4. Open the trade and confirm observed ticks exist from entry through exit.

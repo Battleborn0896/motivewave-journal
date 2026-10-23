@@ -3,7 +3,7 @@
 Only the frame lives here: page setup, and a sidebar that holds nothing but the logo, the Live /
 Replay switch, the three pages and the study's connection badge (a journal picker or a currency picker
 appears only when there is a choice to make). Trades holds the session tools and the Daily Report Card,
-Stats the dashboards, and both their Filters menus the saved filter; Setup holds the settings, tags,
+Stats the dashboards, and both their Filters menus the saved filter; Settings holds the settings, tags,
 ratings and data pages. What views share is in common.py; each view is one module in views/.
 """
 
@@ -39,28 +39,32 @@ theme.apply()
 
 @st.fragment(run_every='5s')
 def badge(dataset: str, selected_journal=None) -> None:
-    """The study's state in one word, kept current, and a full rerun when new trades have arrived. The
-    button laid over it (outside this fragment, so a click reruns the whole page) opens Setup."""
+    """The study's state in a word or two, kept current, and a full rerun when new trades have arrived. The
+    button laid over it (outside this fragment, so a click reruns the whole page) opens Settings."""
     journal = common.open_journal(dataset)
     if journal is None:
         return
     _, _, _, link = common.study_link(journal)
-    # The state word only: 'Connected · study 0.3.4' is wider than the sidebar. Setup shows the version.
-    st.markdown(theme.chip(link.state, link.tone, state=link.state) + "<span class='mwj-go'>Setup ›</span>",
+    seen = common.stamp(journal)
+    # The state word only: 'Recording · study 0.3.10' is wider than the sidebar. Settings shows the version.
+    word, tone = link.state, link.tone
+    if dataset == 'replay' and link.state != common.ATTENTION and seen and not seen[0]:
+        word, tone = common.NO_REPLAY_TRADES, 'neutral'     # no fills yet: nothing to say until a replay trade
+    st.markdown(theme.chip(word, tone, state=word) + "<span class='mwj-go'>Settings ›</span>",
                 unsafe_allow_html=True)
     seen_key = common.key(journal, SEEN_KEY) if not selected_journal else f'{SEEN_KEY}-{dataset}-{selected_journal}'
-    if common.stamp(journal) != st.session_state.get(seen_key):
-        st.rerun()                         # captured trades appear without a manual refresh
+    if seen != st.session_state.get(seen_key):
+        st.rerun()                         # recorded trades appear without a manual refresh
 
 
-def open_setup() -> None:
+def open_settings() -> None:
     st.session_state[common.VIEW_KEY] = 'Settings'
     st.session_state[common.TOOL_KEY] = setup.HOME
 
 
 def keep_view() -> None:
     """Clicking the selected view again clears the control; the journal still shows that view. Choosing
-    Setup in the sidebar, or choosing it again, always shows its first page; choosing Trades shows the
+    Settings in the sidebar, or choosing it again, always shows its first page; choosing Trades shows the
     selected trade rather than a Daily Report Card."""
     if st.session_state.get(common.VIEW_KEY) not in common.PRIMARY_VIEWS:
         previous = st.session_state.get(SHOWN_KEY, 'Trades')
@@ -93,7 +97,7 @@ if capture is not None:
         with st.sidebar:
             selected_journal = st.selectbox('Local journal', [None, *active_journals], key=named_key,
                                             format_func=lambda id: active_journals[id]['name'] if id else 'All captures',
-                                            help='A named journal from Setup → Data → Journals & Accounts, with '
+                                            help='A named journal from Settings → Data → Journals & Accounts, with '
                                                  'its own reviews and stats. All captures is everything the study '
                                                  'recorded.')
     journal = capture
@@ -136,7 +140,7 @@ with st.sidebar:
     if capture is not None:
         with st.container(key='connection-badge'):
             badge(dataset, selected_journal)
-            st.button('Open Setup', key='connection-badge-open', on_click=open_setup,
+            st.button('Open Settings', key='connection-badge-open', on_click=open_settings,
                       help='Whether the study is recording, the one step to take if it is not, and every setting.')
 if journal is None:
     st.stop()
@@ -146,16 +150,13 @@ for pending, target in [('dashboard-next', 'dashboard-page'), ('checklist-next',
         st.session_state[common.key(journal, target)] = st.session_state.pop(common.key(journal, pending))
 saved_filters = journal.workspace()['filters']
 global_filter = preferences.chosen_filter(journal, saved_filters)      # chosen in Filters on Trades or Stats
-every_row = rows                           # the session tools on Trades and Setup's settings see every trade
+every_row = rows                           # the session tools on Trades and the settings on Settings see every trade
 if global_filter:
     rows = filter_sample(rows, saved_filters[global_filter])
     st.caption(common.md(f'Saved filter: {global_filter}'),
                help='Only trades this saved filter keeps are shown on every page. Choose All trades under '
                     'Filters on Trades or Stats to see everything.')
 
-if dataset == 'replay':
-    st.info('Replay journal · its own trades, reviews and stats. The study adds real ticks to each replay trade '
-            'once it is flat; prices built from bars are marked simulated.')
 if view == 'Settings':
     def tool(page):
         if page == 'Data':                 # its Connection tab belongs to the environment, not a named journal

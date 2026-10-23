@@ -85,28 +85,32 @@ def test_default_connection_is_created_once_per_environment(tmp_path, monkeypatc
         assert list(journal.get('profiles')) == [DEFAULT_CONNECTION]
 
 
-def test_default_connection_never_undoes_what_the_user_set(tmp_path, monkeypatch):
+def test_a_switched_off_default_connection_is_switched_back_on_and_never_moved(tmp_path, monkeypatch):
+    """Reading trades is always on: a connection an earlier version's switch turned off is read again at the next
+    start, every start, and nothing else about it changes."""
     monkeypatch.setenv('MWJ_HOME', str(tmp_path))
     journal = Journal()
     ensure_default_connection(journal)
-    disabled = {**journal.get('profiles')['MotiveWave'], 'enabled': False}
-    journal.put('profiles', 'MotiveWave', disabled)
-    assert not ensure_default_connection(journal) and journal.get('profiles') == {'MotiveWave': disabled}
-    # The same file under the user's own name and another spelling of the path: no second connection.
+    on = journal.get('profiles')['MotiveWave']
+    journal.put('profiles', 'MotiveWave', {**on, 'enabled': False})
+    assert not ensure_default_connection(journal) and journal.get('profiles') == {'MotiveWave': on}
+    assert not ensure_default_connection(journal) and journal.get('profiles') == {'MotiveWave': on}   # twice: the same
+    # The same file under the user's own name and another spelling of the path: no second connection, switched on.
     journal.remove_profile('MotiveWave')
     spellings = [str(tmp_path / 'bridge' / '..' / 'bridge' / 'motivewave.ndjson')]
     if os.name != 'nt':
         (tmp_path / 'link').symlink_to(tmp_path, target_is_directory=True)
         spellings.append(str(tmp_path / 'link' / 'bridge' / 'motivewave.ndjson'))
     for spelling in spellings:
-        own = {'path': spelling, 'mode': 'bridge', 'enabled': False}
-        journal.put('profiles', 'my capture', own)
-        assert not ensure_default_connection(journal) and journal.get('profiles') == {'my capture': own}
-    # A 'MotiveWave' connection the user pointed at another file is theirs, and is not overwritten.
+        journal.put('profiles', 'my capture', {'path': spelling, 'mode': 'bridge', 'enabled': False})
+        assert not ensure_default_connection(journal)
+        assert journal.get('profiles') == {'my capture': {'path': spelling, 'mode': 'bridge', 'enabled': True}}
+    # A 'MotiveWave' connection the user pointed at another file stays pointed there, and is switched on too.
     journal.remove_profile('my capture')
-    moved = {'path': str(tmp_path / 'elsewhere.ndjson'), 'mode': 'bridge', 'enabled': True}
+    moved = {'path': str(tmp_path / 'elsewhere.ndjson'), 'mode': 'bridge', 'enabled': False}
     journal.put('profiles', 'MotiveWave', moved)
-    assert not ensure_default_connection(journal) and journal.get('profiles') == {'MotiveWave': moved}
+    assert not ensure_default_connection(journal)
+    assert journal.get('profiles') == {'MotiveWave': {**moved, 'enabled': True}}
 
 
 def test_default_connection_recognises_the_bridge_once_the_file_exists(tmp_path, monkeypatch):

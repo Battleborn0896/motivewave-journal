@@ -22,17 +22,20 @@ alpha is not Authenticode-signed.
 
 ### Connect MotiveWave
 
-1. Open MotiveWave Journal and select **Setup**.
-2. Click **Install MotiveWave study**.
+1. Open MotiveWave Journal and select **Settings**.
+2. Click **Install MotiveWave Study**.
 3. If MotiveWave was open and the study is not in its study list yet, quit MotiveWave and open it again.
 4. Add **Journal → MotiveWave Journal** to each chart being traded, the contract's own (`NQZ6`) or a
    continuous one (`NQ`): a trade is measured with the prices of its product (`NQZ6`, `NQ` and a
    continuous `NQ` are all `NQ`; `MNQ` is another product), its exact contract's first when both were
-   recorded. There is nothing to set: the study's first tab says so, and every setting is under
-   **Advanced** with defaults that record fills, every trade print, and real ticks for closed live and
-   replay trades.
-5. If Setup says the study is out of date, click **Install MotiveWave Study**: a study from 0.3.6 on hands
-   over to the new one by itself; with an older one, Setup tells you to quit MotiveWave and open it again.
+   recorded. There is nothing to set: the study's dialog says so and has nothing else on it. By itself it
+   reads every fill, records each trade's prints while the trade is open, and once a trade is over loads its
+   holding time and the 30 minutes after its exit from MotiveWave's tick history, for the chart's current
+   contract, continuous chart or not.
+5. Settings should now read **Recording** in green. **Not recording** (grey) has one line under it saying
+   what to do; **Needs attention** (red) means **Settings → Data → Connection** says what went wrong.
+6. If Settings says the study is out of date, click **Install MotiveWave Study**: a study from 0.3.6 on hands
+   over to the new one by itself; with an older one, Settings tells you to quit MotiveWave and open it again.
 
 ### Updating from an older version
 
@@ -43,7 +46,7 @@ Any older version updates straight to the newest; there is no need to install th
    Applications and choose Replace; on Windows, extract the new ZIP and use its `MotiveWave Journal.exe`).
    Trades, reviews, tags and settings stay: they live in the app's data folder, not inside the app, and the
    new version brings them up to date by itself the first time it opens.
-3. Open the app. If Setup says the study is out of date, click **Install MotiveWave Study**, as in step 5.
+3. Open the app. If Settings says the study is out of date, click **Install MotiveWave Study**, as in step 6.
 4. What changed in each version is under *What's new* at the top of the README and on each release's page.
 
 ### Back up and restore
@@ -57,14 +60,15 @@ backup's date and how many live and replay trades it holds; click **Restore This
 was just before is saved first, to `backups/before-restore-<time>.zip` in the app's data folder: restore that
 file the same way to undo the restore. A backup made by a newer version is refused; update the app first.
 
-One study instance records only the trade prints MotiveWave delivers to that chart. Once a replay
-trade is flat, the study loads the real ticks of its holding time from MotiveWave's tick history, never
-past the replay's current time, on a chart of the exact contract. The replay's own prints count as real
-ticks unless **Advanced → Real Tick Data** is switched off for a replay generated from bars. The journal keeps
-every recorded tick, packed small an hour or two after it is recorded, and the study empties its bridge file
-once the app has read it, so neither grows much. The first time this version opens a journal it packs every
-tick already recorded and shrinks the file, in seconds (a 222 MB journal became 17 MB in 13 seconds). Back Up
-Journal, not the bridge file, is how a journal is recovered.
+One study instance records only the trade prints MotiveWave delivers to that chart, and only while you are
+in a trade. Once a replay trade is flat, the study loads the real ticks of its holding time from MotiveWave's
+tick history, never past the replay's current time, for the chart's current contract, continuous chart or
+not. The replay's own prints count as real ticks too. In Replay the sidebar reads **No replay trades yet**
+until the first replay trade. The journal keeps every recorded tick, packed small an hour or two after it is
+recorded, and the study empties its bridge file once the app has read it, so neither grows much. The first
+time this version opens a journal it packs every tick already recorded and shrinks the file, in seconds (a
+222 MB journal became 17 MB in 13 seconds). Back Up Journal, not the bridge file, is how a journal is
+recovered.
 
 ## Acceptance exercise
 
@@ -78,7 +82,7 @@ Run this with a simulation account:
 6. Open **Stats → Runners** and compare by **Tag categories**.
 7. Restart the journal and confirm the review and tags remain.
 8. Repeat a trade in Replay and confirm it appears only in the Replay journal, its MAE / MFE read from
-   **Replay ticks**. On a replay chart of the exact contract, leave the study there: within about ten
+   **Replay ticks**. Leave the study on the replay chart, contract or continuous: within about ten
    seconds of going flat the trade should also be measured from **Backfilled from MotiveWave history**,
    and MotiveWave's log should show one `replay trade tick backfill` line for the pass.
 9. Check that live and replay prints arrive while the chart runs: the Trades chart of a new trade should
@@ -92,7 +96,7 @@ with missing prices, recorded capture gaps or ambiguous OHLC stop ordering.
 
 - macOS or Windows version and CPU architecture
 - MotiveWave version
-- Journal app version and study version, from the About line at the bottom of Setup
+- Journal app version and study version, from the About line at the bottom of Settings
 - Live simulation or Replay, plus whether Replay used real tick data
 - Exact contract (for example `NQZ6`) and the chart type/timeframe
 - Steps to reproduce and what was expected

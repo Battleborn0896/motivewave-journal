@@ -197,7 +197,7 @@ def render(journal, rows, *, every=None) -> None:
         if st.session_state.get(report_key):
             report_card(journal, rows)
         else:
-            empty()
+            empty(journal)
         return
     zone = common.display_zone(journal)
     capture = getattr(journal, 'capture_journal', journal)
@@ -484,13 +484,17 @@ def executions_panel(journal, trade, zone) -> None:
                                         results=['Net P&L']), hide_index=True)
 
 
-def empty() -> None:
-    st.info('No trades yet. Leave this app open, add MotiveWave Journal to the MotiveWave chart you trade, then trade normally.')
-    theme.section('Automatic Capture')
+def empty(journal) -> None:
+    if journal.dataset == 'replay':
+        st.info(common.NO_REPLAY_TRADES + '. Start a replay in MotiveWave with the study on its chart.')
+    else:
+        st.info('No trades yet. Leave this app open, add MotiveWave Journal to the MotiveWave chart you trade, then '
+                'trade normally.')
+    theme.section('Automatic Recording')
     st.write('A trade starts with its first fill and ends when that account and contract are flat again. Scale-ins '
              'and partial exits stay in one trade. Live and Replay are kept apart.')
     with st.container(horizontal=True, gap='small'):
-        st.button('Open Setup', on_click=common.go('Setup'), type='primary',
+        st.button('Open Settings', on_click=common.go('Settings'), type='primary',
                   help='Whether the study is recording, the one step to take if it is not, and every setting.')
         st.button('Import Old Trades', on_click=common.go('Import'),
                   help='Trades from before the study was installed: a fills CSV from your platform or broker.')

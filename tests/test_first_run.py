@@ -277,7 +277,7 @@ def test_starter_tags_can_be_deleted_in_settings_and_used_ones_are_kept(home):
 
 
 def test_the_display_time_zone_is_chosen_once_in_settings_for_live_and_replay(home):
-    app = open_app('General')
+    app = open_app('Settings')
     choice = widget(app.selectbox, 'Time Zone')
     assert choice.value == NY and not any(s.label == 'Chart timezone' for s in app.selectbox)
     choice.set_value('Asia/Tokyo').run()                    # saved the moment it is chosen
