@@ -75,7 +75,7 @@ def post_exit(trade, samples, source, *, minutes=15, now=None, initial_risk=None
         used.append(sample)
     if not used:
         result['notes'] = ['No recorded prices after exit in this window. Keep the study running, '
-                           'increase After Exit (Minutes), or supply matching history.']
+                           'or supply matching history.']
         return result
     bars = any(s.resolution_seconds for s in used)
     simulated = is_simulated(source)

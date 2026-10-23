@@ -304,20 +304,22 @@ public class MotiveWaveJournal extends Study {
           if (replay) replayBackfill = load;
           else backfill = load;
         }
-        JournalBackfill.TickSource ticks = JournalBackfill.history(observer.instruments(), replay, contract);
         BooleanSupplier cancelled = () -> disposed || generation.get() != token || Thread.currentThread().isInterrupted();
+        // The fills first, then their instruments: JournalAccountCapture.instruments says why.
         if (replay) {
           var fills = observer.replayFills();
           if (fills == null || clock <= 0) return; // no snapshot or no replay time yet; the next beat asks again
           // A separate reference keeps the writer alive while destroy closes the study's own.
           JournalEventWriter target = output = JournalEventWriter.acquire(file);
           result = load.replayPass(contract, fills, clock, System.currentTimeMillis(), BACKFILL_DAYS,
-              AFTER_EXIT_MINUTES, ticks, event -> target.offerBelow(event, JournalBackfill.HIGH_WATER), cancelled);
+              AFTER_EXIT_MINUTES, JournalBackfill.history(observer.instruments(), true, contract),
+              event -> target.offerBelow(event, JournalBackfill.HIGH_WATER), cancelled);
         } else {
           var fills = observer.fills();
           if (fills == null) return; // no snapshot yet; the next beat asks again
           JournalEventWriter target = output = JournalEventWriter.acquire(file);
-          result = load.pass(contract, fills, System.currentTimeMillis(), BACKFILL_DAYS, AFTER_EXIT_MINUTES, ticks,
+          result = load.pass(contract, fills, System.currentTimeMillis(), BACKFILL_DAYS, AFTER_EXIT_MINUTES,
+              JournalBackfill.history(observer.instruments(), false, contract),
               event -> target.offerBelow(event, JournalBackfill.HIGH_WATER), cancelled);
         }
         if (result.remaining() > 0) nextBackfill = System.nanoTime() + BACKFILL_MORE_NANOS;

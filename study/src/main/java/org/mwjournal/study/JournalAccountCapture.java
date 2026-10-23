@@ -194,7 +194,8 @@ final class JournalAccountCapture {
   List<JournalNativeAccess.Fill> fills() { return fills; }
 
   /** The instrument of the fills of each contract in the last snapshot, keyed by JournalNativeAccess.contract:
-   * where the backfill reads a contract's tick history (JournalBackfill.history). Empty before the first. */
+   * where the backfill reads a contract's tick history (JournalBackfill.history). Empty before the first. Set
+   * before fills() and replayFills(), so read it after them: it then holds the instrument of every fill read. */
   Map<String, Instrument> instruments() { return instruments; }
 
   /** The replay fills of the last snapshot that have been written, each with the replay run it was filed
@@ -323,8 +324,10 @@ final class JournalAccountCapture {
       // Published before any file work, so the tick thread starts recording as soon as an entry fill
       // is visible. A partial snapshot has skipped fills, so its net positions prove nothing.
       holdings = snapshot.skipped().isEmpty() ? holdings(snapshot, snapshotReplayProvider, nowNanos) : null;
-      this.fills = snapshot.fills();
+      // The instruments before the fills: whoever reads the fills and then the instruments (the backfill) finds
+      // the instrument of every fill it read.
       instruments = snapshot.instruments();
+      this.fills = snapshot.fills();
       flushBuffered(nowNanos);
       var fills = new ArrayList<>(snapshot.fills());
       // Stable sort: preserve native snapshot order for same-time fills, never invent sequence from ID text.

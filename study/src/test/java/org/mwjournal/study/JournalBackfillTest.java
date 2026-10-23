@@ -142,6 +142,20 @@ public final class JournalBackfillTest {
     // Before the first snapshot there are no instruments at all.
     assert new JournalBackfill(new Ledger(folder.resolve("no-snapshot.ndjson"))).pass(contract, fills, NOW, 30, 0,
         JournalBackfill.history(Map.of(), false, contract), events::add, NEVER).empty() == 1 && asked.isEmpty();
+
+    // As the study wires it: the fills and their instruments both come from the account capture's last snapshot.
+    var capture = JournalAccountCapture.fixture(folder.resolve("snapshot.ndjson"), () -> new JournalNativeAccess.Snapshot(
+        "workspace", fills, List.of(), Map.of(), JournalNativeAccess.OrderCounts.of(List.of()), instruments));
+    assert capture.fills() == null && capture.instruments().isEmpty() : "Nothing before the first snapshot";
+    capture.poll();
+    assert capture.failure == null && capture.fills().equals(fills) && capture.instruments().equals(instruments)
+        : capture.failure;
+    asked.clear();
+    events.clear();
+    result = new JournalBackfill(new Ledger(folder.resolve("from-capture.ndjson"))).pass(contract, capture.fills(), NOW,
+        30, 30, JournalBackfill.history(capture.instruments(), false, contract), events::add, NEVER);
+    assert result.done() == 2 && asked.keySet().equals(java.util.Set.of("NQZ6")) : result + " " + asked;
+    capture.close();
   }
 
   /** An instrument whose tick history has a print every 250 ms; it notes each stretch asked under its symbol,
