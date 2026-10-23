@@ -1,14 +1,12 @@
-"""Background capture while the app runs, also usable without it: python -m mwjournal.sync.
+"""Background recording while the app runs, also usable without it: python -m mwjournal.sync.
 
-Only the files named in saved connections are read. A bridge (NDJSON) is consumed in committed
-lines, never a partially written tail, and the read position is kept in the journal so a restart
-resumes where it stopped; it is also written beside the file (write_receipt), so the study empties a
-file read to its end. A watched CSV is read whole and must be unchanged across that read.
+The journal reads one file, the study's bridge file (paths.bridge_file), named in its one saved connection. It is
+consumed in committed lines, never a partially written tail, and the read position is kept in the journal so a
+restart resumes where it stopped; it is also written beside the file (write_receipt), so the study empties a file
+read to its end.
 
-A connection is a row in 'profiles': {'path', 'mode', 'enabled'} with mode one of MODES. The CSV
-modes also read timezone, provider, account, point_value and mapping (executions) or symbol,
-provider, timezone, resolution_seconds and proxy (prices). Its latest outcome is the row of the
-same name in 'sync_status'.
+A connection is a row in 'profiles': {'path', 'mode', 'enabled'} with mode 'bridge' (MODES). Its latest outcome
+is the row of the same name in 'sync_status'.
 """
 
 from __future__ import annotations
@@ -16,26 +14,24 @@ from __future__ import annotations
 import argparse
 import base64
 import datetime as dt
-import hashlib
 import os
 import threading
 import time
 from pathlib import Path
 
 from . import paths
-from .importers import apply_preview, preview_bridge, preview_csv, preview_prices_csv
+from .importers import apply_preview, preview_bridge
 from .model import heartbeat_report, instant, product
-from .store import Journal
+from .store import DEFAULT_CONNECTION, Journal
 from .scope import allows_source
 
-MODES = ('bridge', 'executions', 'prices')
+MODES = ('bridge',)
 # How often the watcher reads the files. The study writes the bridge file at least every quarter second,
 # and an open trade's chart is drawn again every second (app/views/trades.py LIVE).
 POLL_SECONDS = 1
 # How often the watcher packs the prints stored before its previous pass (Journal.pack_prices): as it starts, then
 # hourly, so a print stays a row for one to two hours.
 PACK_SECONDS = 3600
-DEFAULT_CONNECTION = 'MotiveWave'
 CHECKPOINT = 256            # bytes remembered from just before the read position, to notice a rewrite in place
 
 
@@ -56,31 +52,21 @@ def write_receipt(path: Path, position: int, checkpoint: bytes):
             pass
 
 
-def _same_file(a, b) -> bool:
-    a, b = (os.path.realpath(os.path.expanduser(str(p))) for p in (a, b))
-    try:
-        return os.path.samefile(a, b)
-    except OSError:                                    # the study has not created the file yet
-        return os.path.normcase(a) == os.path.normcase(b)
-
-
 def ensure_default_connection(journal: Journal) -> bool:
-    """Watch the study's default bridge file with no setup, and keep reading it: reading trades is always on.
-    True when the connection was just created.
+    """Watch the study's bridge file with no setup, and keep reading it: reading trades is always on. True when the
+    connection was just created.
 
-    The study's connection is the 'MotiveWave' one, wherever it points, else one that already names that file
-    under another name; it is kept where it points and only switched back on when it was off (earlier versions
-    had a switch for that). Run at every start, so a second run changes nothing.
+    The connection is the 'MotiveWave' one. It is kept where it points (opening a journal points it at the study's
+    file once, store._one_connection) and only switched back on when it was off (earlier versions had a switch for
+    that). Run at every start, so a second run changes nothing.
     """
-    target = paths.bridge_file(journal.dataset)
-    profiles = journal.get('profiles')
-    name = DEFAULT_CONNECTION if DEFAULT_CONNECTION in profiles else next(
-        (n for n, p in profiles.items() if _same_file(p.get('path') or '', target)), None)
-    if name is None:
-        journal.put('profiles', DEFAULT_CONNECTION, {'path': str(target), 'mode': 'bridge', 'enabled': True})
+    profile = journal.get('profiles').get(DEFAULT_CONNECTION)
+    if profile is None:
+        journal.put('profiles', DEFAULT_CONNECTION,
+                    {'path': str(paths.bridge_file(journal.dataset)), 'mode': 'bridge', 'enabled': True})
         return True
-    if not profiles[name].get('enabled'):
-        journal.put('profiles', name, {**profiles[name], 'enabled': True})
+    if not profile.get('enabled'):
+        journal.put('profiles', DEFAULT_CONNECTION, {**profile, 'enabled': True})
     return False
 
 
@@ -88,7 +74,6 @@ class SyncWorker:
     def __init__(self, journal: Journal):
         self.journal = journal
         self.stop_event = threading.Event()
-        self.hashes = {}
         self.dirty_executions = set()
         self.dirty_prices = {}      # (product, source): the time new prices span, for the trades of that product
         self.measure_after = 0      # time.monotonic() before which new prices alone are not measured (recalculate)
@@ -142,52 +127,22 @@ class SyncWorker:
             if not profile.get('enabled'):
                 continue
             now = dt.datetime.now(dt.timezone.utc).isoformat()
-            mode = profile.get('mode')
             try:
-                if mode not in MODES or not profile.get('path'):
-                    raise ValueError('This connection needs a file path and a format: ' + ', '.join(MODES) + '.')
+                if profile.get('mode') not in MODES or not profile.get('path'):
+                    raise ValueError('This connection needs the path of a bridge file.')
                 path = Path(profile['path']).expanduser()
-                if mode == 'bridge':
-                    pending = self.bridge_lines(name, path)
-                    if pending is None:
-                        continue
-                    blob, offset, position = pending
-                    parsed = preview_bridge(blob.decode('utf-8-sig'), dataset=self.journal.dataset,
-                                            skip_damaged=True)
-                else:
-                    stat = path.stat()
-                    if stat.st_size > 32 * 1024 * 1024:
-                        raise ValueError('CSV exceeds 32 MB. Split the export into smaller files.')
-                    blob = path.read_bytes()
-                    after = path.stat()
-                    if (after.st_size, after.st_mtime_ns) != (stat.st_size, stat.st_mtime_ns):
-                        continue
-                    if not blob or not blob.endswith((b'\n', b'\r')):
-                        continue                       # likely in the middle of an export rewrite
-                    checksum = hashlib.sha256(blob + str(profile).encode()).hexdigest()
-                    if self.hashes.get(name) == checksum:
-                        continue
-                    if mode == 'prices':
-                        parsed = preview_prices_csv(blob.decode('utf-8-sig'), profile.get('symbol', ''),
-                                                    profile.get('provider', 'my-bars'),
-                                                    timezone=profile.get('timezone', 'UTC'),
-                                                    resolution_seconds=profile.get('resolution_seconds', 60),
-                                                    proxy=profile.get('proxy', False))
-                    else:
-                        parsed = preview_csv(blob.decode('utf-8-sig'),
-                                             timezone=profile.get('timezone', 'America/New_York'),
-                                             mapping=profile.get('mapping'), provider=profile.get('provider', 'csv'),
-                                             account=profile.get('account', 'default'), point_value=profile.get('point_value'))
+                pending = self.bridge_lines(name, path)
+                if pending is None:
+                    continue
+                blob, offset, position = pending
+                parsed = preview_bridge(blob.decode('utf-8-sig'), dataset=self.journal.dataset, skip_damaged=True)
                 if parsed.errors:
                     raise ValueError('; '.join(parsed.errors[:3]))
                 result = apply_preview(self.journal, parsed)
                 if result['unresolved']:
                     raise ValueError(result['unresolved'][0])
-                if mode == 'bridge':
-                    self.journal.set_bridge_offset(name, *position)   # only after its lines are in the journal
-                    write_receipt(path, *position[1:])                # and only once that is stored
-                else:
-                    self.hashes[name] = checksum
+                self.journal.set_bridge_offset(name, *position)   # only after its lines are in the journal
+                write_receipt(path, *position[1:])                # and only once that is stored
                 if result['executions'] or result['relabelled']:
                     self.dirty_executions.update((e.provider, e.account, e.symbol, e.currency) for e, _ in parsed.fills)
                 if result['prices']:
@@ -208,14 +163,13 @@ class SyncWorker:
                 previous = self.journal.get('sync_status').get(name, {})
                 heartbeat = parsed.heartbeats[-1] if parsed.heartbeats else previous.get('heartbeat')
                 status = {'status': 'synced', 'checked': now, **result}
-                if mode == 'bridge':
-                    # Counted over the part of this file read so far; visible, never silently dropped.
-                    damaged = (previous.get('damaged_lines', 0) if offset else 0) + parsed.damaged
-                    if damaged:
-                        status['damaged_lines'] = damaged
-                    unknown = (previous.get('unknown_events', 0) if offset else 0) + parsed.unknown
-                    if unknown:
-                        status['unknown_events'] = unknown
+                # Counted over the part of this file read so far; visible, never silently dropped.
+                damaged = (previous.get('damaged_lines', 0) if offset else 0) + parsed.damaged
+                if damaged:
+                    status['damaged_lines'] = damaged
+                unknown = (previous.get('unknown_events', 0) if offset else 0) + parsed.unknown
+                if unknown:
+                    status['unknown_events'] = unknown
                 if heartbeat:
                     status['heartbeat'] = heartbeat
                     error, warnings = heartbeat_report(heartbeat)
@@ -225,10 +179,9 @@ class SyncWorker:
                         status.update(status='needs attention', error=error)
                 self.journal.put('sync_status', name, status)
             except FileNotFoundError:
-                waiting = {'status': 'waiting for study', 'detail': 'Bridge file has not appeared yet. '
-                           'Start the MotiveWave study.'} if mode == 'bridge' else {
-                               'status': 'needs attention', 'error': 'The watched file does not exist.'}
-                self.journal.put('sync_status', name, {'checked': now, **waiting})
+                self.journal.put('sync_status', name, {'checked': now, 'status': 'waiting for study',
+                                                       'detail': 'Bridge file has not appeared yet. '
+                                                                 'Start the MotiveWave study.'})
             except (OSError, ValueError, UnicodeError) as exc:
                 # A file that cannot be read does not undo the study's last report: Settings still knows it was
                 # heard from, and does not ask to install the study or add it to a chart again.
@@ -312,7 +265,7 @@ class SyncWorker:
 def main(argv=None):
     parser = argparse.ArgumentParser(prog='python -m mwjournal.sync',
                                      description='Capture into MotiveWave Journal without opening the app.')
-    parser.add_argument('--once', action='store_true', help='one bounded pass over the saved connections, then exit')
+    parser.add_argument('--once', action='store_true', help='one bounded pass over the bridge file, then exit')
     parser.add_argument('--dataset', choices=paths.DATASETS, default='live')
     args = parser.parse_args(argv)
     journal = Journal(dataset=args.dataset)

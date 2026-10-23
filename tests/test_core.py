@@ -8,7 +8,8 @@ import pytest
 
 from mwjournal import Execution, Journal, PriceSample, store, sync
 from mwjournal.analytics import grouped, summary
-from mwjournal.importers import Preview, apply_preview, csv_rows, preview_bridge, preview_csv
+from mwjournal.importers import (ALIASES, LABELS, Preview, apply_preview, csv_rows, is_bridge, mapping_for,
+                                 missing_columns, preview_bridge, preview_csv)
 from mwjournal.matching import match
 from mwjournal.metrics import excursions, measurements
 from mwjournal.model import ProtectionEvent, timestamp
@@ -226,6 +227,22 @@ def test_unreadable_csv_is_a_plain_import_error():
         preview_csv(text)
 
 
+def test_a_csvs_columns_are_named_in_plain_words_and_a_bridge_file_is_told_apart():
+    assert list(LABELS.values()) == ['Time', 'Date', 'Contract', 'Side', 'Contracts', 'Price', 'Fees', 'Account',
+                                     'Fill ID', 'Order ID', 'Dollars per point', 'Currency']
+    assert set(LABELS) == set(ALIASES)                     # one plain name for each field the importer reads
+    with pytest.raises(ValueError, match='Choose a column for Contract, Price under Column Mapping'):
+        preview_csv('Date,Time,Side,Qty Filled\n2026-10-07,10:00:23,Buy,1\n')
+    headers = ['When', 'Ticker', 'Action', 'Filled', 'Px']
+    mapping = {**mapping_for(headers), 'ts': 'When', 'qty': 'Filled', 'price': 'Px'}
+    assert missing_columns(mapping_for(headers)) == ['Time', 'Contracts', 'Price']
+    chosen = preview_csv('When,Ticker,Action,Filled,Px\n2026-10-07T14:00:00Z,ESZ6,Buy,0,5000\n', mapping=mapping)
+    assert chosen.errors == ['Row 2: Contracts must be finite and greater than zero.']
+    assert is_bridge('events.ndjson', '') and is_bridge('events.jsonl', '')
+    assert is_bridge('export.txt', '\n' + line('a'))                   # JSON-object lines, whatever the name
+    assert not is_bridge('fills.csv', 'symbol,side,qty,price,ts\n') and not is_bridge('fills.txt', '[1, 2]\n')
+
+
 def test_invalid_csv_cannot_partially_import_and_nan_is_rejected(tmp_path):
     journal = Journal(tmp_path / 'trades.db')
     preview = preview_csv('symbol,side,qty,price,ts\nESZ6,buy,1,100,2026-10-07T14:00:00Z\n'
@@ -332,8 +349,6 @@ def test_restarted_worker_resumes_after_the_lines_already_consumed(tmp_path, mon
     identity, position, checkpoint = journal.bridge_offset('bridge')
     assert position == file.stat().st_size and checkpoint == file.read_bytes()[-256:]
     assert identity == str(file.stat().st_ino)
-    journal.remove_profile('bridge')
-    assert journal.bridge_offset('bridge') is None and 'bridge' not in journal.get('sync_status')
 
 
 def test_bridge_lines_ending_in_crlf_import_and_resume(tmp_path):
@@ -416,18 +431,19 @@ def test_line_cut_short_by_a_crash_is_counted_and_capture_continues(tmp_path):
 
 def test_one_broken_connection_is_reported_without_starving_the_others(tmp_path):
     journal, _ = watched(tmp_path, line('a'))
-    broken = tmp_path / 'broken.csv'
-    broken.write_text(newline='', data='symbol,side,qty,price,ts,notes\nESZ6,buy,1,100,2026-10-07T14:00:00Z,"' + 'x' * 140000 + '\n')
-    journal.put('profiles', 'broken', {'path': str(broken), 'mode': 'executions', 'enabled': True})
-    journal.put('profiles', 'unknown', {'path': str(broken), 'mode': 'orders', 'enabled': True})
+    broken = tmp_path / 'broken.ndjson'
+    broken.write_text(newline='', data='{"version":2,"type":"execution"}\n')
+    journal.put('profiles', 'broken', {'path': str(broken), 'mode': 'bridge', 'enabled': True})
+    # A watched CSV of an earlier version is no connection any more (store._one_connection removes it).
+    journal.put('profiles', 'csv', {'path': str(tmp_path / 'fills.csv'), 'mode': 'executions', 'enabled': True})
     journal.put('profiles', 'pathless', {'mode': 'bridge', 'enabled': True})
-    journal.put('profiles', 'missing', {'path': str(tmp_path / 'none.csv'), 'mode': 'prices', 'enabled': True})
+    journal.put('profiles', 'missing', {'path': str(tmp_path / 'none.ndjson'), 'mode': 'bridge', 'enabled': True})
     journal.put('profiles', 'zz-last', {'path': str(tmp_path / 'bridge.ndjson'), 'mode': 'bridge', 'enabled': True})
     SyncWorker(journal).poll()
     status = journal.get('sync_status')
-    assert 'could not be read' in status['broken']['error']
-    assert 'format' in status['unknown']['error'] and 'file path' in status['pathless']['error']
-    assert status['missing']['status'] == 'needs attention' and 'study' not in str(status['missing'])
+    assert 'Unsupported bridge protocol version' in status['broken']['error']
+    assert 'bridge file' in status['csv']['error'] and 'bridge file' in status['pathless']['error']
+    assert status['missing']['status'] == 'waiting for study'
     assert status['bridge']['status'] == status['zz-last']['status'] == 'synced'
     assert len(journal.executions()) == 1
 

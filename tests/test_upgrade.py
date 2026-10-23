@@ -7,7 +7,7 @@ import traceback
 import pytest
 
 import common
-from mwjournal import Execution, Journal, humanize, store, tagging
+from mwjournal import Execution, Journal, humanize, paths, store, tagging
 from mwjournal.importers import apply_preview, preview_bridge, preview_csv
 from mwjournal.matching import match
 from mwjournal.metrics import excursions
@@ -626,3 +626,53 @@ def test_each_move_runs_once_and_a_new_journal_has_nothing_to_move(tmp_path):
     new = Journal(tmp_path / 'new.sqlite3')
     assert (meta(new.path, 'setups_to_tags'), meta(new.path, 'adherence_to_tags')) == ('0', '0')
     assert new.upgrade_note() is None and meta(new.path, 'tag_library') is None   # the starters still come at first read
+
+
+# ---------------------------------------------------------------- one connection: the study's file alone
+
+def as_0_4_16_connections(journal):
+    """Put a journal back as 0.4.16 left it: free to watch other files, its study connection pointed anywhere."""
+    with journal.connect() as db:
+        db.execute("DELETE FROM journal_meta WHERE key='one_connection'")
+
+
+def test_the_migration_removes_a_watched_csv_and_keeps_the_default_connection_pointed_at_the_studys_file(
+        tmp_path, monkeypatch):
+    home = tmp_path / 'home'
+    monkeypatch.setenv('MWJ_HOME', str(home))
+    journal = Journal()
+    csv = tmp_path / 'fills.csv'
+    csv.write_text('symbol,side,qty,price,ts,id\nESZ6,buy,1,5000,2026-10-07T14:00:00Z,a\n'
+                   'ESZ6,sell,1,5002,2026-10-07T14:01:00Z,b\n')
+    apply_preview(journal, preview_csv(csv.read_text()))                   # what the watched CSV brought in
+    journal.put('profiles', 'Broker export', {'path': str(csv), 'mode': 'executions', 'enabled': True,
+                                              'timezone': 'America/New_York', 'provider': 'csv', 'mapping': None})
+    journal.put('profiles', 'MotiveWave', {'path': str(tmp_path / 'elsewhere.ndjson'), 'mode': 'bridge',
+                                           'enabled': True})
+    for name in ('Broker export', 'MotiveWave', 'worker'):
+        journal.put('sync_status', name, {'status': 'synced', 'checked': '2026-10-09T09:00:00+00:00'})
+    for name in ('Broker export', 'MotiveWave'):
+        journal.set_bridge_offset(name, '1', 2, b'}\n')
+    as_0_4_16_connections(journal)
+    opened = Journal()
+    assert opened.get('profiles') == {'MotiveWave': {'path': str(paths.bridge_file()), 'mode': 'bridge',
+                                                     'enabled': True}}
+    # What the other file said, and how far it was read, no longer applies; the reader's own status stays.
+    assert list(opened.get('sync_status')) == ['worker']
+    assert opened.bridge_offset('Broker export') is None and opened.bridge_offset('MotiveWave') is None
+    assert len(opened.trades()) == 1 and opened.trades()[0].provider == 'csv'      # the trades it read stay
+    note = opened.upgrade_note()['connections']
+    assert note['note'] == ("The journal now reads only the study's own file; 1 other watched file (Broker export) "
+                            'was removed, and the trades read from it stay.')
+    assert opened.unseen_notes() == {'connections': note['note']}
+    assert not backups(home)                                                    # nothing rewritten: no backup
+    # Twice: nothing left to remove or move, and the note stays as it was.
+    as_0_4_16_connections(opened)
+    again = Journal()
+    assert again.get('profiles') == opened.get('profiles') and again.upgrade_note()['connections'] == note
+    assert meta(again.path, 'one_connection') == '0'
+    # A journal already reading the study's file has nothing to say.
+    replay = Journal(dataset='replay')
+    replay.put('profiles', 'MotiveWave', {'path': str(paths.bridge_file('replay')), 'mode': 'bridge', 'enabled': True})
+    as_0_4_16_connections(replay)
+    assert Journal(dataset='replay').upgrade_note() is None

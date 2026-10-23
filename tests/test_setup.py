@@ -95,34 +95,12 @@ def test_a_switched_off_default_connection_is_switched_back_on_and_never_moved(t
     journal.put('profiles', 'MotiveWave', {**on, 'enabled': False})
     assert not ensure_default_connection(journal) and journal.get('profiles') == {'MotiveWave': on}
     assert not ensure_default_connection(journal) and journal.get('profiles') == {'MotiveWave': on}   # twice: the same
-    # The same file under the user's own name and another spelling of the path: no second connection, switched on.
-    journal.remove_profile('MotiveWave')
-    spellings = [str(tmp_path / 'bridge' / '..' / 'bridge' / 'motivewave.ndjson')]
-    if os.name != 'nt':
-        (tmp_path / 'link').symlink_to(tmp_path, target_is_directory=True)
-        spellings.append(str(tmp_path / 'link' / 'bridge' / 'motivewave.ndjson'))
-    for spelling in spellings:
-        journal.put('profiles', 'my capture', {'path': spelling, 'mode': 'bridge', 'enabled': False})
-        assert not ensure_default_connection(journal)
-        assert journal.get('profiles') == {'my capture': {'path': spelling, 'mode': 'bridge', 'enabled': True}}
-    # A 'MotiveWave' connection the user pointed at another file stays pointed there, and is switched on too.
-    journal.remove_profile('my capture')
+    # A 'MotiveWave' connection pointed at another file stays pointed there, and is switched on too: opening the
+    # journal points it at the study's file once (test_upgrade), not every start.
     moved = {'path': str(tmp_path / 'elsewhere.ndjson'), 'mode': 'bridge', 'enabled': False}
     journal.put('profiles', 'MotiveWave', moved)
     assert not ensure_default_connection(journal)
     assert journal.get('profiles') == {'MotiveWave': {**moved, 'enabled': True}}
-
-
-def test_default_connection_recognises_the_bridge_once_the_file_exists(tmp_path, monkeypatch):
-    monkeypatch.setenv('MWJ_HOME', str(tmp_path))
-    journal = Journal()
-    bridge = paths.bridge_file()
-    bridge.parent.mkdir()
-    bridge.write_text('')
-    other = tmp_path / 'other.ndjson'
-    os.link(bridge, other)                       # a second name for the very same file
-    journal.put('profiles', 'by another name', {'path': str(other), 'mode': 'bridge', 'enabled': True})
-    assert not ensure_default_connection(journal) and list(journal.get('profiles')) == ['by another name']
 
 
 def test_headless_entry_point_connects_and_captures_with_no_setup(tmp_path, monkeypatch):

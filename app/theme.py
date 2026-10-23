@@ -305,9 +305,17 @@ def status(label: str, tone: str, state: str, notes=(), *, big: bool = False, he
     above the note of the state before it), so what varies is kept inside a single element.
     `notes` are (text, is_warning) pairs; `help` is the ? beside it.
     """
-    st.markdown(chip(label, tone, state=state, big=big) + ''.join(
-        f"<div class='mwj-status-note{' warn' if warn else ''}'>{html.escape(text)}</div>" for text, warn in notes),
-        unsafe_allow_html=True, help=help)
+    st.markdown(chip(label, tone, state=state, big=big) + _notes(notes), unsafe_allow_html=True, help=help)
+
+
+def notes(lines) -> None:
+    """(text, is_warning) lines as one element, drawn as the lines under a status are."""
+    st.markdown(_notes(lines), unsafe_allow_html=True)
+
+
+def _notes(lines) -> str:
+    return ''.join(f"<div class='mwj-status-note{' warn' if warn else ''}'>{html.escape(text)}</div>"
+                   for text, warn in lines)
 
 
 # ---------------------------------------------------------------- charts

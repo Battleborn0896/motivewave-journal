@@ -33,6 +33,7 @@ CREDIT = 'TradingView Lightweight Charts™, Copyright (c) 2025 TradingView, Inc
 FILLS_CSV = ('Account,Instrument,Side,Quantity,Avg Price,Date,Time,Trade ID,Commission\n'
              'paper,ESZ6,Buy,1,5000,2026-10-07,10:00:23,entry,2\n'
              'paper,ESZ6,Sell,1,5002,2026-10-07,10:03:00,exit,2\n')
+IMPORT_BOX = 'Fills CSV or Bridge File'
 
 
 @pytest.fixture(autouse=True)
@@ -198,10 +199,11 @@ def landmarks(app, view, empty):
         return (said(app.info, 'No trades yet') or said(app.info, common.NO_REPLAY_TRADES)) if empty else bool(listed(app))
     if view == 'Edge':
         return said(app.info, 'Statistics need') if empty else any(m.label == 'Win Rate' for m in app.metric)
-    if view == 'Import':
-        return any(s.label == 'Import format' for s in app.selectbox) and len(app.file_uploader) == 2
+    if view == 'Import':                   # one box for any file, and no prices import
+        return ([u.label for u in app.file_uploader] == [IMPORT_BOX]
+                and any(e.label == 'Add One Fill by Hand' for e in app.expander))
     if view == 'Connection':
-        return (any(t.label.startswith('Live bridge file') for t in app.text_input) and len(states(app.main)) == 1
+        return (any(e.label == 'Troubleshooting' for e in app.expander) and len(states(app.main)) == 1
                 and any(c.value == str(paths.bridge_file(Journal().dataset)) for c in app.main.code))
     if view == 'Daily review':
         return report_open(app)
@@ -648,11 +650,20 @@ def test_edge_draws_excursions_for_captured_trades_nobody_has_reviewed(home):
 
 # ---------------------------------------------------------------- import
 
+def mapping_open(app):
+    """Whether Column Mapping is drawn open."""
+    return next(e for e in app.expander if e.label == 'Column Mapping').proto.expanded
+
+
 def test_csv_fills_are_mapped_previewed_and_imported_once():
     app = open_app('Import')
-    widget(app.file_uploader, 'Executions').upload('fills.csv', FILLS_CSV.encode(), 'text/csv').run()
+    widget(app.file_uploader, IMPORT_BOX).upload('fills.csv', FILLS_CSV.encode(), 'text/csv').run()
     assert not app.exception
-    assert next(s for s in app.selectbox if s.label == 'price').value == 'Avg Price'
+    # Every column was found by its name: the mapping stays closed, its boxes named in plain words.
+    assert not mapping_open(app) and next(s for s in app.selectbox if s.label == 'Price').value == 'Avg Price'
+    assert next(s for s in app.selectbox if s.label == 'Contracts').value == 'Quantity'
+    assert not any(s.label in ('Import format', 'price', 'qty') for s in app.selectbox)
+    assert not any(t.label.startswith('Source identity') for t in app.text_input)
     assert said(app.markdown, '2 records ready')
     press(app, 'Import Into My Journal')
     assert said(app.success, 'Imported 2 new executions')
@@ -665,55 +676,92 @@ def test_csv_fills_are_mapped_previewed_and_imported_once():
     assert chosen(app) == trade.id and listed(app) == [trade.id]
 
 
-def test_csv_with_a_missing_required_column_is_an_error_message():
+def test_csv_times_are_read_in_the_zone_chosen_for_the_file_which_opens_on_the_time_zone():
+    Journal().save_preferences(display_timezone='America/Chicago')
     app = open_app('Import')
-    widget(app.file_uploader, 'Executions').upload('fills.csv', b'Instrument,Side\nESZ6,Buy\n', 'text/csv').run()
-    assert not app.exception and said(app.error, 'Map these required columns')
+    widget(app.file_uploader, IMPORT_BOX).upload('fills.csv', FILLS_CSV.encode(), 'text/csv').run()
+    zone = widget(app.selectbox, 'Time Zone of the File')
+    assert zone.value == 'America/Chicago' and 'America/New_York' in zone.options
+    zone.set_value('America/New_York').run()
+    press(app, 'Import Into My Journal')
+    assert Journal().executions()[0].ts == '2026-10-07T14:00:23+00:00'          # 10:00:23 in New York
+
+
+def test_csv_with_a_missing_required_column_opens_the_mapping_in_plain_words():
+    app = open_app('Import')
+    widget(app.file_uploader, IMPORT_BOX).upload('fills.csv', b'Instrument,Side\nESZ6,Buy\n', 'text/csv').run()
+    assert not app.exception and said(app.error, 'Choose a column for Time, Contracts, Price under Column Mapping')
+    assert mapping_open(app)
+    assert sorted(s.label for s in app.selectbox if s.key and s.key.startswith('map-')) == sorted([
+        'Time', 'Date', 'Contract', 'Side', 'Contracts', 'Price', 'Fees', 'Account', 'Fill ID', 'Order ID',
+        'Dollars per point', 'Currency'])                                   # in three columns, row by row
     assert not Journal().executions()
 
 
-def test_price_csv_import_calculates_excursions():
-    journal = Journal()
-    trade = round_trip(journal)
+def test_a_bridge_file_and_a_fills_csv_dropped_in_the_same_box_are_each_recognised():
     app = open_app('Import')
-    widget(app.text_input, 'Export time zone').set_value('UTC')
-    widget(app.selectbox, 'Price file resolution').set_value(60)
-    prices = 'Date,Time,Open,High,Low,Close,Volume\n' + ''.join(
-        f'2026-10-07,14:0{m}:00,5000,5004,4999,5002,123\n' for m in range(4))
-    widget(app.file_uploader, 'Prices CSV').upload('bars.csv', prices.encode(), 'text/csv').run()
-    press(app, 'Import Prices')
-    assert said(app.success, '4 prices')
-    assert journal.price_sources('ESZ6') == ['my-data']
-    assert journal.best_metric(trade)['precision'] == 'estimated-bars'
+    events = lines([fill('a', mode='live', ts='2026-10-07T14:00:00Z'),
+                    fill('b', 'sell', 5002, mode='live', ts='2026-10-07T14:02:00Z')])
+    widget(app.file_uploader, IMPORT_BOX).upload('events.txt', events.encode(), 'text/plain').run()
+    assert not app.exception and said(app.markdown, '2 records ready')
+    assert not any(e.label == 'Column Mapping' for e in app.expander)          # nothing to map in a bridge file
+    press(app, 'Import Into My Journal')
+    assert said(app.success, 'Imported 2 new executions')
+    assert {e.provider for e in Journal().executions()} == {'motivewave-native:workspace:live'}
+    widget(app.file_uploader, IMPORT_BOX).upload('fills.csv', FILLS_CSV.encode(), 'text/csv').run()
+    assert not app.exception and any(e.label == 'Column Mapping' for e in app.expander)
+    press(app, 'Import Into My Journal')
+    assert said(app.success, 'Imported 2 new executions')
+    assert sorted(e.provider for e in Journal().executions()) == ['csv', 'csv', 'motivewave-native:workspace:live',
+                                                                  'motivewave-native:workspace:live']
 
 
-def test_bridge_file_import_by_hand_refuses_the_other_environment():
+def test_a_replay_bridge_file_is_refused_in_live():
     app = open_app('Import')
-    widget(app.selectbox, 'Import format').set_value('bridge')
-    widget(app.file_uploader, 'Executions').upload('replay.ndjson', lines([fill('a')]).encode(), 'text/plain').run()
+    widget(app.file_uploader, IMPORT_BOX).upload('replay.ndjson', lines([fill('a')]).encode(), 'text/plain').run()
     assert not app.exception and said(app.error, 'other trading environment')
     assert widget(app.button, 'Import Into My Journal').disabled
     assert not Journal().executions()
 
 
-def test_manual_fill_keeps_the_time_that_was_typed_and_is_measured_against_stored_prices():
+def record_by_hand(app, *, day, time, side='buy', price=5000.25, account='SIM', contract='ESZ6'):
+    widget(app.text_input, 'Account').set_value(account)
+    widget(app.text_input, 'Contract').set_value(contract)
+    widget(app.selectbox, 'Side').set_value(side)
+    widget(app.number_input, 'Price').set_value(price)
+    widget(app.date_input, 'Date').set_value(day)
+    widget(app.time_input, 'Time').set_value(time)
+    return press(app, 'Record Fill')
+
+
+def test_a_fill_typed_by_hand_is_read_in_the_settings_time_zone():
     journal = Journal()
+    journal.save_preferences(display_timezone='America/Los_Angeles')
+    app = open_app('Import')
+    assert widget(app.time_input, 'Time').label == 'Time · America/Los_Angeles'
+    assert widget(app.text_input, 'Account').value == '' and widget(app.text_input, 'Contract').value == ''
+    assert not any(t.label.startswith('Fill timestamp') for t in app.text_input)
+    assert not any(n.label == 'Quantity' for n in app.number_input) and widget(app.number_input, 'Contracts')
+    record_by_hand(app, day=dt.date(2026, 7, 15), time=dt.time(9, 30), account='')
+    assert said(app.error, 'Enter the account and the contract.') and not journal.executions()
+    record_by_hand(app, day=dt.date(2026, 7, 15), time=dt.time(9, 30))
+    assert said(app.success, 'Recorded 1 new fill')
+    recorded, = journal.executions()
+    assert recorded.ts == '2026-07-15T16:30:00+00:00'                           # 9:30 in Los Angeles in summer
+    assert (recorded.provider, recorded.account, recorded.symbol, recorded.side, recorded.qty, recorded.price) == (
+        'manual', 'SIM', 'ESZ6', 'buy', 1, 5000.25)
+
+
+def test_a_fill_typed_by_hand_is_measured_against_stored_prices():
+    journal = Journal()
+    journal.save_preferences(display_timezone='America/New_York')
     journal.ingest_prices([bar(0), bar(1), bar(2)])                # what the study recorded for that contract
     app = open_app('Import')
-    widget(app.text_input, 'Fill timestamp').set_value('2026-10-07T10:00:23-04:00')
-    widget(app.number_input, 'Fill price').set_value(5000.25)
-    press(app, 'Record Fill')
-    assert said(app.success, 'Recorded 1 new fill')
-    recorded = journal.executions()[0]
-    assert recorded.ts == '2026-10-07T14:00:23+00:00' and recorded.price == 5000.25 and recorded.provider == 'manual'
-    widget(app.text_input, 'Fill timestamp').set_value('yesterday at ten')
-    press(app, 'Record Fill')
-    assert said(app.error, 'Invalid timestamp') and len(journal.executions()) == 1
-    widget(app.text_input, 'Fill timestamp').set_value('2026-10-07T14:02:10Z')
-    widget(app.selectbox, 'Side').set_value('sell')
-    press(app, 'Record Fill')
+    record_by_hand(app, day=dt.date(2026, 10, 7), time=dt.time(10, 0))
+    record_by_hand(app, day=dt.date(2026, 10, 7), time=dt.time(10, 2), side='sell')
     trade = journal.trades()[0]
-    assert trade.closed and journal.best_metric(trade)['precision'] == 'estimated-bars'
+    assert (trade.opened, trade.closed) == ('2026-10-07T14:00:00+00:00', '2026-10-07T14:02:00+00:00')
+    assert journal.best_metric(trade)['precision'] == 'estimated-bars'
 
 
 # ---------------------------------------------------------------- daily review and export
@@ -950,81 +998,20 @@ def test_reading_trades_is_always_on_and_a_connection_switched_off_before_is_swi
     assert not app.exception and states(app.main) == ['Recording']
 
 
-def test_advanced_watches_a_different_bridge_file_in_both_environments(home):
+def test_connection_is_the_status_and_the_install_with_the_details_under_a_closed_troubleshooting():
+    Journal().ingest_gaps([{'type': 'gap', 'provider': 'motivewave-ticks', 'ts': '2026-10-07T14:00:00Z',
+                            'dropped': 3, 'symbol': 'ESZ6'}])
     app = open_app('Connection')
-    other = home / 'elsewhere' / 'mw.ndjson'
-    widget(app.text_input, 'Live bridge file').set_value('relative/mw.ndjson')
-    press(app, 'Watch This File')
-    assert said(app.error, 'full path')
-    widget(app.text_input, 'Live bridge file').set_value(str(other.with_name('mw.replay.ndjson')))
-    press(app, 'Watch This File')
-    assert said(app.error, 'That is a replay file')
-    assert Journal().get('profiles')[DEFAULT_CONNECTION]['path'] == str(paths.bridge_file())
-    widget(app.text_input, 'Live bridge file').set_value(str(other))
-    press(app, 'Watch This File')
-    assert Journal().get('profiles')[DEFAULT_CONNECTION] == {'path': str(other), 'mode': 'bridge', 'enabled': True}
-    assert Journal(dataset='replay').get('profiles')[DEFAULT_CONNECTION]['path'] == str(other.with_name('mw.replay.ndjson'))
-    assert any(c.value == str(other) for c in app.main.code) and states(app.main) == ['Not recording']
-    other.parent.mkdir()
-    other.write_text(lines([heartbeat()]))
-    wait_until(lambda: status_of().get('heartbeat'))
-    app.run()
-    assert states(app.main) == ['Recording']
-    paths.bridge_file().parent.mkdir()
-    paths.bridge_file().write_text('')                             # the default file exists but the study is not writing it
-    press(app, 'Use the Default File')
-    assert Journal().get('profiles')[DEFAULT_CONNECTION]['path'] == str(paths.bridge_file())
-    assert Journal(dataset='replay').get('profiles')[DEFAULT_CONNECTION]['path'] == str(paths.bridge_file('replay'))
-    assert states(app.main) == ['Not recording']                   # the other file's heartbeat no longer counts
-
-
-def test_another_watched_csv_can_be_added_paused_and_removed(home):
-    exported = home / 'fills.csv'
-    exported.write_text(FILLS_CSV)
-    app = open_app('Connection')
-    widget(app.text_input, 'Name').set_value('worker')
-    widget(app.text_input, 'File to watch').set_value(str(exported))
-    press(app, 'Add This File')
-    assert said(app.error, 'not in use') and list(Journal().get('profiles')) == [DEFAULT_CONNECTION]
-    widget(app.text_input, 'Name').set_value('Broker export')
-    widget(app.text_input, 'File to watch').set_value(str(home / 'missing.csv'))
-    press(app, 'Add This File')
-    assert said(app.error, 'existing file')
-    widget(app.text_input, 'File to watch').set_value(str(exported))
-    press(app, 'Add This File')
-    assert Journal().get('profiles')['Broker export']['mode'] == 'executions'
-    wait_until(lambda: len(Journal().executions()) == 2)
-    app.run()
-    assert not app.exception and said(app.main.markdown, 'Broker export')
-    assert states(app.main) == ['Not recording']                   # the study's own state is not the CSV's
-    press(app, 'Remove')
-    assert list(Journal().get('profiles')) == [DEFAULT_CONNECTION]
-    assert 'Broker export' not in Journal().get('sync_status')
-
-
-def test_changing_bridge_checks_both_journals_before_changing_either(home):
-    from views import connection
-    live = Journal()
-    from mwjournal.sync import ensure_default_connection
-    ensure_default_connection(live)
-    before = live.get('profiles')
-    replay = Journal(dataset='replay')
-    with replay.connect() as db:
-        db.execute('PRAGMA user_version = 99')
-    error = connection.watch(home / 'elsewhere.ndjson')
-    assert 'Neither connection was changed' in error
-    assert live.get('profiles') == before
-
-
-def test_connection_view_sets_an_instrument_multiplier():
-    journal = Journal()
-    journal.ingest([(Execution('test', 'paper', 'XYZ', 'buy', 1, 100, '2026-10-07T14:00:00Z', execution_id='a'), {}),
-                    (Execution('test', 'paper', 'XYZ', 'sell', 1, 103, '2026-10-07T14:03:00Z', execution_id='b'), {})])
-    app = open_app('Connection')
-    assert widget(app.selectbox, 'Instrument').value == 'XYZ'
-    widget(app.number_input, 'Currency per price point').set_value(2.5)
-    press(app, 'Set Multiplier and Recalculate')
-    assert journal.trades()[0].net == 7.5
+    assert [m.label for m in app.main.metric] == ['Last Heard From Study', 'Fills in This Journal']
+    trouble = next(e for e in app.main.expander if e.label == 'Troubleshooting')
+    assert not trouble.proto.expanded
+    assert [c.value for c in trouble.code] == [str(paths.bridge_file())]          # the file being read
+    assert said(trouble.caption, f'Journal database: {paths.database()}')
+    assert said(trouble.markdown, 'No other messages from the study.')
+    assert any('Ticks Dropped' in d.value.columns for d in trouble.dataframe)
+    # Nothing to type or choose: no other bridge file, no watched CSVs, no multipliers (a trade asks for its own).
+    assert not app.main.text_input and not app.main.selectbox and not app.main.number_input
+    assert not said(app.main.markdown, 'Other Watched Files') and not said(app.main.markdown, 'Instrument Multiplier')
 
 
 def test_excursion_unit_picker_updates_detail_list_plot_and_persists_without_rewriting_data(home):
@@ -1130,7 +1117,7 @@ def test_analytics_is_question_based_and_selected_units_change_only_excursion_ax
     assert excursion['layout']['yaxis']['title']['text'] == 'In my favour · MFE (ticks)'
 
 
-def test_reuse_tag_groups_and_instruments_with_no_extra_name_typing(home):
+def test_reuse_tag_groups_with_no_extra_name_typing(home):
     journal = seed_preview(home)
     app = open_app()
     assert not any(x.label == 'New group name' for x in app.text_input)
@@ -1139,16 +1126,6 @@ def test_reuse_tag_groups_and_instruments_with_no_extra_name_typing(home):
     press(app, 'Create and Apply Tag')
     assert journal.tag_catalog()['VWAP reclaim'] == 'Other tags'
     assert 'VWAP reclaim' in widget(app.pills, 'Other tags').value
-    show(app, 'Connection')
-    assert widget(app.selectbox, 'Instrument').value == 'ESZ6'
-    assert not any(x.label == 'Instrument' for x in app.text_input)
-    assert widget(app.number_input, 'Tick size').value == .25
-    widget(app.selectbox, 'Instrument').set_value('＋ Other instrument').run()
-    assert widget(app.number_input, 'Tick size').value == 0
-    widget(app.text_input, 'Other instrument symbol').set_value('CUSTOM')
-    widget(app.number_input, 'Currency per price point').set_value(2)
-    press(app, 'Set Multiplier and Recalculate')
-    assert 'CUSTOM' not in journal.display_settings()['tick_sizes']
 
 
 # ---------------------------------------------------------------- status logic and the background readers
@@ -1197,16 +1174,13 @@ def test_link_state_reads_the_stored_status_and_the_heartbeat_age(tmp_path):
                                                                      '59 min ago', '1 h ago', '1 d ago']
 
 
-def test_only_enabled_connections_count_as_problems_and_the_stamp_follows_fills_and_excursions(tmp_path):
+def test_the_study_connection_is_the_default_one_and_the_stamp_follows_fills_and_excursions(tmp_path):
     journal = Journal(tmp_path / 'trades.sqlite3')
-    journal.put('profiles', 'csv', {'path': '/nowhere.csv', 'mode': 'executions', 'enabled': True})
-    journal.put('profiles', 'old', {'path': '/gone.csv', 'mode': 'executions', 'enabled': False})
-    for name in ('csv', 'old', DEFAULT_CONNECTION):
-        journal.put('sync_status', name, {'status': 'needs attention', 'error': 'The watched file does not exist.'})
-    assert common.other_problems(journal, DEFAULT_CONNECTION) == 1
-    assert common.study_connection(journal) == (None, None)
     journal.put('profiles', 'mine', {'path': '/x.ndjson', 'mode': 'bridge', 'enabled': True})
-    assert common.study_connection(journal)[0] == 'mine'           # a bridge under another name is the study's
+    assert common.study_connection(journal) == (None, None)        # a bridge under another name is not the study's
+    assert common.study_link(journal)[3].state == common.ATTENTION
+    journal.put('profiles', DEFAULT_CONNECTION, {'path': '/y.ndjson', 'mode': 'bridge', 'enabled': True})
+    assert common.study_connection(journal) == (DEFAULT_CONNECTION, journal.get('profiles')[DEFAULT_CONNECTION])
     before = common.stamp(journal)
     trade = round_trip(journal)
     filled = common.stamp(journal)

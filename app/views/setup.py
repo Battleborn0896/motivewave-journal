@@ -1,6 +1,7 @@
 """Settings: is the study recording, the two settings, and the two pages of real setup.
 
-The first page reads top to bottom: one status line, Recording, Not recording or Needs attention, green and alone
+The first page reads top to bottom: once after an upgrade, one quiet line saying what it did, with OK; one status
+line, Recording, Not recording or Needs attention, green and alone
 when the study records; under it, one line saying the one thing to do when there is something (install the study,
 add it to a chart, open MotiveWave, or update an older study); Time Zone and MAE / MFE Units, with hide weekends
 under a small Advanced heading; a tile each for Tags, Playbooks & Checklists and Data, with a link to each of
@@ -151,6 +152,7 @@ def render(journal, rows: list[dict], *, tool: PageRenderer | None = None,
 
 def home(journal, rows: list[dict], *, display: DisplayRenderer | None = None, links: bool = True) -> None:
     capture = getattr(journal, 'capture_journal', journal)
+    upgrade_notes([journal] + ([capture] if capture is not journal else []))
     link = live_status(capture)
     step(link)
     if display is None:
@@ -160,6 +162,21 @@ def home(journal, rows: list[dict], *, display: DisplayRenderer | None = None, l
     if links:
         pages()
     about(link)
+
+
+def upgrade_notes(journals) -> None:
+    """What opening an older journal did once (Journal.upgrade_note), said once: one quiet line of the sentences not
+    seen yet, and OK, which marks them seen. Nothing when there is nothing new to say."""
+    unseen = [(journal, journal.unseen_notes()) for journal in journals]
+    said = [note for _, notes in unseen for note in notes.values()]
+    if not said:
+        return
+    with st.container(horizontal=True, vertical_alignment='center', gap='small', key='setup-upgrade-notes'):
+        st.caption(' '.join(said))
+        if st.button('OK', type='tertiary', key='setup-upgrade-notes-ok'):
+            for journal, notes in unseen:
+                journal.notes_seen(notes)
+            st.rerun()
 
 
 def live_status(journal):
@@ -196,19 +213,12 @@ def headline(link, contracts=()) -> str:
 
 def render_status(journal):
     """The state in one line, and under it what to do when it needs attention. No bridge path or raw error."""
-    name, _, _, link = common.study_link(journal)
+    link = common.study_link(journal)[3]
     try:
         contracts = journal.recent_contracts() if link.state == common.RECORDING else []
     except (AttributeError, TypeError, ValueError, OSError):
         contracts = []
     notes = [(STATUS_COPY[common.ATTENTION], True)] if link.state == common.ATTENTION else []
-    try:
-        others = common.other_problems(journal, name)
-    except (AttributeError, TypeError, KeyError):
-        others = 0
-    if others:
-        notes.append((f'{others} other watched file{"s" if others > 1 else ""} could not be read. '
-                      'See Data → Connection.', True))
     named = (CONTRACTS_REPLAY if getattr(journal, 'dataset', '') == 'replay' else CONTRACTS) if contracts else ''
     # Always one element: theme.status explains why a redrawn fragment must not change its element count.
     theme.status(headline(link, contracts), link.tone, link.state, big=True, notes=notes,

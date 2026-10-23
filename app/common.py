@@ -39,7 +39,6 @@ TOOL_KEY = 'journal-settings-page'
 # whether Trades opens the Daily Report Card instead of a trade.
 TAB_KEY = 'journal-open-tab'
 REPORT_KEY = 'journal-open-report-card'
-MAPPING_KEY = 'journal-import-mapping'      # the column mapping of the last CSV previewed in Import
 # The first four keep their places: older selectors default to the first one.
 TIMEZONES = ['America/New_York', 'America/Chicago', 'America/Los_Angeles', 'UTC',
              'America/Denver', 'America/Phoenix', 'America/Anchorage', 'Pacific/Honolulu', 'America/Toronto',
@@ -660,42 +659,22 @@ def filter_rule(journal, rows: list[dict]) -> dict:
     return rule
 
 
-def multiplier_form(journal, form_key: str, symbol: str | None = None) -> None:
-    """Dollars per full price point per contract. Known futures roots come with one; anything else
-    stays without P&L until it is set here."""
-    trades = journal.trades()
-    symbols = sorted({t.symbol for t in trades})
-    suggested = symbol or (symbols[0] if symbols else 'ESZ6')
-    fixed_symbol = symbol is not None
-    if not fixed_symbol:
-        choice = st.selectbox('Instrument', [*(symbols or ['ESZ6']), '＋ Other instrument'],
-                              format_func=lambda s: '+ Other instrument' if s == '＋ Other instrument' else s,
-                              key=key(journal, form_key + '-instrument'))
-        if choice != '＋ Other instrument':
-            suggested = choice
-        else:
-            suggested = ''  # Never carry another instrument's multiplier/tick defaults into a new symbol.
-    in_use = next((t.point_value for t in trades if t.symbol == suggested and t.point_value), None)
+def multiplier_form(journal, form_key: str, symbol: str) -> None:
+    """Dollars per full price point per contract, asked on a trade whose contract has none: known futures roots come
+    with one; anything else stays without P&L until it is set here."""
+    in_use = next((t.point_value for t in journal.trades() if t.symbol == symbol and t.point_value), None)
     with st.form(key(journal, form_key)):
-        if fixed_symbol or choice != '＋ Other instrument':
-            symbol = suggested
-            st.caption('Instrument: ' + symbol)
-        else:
-            symbol = st.text_input('Other instrument symbol', key=key(journal, form_key + '-symbol'))
-        # The starting value follows the suggested instrument, not the box beside it: both boxes are
-        # sent together on submit, so it must not be able to change underneath the number just typed.
+        st.caption('Instrument: ' + symbol)
         pv = st.number_input('Currency per price point', min_value=.000001,
-                             value=float(in_use or point_value(suggested) or 1.), key=key(journal, form_key + '-value-' + suggested),
+                             value=float(in_use or point_value(symbol) or 1.),
+                             key=key(journal, form_key + '-value-' + symbol),
                              help='ES 50, MES 5, NQ 20, MNQ 2, CL 1000; 1 for shares.')
         tick = st.number_input('Tick size · optional', min_value=0.,
-                               value=float(units.tick_size(suggested, journal.display_settings()['tick_sizes']) or 0.),
-                               format='%.6f', key=key(journal, form_key + '-tick-' + suggested),
+                               value=float(units.tick_size(symbol, journal.display_settings()['tick_sizes']) or 0.),
+                               format='%.6f', key=key(journal, form_key + '-tick-' + symbol),
                                help='One minimum price increment, not its dollar value. Zero leaves it unchanged. '
                                     'ES/MES/NQ/MNQ are detected automatically. Other contracts need a confirmed size.')
         if st.form_submit_button('Set Multiplier and Recalculate'):
-            if not symbol.strip():
-                st.error('Name the instrument.')
-                return
             journal.set_instrument(symbol, pv)
             if tick > 0:
                 journal.set_tick_size(symbol, tick)
@@ -749,13 +728,9 @@ def ago(seconds: float) -> str:
 
 
 def study_connection(journal) -> tuple[str | None, dict | None]:
-    """The connection that reads the study's bridge file: the default one, else any other bridge."""
-    profiles = journal.get('profiles')
-    if DEFAULT_CONNECTION in profiles:
-        return DEFAULT_CONNECTION, profiles[DEFAULT_CONNECTION]
-    bridges = sorted(((n, p) for n, p in profiles.items() if p.get('mode') == 'bridge'),
-                     key=lambda item: (not item[1].get('enabled'), item[0]))
-    return bridges[0] if bridges else (None, None)
+    """The connection that reads the study's bridge file (sync.ensure_default_connection), or (None, None)."""
+    profile = journal.get('profiles').get(DEFAULT_CONNECTION)
+    return (DEFAULT_CONNECTION, profile) if profile is not None else (None, None)
 
 
 def link_state(profile: dict | None, status: dict | None, *, worker_error: str | None = None, now=None) -> Link:
@@ -777,7 +752,8 @@ def link_state(profile: dict | None, status: dict | None, *, worker_error: str |
     known = {'version': str(heartbeat.get('connector_version') or ''), 'heard': heard,
              'connector': str(heartbeat.get('connector') or '')}
     if profile is None:
-        return Link(ATTENTION, 'critical', 'No bridge file is being watched. Choose one under Bridge File below.')
+        return Link(ATTENTION, 'critical',
+                    'The app is not reading the study\'s file yet. Quit the app and open it again.')
     if worker_error:
         return Link(ATTENTION, 'critical', f'The background reader failed ({worker_error}) and is retrying.', **known)
     if status.get('error'):
@@ -808,11 +784,3 @@ def study_link(journal, *, now=None) -> tuple[str | None, dict | None, dict, Lin
     status = statuses.get(name, {}) if name else {}
     worker = statuses.get('worker', {}).get('error')
     return name, profile, status, link_state(profile, status, worker_error=worker, now=now)
-
-
-def other_problems(journal, study: str | None) -> int:
-    """Enabled connections other than the study's whose last pass failed. A switched-off connection
-    keeps its last error, so it is not counted."""
-    profiles, statuses = journal.get('profiles'), journal.get('sync_status')
-    return sum(1 for name, profile in profiles.items()
-               if name != study and profile.get('enabled') and statuses.get(name, {}).get('error'))
