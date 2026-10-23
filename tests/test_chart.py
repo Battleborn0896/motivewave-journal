@@ -230,6 +230,20 @@ def test_motivewave_style_execution_csv_supports_separate_date_and_time():
     assert fill.ts == '2026-10-07T14:00:23+00:00' and fill.execution_id == 'entry'
 
 
+def test_a_time_of_day_takes_the_rows_date_whatever_the_columns_are_called():
+    # Mapped by hand under Column Mapping: neither column has a name the importer knows.
+    text = 'Acct,Sym,B/S,Filled,Px,Trade Date,Exec Time\npaper,ESZ6,Buy,1,5000,2026-10-07,{}\n'
+    mapping = {'account': 'Acct', 'symbol': 'Sym', 'side': 'B/S', 'qty': 'Filled', 'price': 'Px',
+               'date': 'Trade Date', 'ts': 'Exec Time'}
+    for time, utc in (('10:00:23', '14:00:23'), ('10:00', '14:00:00'), ('1:05:09 PM', '17:05:09'),
+                      ('10:00:23.250', '14:00:23.250000')):
+        preview = preview_csv(text.format(time), provider='broker', mapping=mapping)
+        assert not preview.errors and preview.fills[0][0].ts == f'2026-10-07T{utc}+00:00', (time, preview.errors)
+    # A full timestamp in the Time column is used as it is, beside any Date column.
+    preview = preview_csv(text.format('2026-10-07 10:00:23'), provider='broker', mapping=mapping)
+    assert not preview.errors and preview.fills[0][0].ts == '2026-10-07T14:00:23+00:00'
+
+
 def test_chart_window_is_bounded_for_long_open_positions(tmp_path):
     trade = round_trip(Journal(tmp_path / 'journal.sqlite3'))
     trade.closed = None

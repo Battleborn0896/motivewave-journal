@@ -8,12 +8,15 @@ from __future__ import annotations
 import csv
 import io
 import json
+import re
 from dataclasses import dataclass, field
 
 from .model import Execution, PriceSample, ProtectionEvent, finite, instant, timestamp
 from .scope import event_mode
 
 # Each field of a fill, by the name a trader knows it by, in the order Column Mapping asks for them.
+# A Time value that is only a time of day takes the row's Date, whatever either column is called.
+TIME_OF_DAY = re.compile(r'\d{1,2}:\d{2}(:\d{2}([.,]\d+)?)?(\s*[AaPp][Mm])?$')
 LABELS = {'ts': 'Time', 'date': 'Date', 'symbol': 'Contract', 'side': 'Side', 'qty': 'Contracts', 'price': 'Price',
           'commission': 'Fees', 'account': 'Account', 'execution_id': 'Fill ID', 'order_id': 'Order ID',
           'point_value': 'Dollars per point', 'currency': 'Currency'}
@@ -108,7 +111,7 @@ def preview_csv(text: str, *, timezone='America/New_York', mapping=None,
                 return raw.get(columns.get(key), default) or default
             pv = value('point_value', point_value)
             stamp = value('ts')
-            if value('date') and str(columns.get('ts', '')).strip().lower() in ('time', 'fill time'):
+            if value('date') and TIME_OF_DAY.match(stamp.strip()):
                 stamp = value('date') + ' ' + stamp
             fill = Execution(provider, value('account', account), value('symbol'), value('side'),
                              finite(value('qty'), 'Contracts'), finite(value('price'), 'Price'),
