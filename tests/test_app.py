@@ -1109,8 +1109,9 @@ def test_analytics_is_question_based_and_selected_units_change_only_excursion_ax
     assert widget(app.metric, 'Gross P&L') and not any(s.label == 'Compare by' for s in app.selectbox)
     open_tab(app, 'Compare')
     assert widget(app.selectbox, 'Compare by').value == 'Tags' and not any(m.label == 'Gross P&L' for m in app.metric)
-    table = next(d.value for d in app.dataframe if 'Average Trade' in d.value.columns)
-    assert 'Trades' in table.columns and 'Tag' in table.columns
+    # The tag tables: Totals first, each a compact table of Trades, Net P&L, Win % and Average Trade.
+    tables = [m.value for m in app.markdown if "class='mwj-edge-table'" in m.value]
+    assert '>Totals</th><th>Trades</th><th>Net P&amp;L</th><th>Win %</th><th>Average Trade</th>' in tables[0]
     display_setting(app, 'MAE / MFE Units', 'ticks', back='Edge')
     assert not app.exception and widget(app.metric, 'Net P&L').value == '+$242.00'
     open_tab(app, 'MAE / MFE')

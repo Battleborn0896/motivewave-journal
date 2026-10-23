@@ -41,6 +41,8 @@ DOWN = '#E16E6B'
 SERIES = ['#60A9E8', '#ED9B55', '#45BF89', '#E2CF32', '#DA83B4', '#85BD72', '#AF92DF', '#E16E6B']
 STATUS = {'good': UP, 'warning': '#E2CF32', 'critical': DOWN, 'neutral': MUTED}
 TAG_COLOURS = {'Setup': '#65CA98', 'Execution': '#EBAB66', 'Mindset': '#BD9DE8', 'Other tags': '#73B6EB'}
+# A trade's process rating, 5 stars green down to 1 star red, wherever Stats lists or narrows by it.
+RATING_COLOURS = {5: UP, 4: SERIES[5], 3: SERIES[3], 2: SERIES[1], 1: DOWN}
 FONT = fonts.STACK         # IBM Plex Sans, with system fallbacks only until the bundled files load
 TABULAR = 'font-variant-numeric:tabular-nums'   # figures of one width, for numbers that line up
 # A Trading Calendar cell's tint (tint() picks the step): the result colour at 8, 15 and 22% over the page, so a
@@ -346,4 +348,8 @@ def register_template() -> None:
             margin=dict(l=10, r=10, t=36, b=10),
             title=dict(font=dict(color=INK, size=12.5, family=FONT), x=0, xanchor='left', y=0.98),
         ), data=dict(scatter=[go.Scatter(line=dict(width=2))]))
-    pio.templates.default = 'plotly_dark+' + TEMPLATE
+    # The dark base and ours, merged once: a default named 'plotly_dark+mwjournal' is merged again for every
+    # figure, some 16 ms a chart, nearly what a 1,000-trade equity curve takes to build.
+    if TEMPLATE + '-dark' not in pio.templates:
+        pio.templates[TEMPLATE + '-dark'] = pio.templates['plotly_dark+' + TEMPLATE]
+    pio.templates.default = TEMPLATE + '-dark'

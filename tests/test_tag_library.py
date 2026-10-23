@@ -144,6 +144,20 @@ def test_invalid_playbook_apply_rolls_back_every_group_and_retirement_preserves_
     assert journal.tag_library()['playbooks'][book]['rules'] == rules
 
 
+def test_a_playbook_keeps_its_colour_until_one_is_chosen(tmp_path):
+    journal = Journal(tmp_path / 'live.db')
+    book = journal.save_playbook('A+', {'Setup': ['Breakout']}, color='#E2CF32')
+    assert journal.tag_library()['playbooks'][book]['color'] == '#E2CF32'
+    journal.save_playbook('A+', {'Setup': ['Breakout', 'Pullback']}, id=book)        # saved without one: kept
+    assert journal.tag_library()['playbooks'][book]['color'] == '#E2CF32'
+    journal.save_playbook('A+', {'Setup': ['Breakout']}, id=book, color='#45BF89')
+    assert journal.tag_library()['playbooks'][book]['color'] == '#45BF89'
+    with pytest.raises(ValueError):
+        journal.save_playbook('B', {'Setup': ['Breakout']}, color='green')
+    plain = journal.save_playbook('C', {'Setup': ['Range']})
+    assert 'color' not in journal.tag_library()['playbooks'][plain]
+
+
 @pytest.mark.parametrize('operation', ['trade', 'day', 'playbook'])
 def test_unknown_choices_are_not_silently_dropped(tmp_path, operation):
     journal = Journal(tmp_path / 'live.db')
