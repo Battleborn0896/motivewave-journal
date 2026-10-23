@@ -401,33 +401,35 @@ made available on days is offered there too. Every trade opened that day wears t
 the trade's chips, Stats → Compare and the filters; a choice made on the trade in the same one-choice category
 wins.
 
-**MAE / MFE Units** is on **Settings**: choose account currency, points, ticks or R. The
-preference is remembered independently for Live and Replay, and applies to the trade list, detail
-cards, excursion plots and runner views. Actual net P&L is unchanged.
+**MAE / MFE Units** is on **Settings**: choose account currency, points, ticks or R. It changes only how
+MAE / MFE are shown. The preference is remembered independently for Live and Replay, and applies to the
+trade list, detail cards, excursion plots and runner views. Actual net P&L is unchanged.
 
-Only recorded ticks measure MAE and MFE (since 0.4.8 there is no accuracy to choose): OHLC bounds,
-proxies, platform-only reports, simulated replay and sources with reported capture gaps do not
-qualify. Missing ticks show unavailable, not zero. One-minute candles are chart context only. This is
-a rule about sources, not proof that an observed feed delivered every tick. The backup keeps every stored
-measurement; summary excursions and the trades CSV are in account currency.
+MAE means the same in every unit: how far the position you held went against you, from its average entry
+(MFE: for you). The moment counted is the one where that price move times the contracts you held was
+largest. Profit banked by a partial exit never counts. Switching units only rescales that one moment:
 
-MAE and MFE mean the same in every unit: how far price went against (MAE) or for (MFE) the contracts
-you held at that moment, from their average entry. Profit banked by a partial exit never counts.
+- Points: the price move at that moment, from the average entry of the contracts held then. Scale-ins
+  update that average.
+- Currency: those points times the contracts held then and the point value, before fees.
+- Ticks: those points divided by the contract's minimum price increment. Outright ES/MES/NQ/MNQ are
+  detected automatically; other symbols need their tick size set once, on a trade of that contract. Unknown
+  sizes stay unavailable, not guessed. Average entries can produce fractional ticks.
+- R: the currency amount divided by the **risk to the trade's stop**. R comes from the stop alone; no stop
+  means unavailable, not zero.
 
-- Currency: that move times the contracts held and the point value, at each moment, before fees.
-- Points: directional price move from the **currently held average entry**, regardless of size.
-  Scale-ins update that average; partial-exit realised profit is not added to price movement.
-- Ticks: those points divided by the contract's confirmed minimum price increment. Outright
-  ES/MES/NQ/MNQ are detected automatically; other symbols need their tick size set once, on a trade of that
-  contract. Unknown sizes stay unavailable, not guessed. Average entries can produce fractional ticks.
-- R: the currency excursion divided by the **risk to the trade's stop**. No stop means
-  unavailable, not zero.
+Long 2 NQ at 100, price dips to 97, you sell 1 at 102, then the runner dips to 96: MAE is 3 points on the 2
+contracts held at the dip, $120, 12 ticks. The runner's 4-point dip on 1 contract is $80, less, so it is not
+the MAE.
 
-Price extrema use all available observations and confirmed fill prices, before chart compaction.
-Existing stored price measurements can supply points on demand; a platform-only currency report
-cannot safely be divided by an arbitrary size to invent a price path. Source quality, OHLC bounds,
-replay simulation and capture-gap warnings remain visible. Points and currency can therefore select
-different measurement sources. Points remain available without a cash multiplier; currency/R do not.
+Only recorded ticks measure MAE and MFE: there is no accuracy to choose and no price source to pick.
+Candles, proxies, simulated replay prints and ticks with a reported gap do not measure a trade, and a trade
+they would have measured shows why it has none, never zero. Under a trade's time, the Trades page says
+**From MotiveWave's tick history** when its ticks were loaded from MotiveWave's history after the trade, or
+**From your imported prices** when they are prices an earlier version imported; ticks the study recorded while
+you traded need no label. The trade's chart draws MotiveWave's 1-minute candles when there are any, with recorded
+ticks filling any minute that has no candle. The backup keeps every stored measurement; summary excursions and the trades CSV
+are in account currency. Points remain available without a cash multiplier; currency and R do not.
 
 Stats uses in-place tabs: **Overview** for cumulative results, **Compare** for tag (Setup tags and
 Rating included), playbook, market and time comparisons, **MAE / MFE** for price/position excursions, **Runners** for the separate
@@ -544,6 +546,14 @@ closing side (a sell stop for a long, a buy stop for a short); take-profit order
 platform's estimates, and such trades are flagged. Put the study on the chart you trade, contract or continuous:
 its prices go with trades of the same product whatever the contract month, and one study reads every fill of the
 account.
+
+What MAE / MFE can and cannot know: they are only as complete as the ticks MotiveWave delivered. Recorded ticks
+are not proof that the feed sent every print, and a missed print can understate MAE or MFE; a gap the study
+reports leaves the trade without MAE / MFE rather than with a smaller number. Ticks loaded from MotiveWave's
+history after a trade are real prints, but they were not recorded while you traded. A print at the same moment
+as your exit is left out, as MotiveWave's times cannot say whether it came before or after the fill. The MAE / MFE
+path chart draws at most 1,000 points; MAE and MFE themselves use every tick, and once the trade is closed
+**Show/export full recorded trade path** shows and exports every one.
 
 ## SCS-style capture, with MotiveWave
 
@@ -760,12 +770,12 @@ The study has nothing to set; this is what it does by itself.
   real ticks too.
   See [MotiveWave's replay sources](https://docs.motivewave.com/user-guide/replay-mode).
 - Tick-derived one-minute candles represent the received prints; position-gated candles can be
-  partial. OHLC estimates, proxies, simulated replay and observed ticks stay visibly distinct.
+  partial. Only recorded ticks measure MAE / MFE; candles, proxies and simulated replay prints never do.
   Missing data means unavailable MAE/MFE, not zero. Observed ticks do not prove feed completeness.
 
-Currency MAE/MFE are non-negative magnitudes of the **moves of the contracts held** across the
-holding window, each move times the size held then, including scale-ins/outs; profit banked by a
-partial exit is not added. Fees are excluded from excursions; recorded fees
+MAE / MFE are the one measurement described under *Using the journal*: the move of the position held from
+its average entry, at the moment that move times the contracts held was largest, in any unit. Profit banked by
+a partial exit is not added. Fees are excluded from excursions; recorded fees
 reduce net trade P&L. Fees are whatever MotiveWave reports for each fill: set commission rates in MotiveWave, and a
 fill MotiveWave reports with no commission counts as $0. A stop order counts when it is on the same
 account and contract as the position and on its closing side (study 0.3.5); a stop you type under

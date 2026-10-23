@@ -93,12 +93,13 @@ Run this with a simulation account:
    confirm the trade wears those Day tags. Days follow **Settings → Time Zone**, midnight to midnight.
 7. Open **Stats → Runners** and compare by **Tag categories**.
 8. Restart the journal and confirm the review and tags remain.
-9. Repeat a trade in Replay and confirm it appears only in the Replay journal, its MAE / MFE read from
-   **Replay ticks**. Leave the study on the replay chart, contract or continuous: within about ten
-   seconds of going flat the trade should also be measured from **Backfilled from MotiveWave history**,
-   and MotiveWave's log should show one `replay trade tick backfill` line for the pass.
-10. Check that live and replay prints arrive while the chart runs: the Trades chart of a new trade should
-   offer **Recorded live** (or the replay's own prints) as a price source.
+9. Repeat a trade in Replay and confirm it appears only in the Replay journal, with MAE / MFE from the
+   replay's own ticks. Leave the study on the replay chart, contract or continuous: within about ten
+   seconds of going flat MotiveWave's log should show one `replay trade tick backfill` line for the pass;
+   when those history ticks saw more of the trade, the line under its time reads **From MotiveWave's tick
+   history**.
+10. Check that live and replay prints arrive while the chart runs: an open trade's MAE / MFE should move
+   with the market, and the line under its time should name no price source.
 11. Quit the journal and confirm MotiveWave stays open.
 
 Do not report a missing or partial runner window as zero. The app intentionally excludes windows

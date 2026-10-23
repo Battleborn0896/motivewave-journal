@@ -61,7 +61,7 @@ def test_native_watcher_deduplicates_restart_and_matches_only_own_replay_prices(
     assert len(journal.trades()) == 1
     trade = journal.trades()[0]
     assert journal.price_sources(trade.symbol, trade) == ['motivewave-replay:run-a:ticks']
-    metric = journal.best_metric(trade)
+    metric, = journal.metric_options(trade)
     assert metric['mae'] == 50 and metric['mfe'] == 150 and metric['precision'] == 'observed-ticks'
     assert 'fees not provided' not in trade.flags   # MotiveWave's commission is the fee
     assert 'MotiveWave internal capture; fees may be estimated' not in trade.flags
@@ -84,7 +84,6 @@ def test_generated_replay_ticks_are_labelled_simulated_in_metrics_and_chart(tmp_
     prices = journal.prices('ESZ6', source)
     metric = excursions(trade, prices, source)
     assert metric['precision'] == 'replay-simulated'
-    assert any('synthetic' in n for n in metric['notes'])
     chart = trade_chart(trade, prices, source)
     assert chart['series']['data'] and any('Generated/unknown' in n for n in chart['notes'])
 
@@ -93,7 +92,7 @@ def test_the_replayed_days_minute_bars_draw_every_replay_trades_chart_and_never_
     """Study 0.3.7 writes MotiveWave's 1-minute bars of the days a replay plays, the same for every run: a trade of
     any run on those days is drawn from them, as platform candles, MAE / MFE still wait for ticks, and they move
     neither an open replay trade's clock nor what Settings calls recording."""
-    from mwjournal.scope import PROVENANCE, REPLAY_BARS, provenance
+    from mwjournal.scope import REPLAY_BARS, provenance
     from views.trades import default_source
 
     def bar(minute, low, high):
@@ -111,7 +110,7 @@ def test_the_replayed_days_minute_bars_draw_every_replay_trades_chart_and_never_
     assert journal.price_sources('ESZ6', first) == [REPLAY_BARS, 'motivewave-replay:run-a:ticks']
     assert journal.price_sources('ESZ6', other) == [REPLAY_BARS]                      # another run, the same day's bars
     assert default_source(journal.price_sources('ESZ6', other)) == REPLAY_BARS
-    assert PROVENANCE[provenance(REPLAY_BARS)] == 'Platform candles'
+    assert provenance(REPLAY_BARS) == 'platform-bars'
     chart = trade_chart(other, journal.prices('ESZ6', REPLAY_BARS), REPLAY_BARS)
     assert chart['series']['data'] and not any('no corresponding candle' in n for n in chart['notes'])
     # The exit's minute has no bar yet when the replay's history goes only to its time: the run's own prints draw
@@ -122,7 +121,7 @@ def test_the_replayed_days_minute_bars_draw_every_replay_trades_chart_and_never_
     exit_minute = int(dt.datetime(2022, 1, 3, 14, 32, tzinfo=dt.timezone.utc).timestamp())
     assert any(c['time'] == exit_minute for c in drawn['series']['data'])
     assert excursions(other, journal.prices('ESZ6', REPLAY_BARS), REPLAY_BARS)['precision'] != 'observed-ticks'
-    assert journal.best_metric(other) is None or journal.best_metric(other)['precision'] == 'pending'
+    assert all(m['precision'] == 'pending' for m in journal.metric_options(other))
     # The day's later bars move neither an open replay trade's clock nor what is recording.
     assert journal.trade_clock(still_open).isoformat() < '2022-01-03T14:50'
     assert journal.recent_contracts() == ['ESZ6']
@@ -283,8 +282,9 @@ def print_at(second, price, provider):
 
 
 def test_history_backfill_ticks_are_observed_ticks_with_their_own_label_and_are_never_added_to_live_ticks(tmp_path):
+    import common
     from mwjournal.post_exit import best_post_exit
-    from mwjournal.scope import PROVENANCE, provenance
+    from views.trades import PRICES_FROM
     journal = Journal(tmp_path / 'live.db')
     path = tmp_path / 'motivewave.ndjson'
     journal.put('profiles', 'native', {'mode': 'bridge', 'path': str(path), 'enabled': True})
@@ -303,13 +303,12 @@ def test_history_backfill_ticks_are_observed_ticks_with_their_own_label_and_are_
     assert [m['source'] for m in (recorded, history)] == ['motivewave-ticks', 'motivewave-ticks:history']
     assert [m['precision'] for m in (recorded, history)] == ['observed-ticks', 'observed-ticks']
     assert [m['provenance'] for m in (recorded, history)] == ['recorded-live', 'history-backfill']
-    assert [PROVENANCE[provenance(m['source'])] for m in (recorded, history)] == ['Recorded live', 'History backfill']
+    # The trade's caption names only prices that were not recorded while you traded.
+    assert [PRICES_FROM.get(m['provenance']) for m in (recorded, history)] == [None, "From MotiveWave's tick history"]
     # Each stream is measured on its own: four prints inside the holding window, never two plus four.
     assert (recorded['observations'], history['observations']) == (2, 4)
     assert (recorded['mae'], recorded['mfe']) == (0, 150) and (history['mae'], history['mfe']) == (100, 150)
-    assert any('History backfill' in note for note in history['notes'])
-    assert not any('History backfill' in note for note in recorded['notes'])
-    best = journal.best_metric(trade)                     # equal quality: the stream that saw more of the trade
+    best = common.best_display_metric(journal, trade)     # equal quality: the stream that saw more of the trade
     assert best['source'] == 'motivewave-ticks:history' and best['precision'] == 'observed-ticks'
     # Only recorded ticks measure, and backfilled prints are recorded ticks, for the runner view too.
     runner = best_post_exit(journal, trade, minutes=5)
@@ -330,7 +329,7 @@ def test_history_backfill_ticks_are_observed_ticks_with_their_own_label_and_are_
     journal.set_bridge_offset('native', 'another-file', 0, b'')
     SyncWorker(journal).poll()
     assert [len(journal.prices('ESZ6', s)) for s in journal.price_sources('ESZ6', trade)] == [2, 7]
-    assert journal.best_metric(trade) == best
+    assert common.best_display_metric(journal, trade) == best
     # It is a live-environment source: the replay journal refuses it like the other live streams.
     replay = Journal(tmp_path / 'replay.db', dataset='replay')
     assert preview_bridge(lines(backfill), dataset='replay').errors
@@ -341,9 +340,9 @@ def test_history_backfill_ticks_are_observed_ticks_with_their_own_label_and_are_
 def test_replay_history_ticks_are_real_ticks_of_their_own_run_and_never_of_another_or_of_live(tmp_path):
     """motivewave-replay:<run>:history (study 0.3.3): real prints of a replay trade's holding window, loaded
     from MotiveWave's history once it was flat. Observed ticks of that run only, never simulated."""
-    from common import metric_options
+    from common import best_display_metric, metric_options
     from mwjournal.post_exit import best_post_exit
-    from mwjournal.scope import PROVENANCE, allows_source, is_history, is_simulated, provenance
+    from mwjournal.scope import allows_source, is_history, is_simulated, provenance
     journal = Journal(tmp_path / 'replay.db', dataset='replay')
     path = tmp_path / 'motivewave.replay.ndjson'
     journal.put('profiles', 'native', {'mode': 'bridge', 'path': str(path), 'enabled': True})
@@ -360,19 +359,15 @@ def test_replay_history_ticks_are_real_ticks_of_their_own_run_and_never_of_anoth
     assert journal.price_sources('ESZ6', trade) == [source, 'motivewave-replay:run-a:simulated']
     assert not allows_source(trade, 'motivewave-replay:run-b:history') and allows_source(trade, source)
     assert is_history(source) and not is_simulated(source) and provenance(source) == 'replay-history'
-    assert PROVENANCE['replay-history'] == 'Backfilled from MotiveWave history'
     measured, simulated = journal.metric_options(trade)
     assert measured['source'] == source and simulated['source'] == 'motivewave-replay:run-a:simulated'
-    # Real ticks: observed precision, both for currency and for points, never the simulated label.
-    assert (measured['precision'], measured['point_precision'], measured['provenance']) == (
-        'observed-ticks', 'observed-ticks', 'replay-history')
+    # Real ticks: observed precision, never the simulated label.
+    assert (measured['precision'], measured['provenance']) == ('observed-ticks', 'replay-history')
     assert (measured['mae'], measured['mfe'], measured['observations']) == (150, 300, 2)
     assert (measured['mae_points'], measured['mfe_points']) == (3, 6)
-    assert any('History backfill' in note for note in measured['notes'])
-    assert not any('synthetic' in note or 'Replay generated' in note for note in measured['notes'])
     assert simulated['precision'] == 'replay-simulated' and simulated['provenance'] == 'replay-simulated'
-    # Ranked above the simulated replay prints, and the one measurement shown: only recorded ticks measure.
-    assert journal.best_metric(trade)['source'] == source
+    # The one measurement shown, not the simulated replay prints: only recorded ticks measure.
+    assert best_display_metric(journal, trade)['source'] == source
     assert [m['source'] for m in metric_options(journal, trade)] == [source]
     # The chart draws it as real prints loaded afterwards, with this run's prices only.
     chart = trade_chart(trade, journal.prices('ESZ6', source), source)
@@ -395,7 +390,7 @@ def test_replay_history_ticks_are_real_ticks_of_their_own_run_and_never_of_anoth
     # Reading the file again adds nothing.
     journal.set_bridge_offset('native', 'another-file', 0, b'')
     SyncWorker(journal).poll()
-    assert len(journal.prices('ESZ6', source)) == 4 and journal.best_metric(trade)['source'] == source
+    assert len(journal.prices('ESZ6', source)) == 4 and best_display_metric(journal, trade)['source'] == source
 
 
 def test_gap_in_one_tick_stream_or_one_instrument_does_not_mark_another(tmp_path):
@@ -412,10 +407,10 @@ def test_gap_in_one_tick_stream_or_one_instrument_does_not_mark_another(tmp_path
     journal.put('profiles', 'native', {'mode': 'bridge', 'path': str(path), 'enabled': True})
     SyncWorker(journal).poll()
     trade, = journal.trades()
-    recorded, history = journal.metric_options(trade)
-    assert any('dropped ticks' in note for note in recorded['notes'])
-    assert not any('dropped ticks' in note for note in history['notes'])
-    window = {'start': trade.opened, 'end': trade.closed}
+    # The live recording's gap leaves its measurement unshown; the backfill, whose gap was another contract's, shows.
+    from common import metric_options
+    assert [m['source'] for m in metric_options(journal, trade)] == ['motivewave-ticks:history']
+    window ={'start': trade.opened, 'end': trade.closed}
     assert journal.capture_gaps('motivewave-ticks:history', **window)                       # every instrument
     assert not journal.capture_gaps('motivewave-ticks:history', symbol='ESZ6', **window)
     assert journal.capture_gaps('motivewave-ticks:history', symbol='nqz6', **window)[0]['dropped'] == 9

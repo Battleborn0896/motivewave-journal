@@ -114,7 +114,7 @@ def test_headless_entry_point_connects_and_captures_with_no_setup(tmp_path, monk
     sync.main(['--once', '--dataset', 'replay'])
     replay = Journal(dataset='replay')
     assert replay.get('profiles')['MotiveWave']['enabled'] and len(replay.trades()) == 1
-    assert replay.best_metric(replay.trades()[0])['precision'] == 'observed-ticks'
+    assert [m['precision'] for m in replay.metric_options(replay.trades()[0])] == ['observed-ticks']
     assert replay.get('sync_status')['MotiveWave']['status'] == 'synced'
     # A second run finds the connection already there and nothing new in the file.
     sync.main(['--once', '--dataset', 'replay'])

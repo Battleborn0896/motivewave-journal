@@ -42,7 +42,6 @@ ALIASES = {
 class Preview:
     fills: list = field(default_factory=list)
     prices: list = field(default_factory=list)
-    reports: list = field(default_factory=list)
     gaps: list = field(default_factory=list)
     protection: list = field(default_factory=list)
     heartbeats: list = field(default_factory=list)
@@ -54,7 +53,7 @@ class Preview:
 
     @property
     def count(self):
-        return len(self.fills) + len(self.prices) + len(self.reports) + len(self.gaps) + len(self.protection)
+        return len(self.fills) + len(self.prices) + len(self.gaps) + len(self.protection)
 
 
 def csv_rows(text: str) -> tuple[list[str], list[dict]]:
@@ -125,8 +124,9 @@ def preview_csv(text: str, *, timezone='America/New_York', mapping=None,
     return result
 
 
-# The event types this version reads (docs/protocol.md); any other is skipped and counted (Preview.unknown).
-KNOWN = ('execution', 'tick', 'quote', 'bar', 'protection', 'metric', 'gap', 'heartbeat')
+# The event types this version reads (docs/protocol.md); any other is skipped and counted (Preview.unknown),
+# as a 'metric' (MAE / MFE a platform reported) is since 0.4.18: only recorded ticks measure a trade.
+KNOWN = ('execution', 'tick', 'quote', 'bar', 'protection', 'gap', 'heartbeat')
 
 
 def preview_bridge(text: str, *, timezone='UTC', allow_partial_tail=False, dataset=None,
@@ -184,24 +184,6 @@ def preview_bridge(text: str, *, timezone='UTC', allow_partial_tail=False, datas
                 fields = {k: event[k] for k in ProtectionEvent.__dataclass_fields__ if k in event}
                 fields['ts'] = timestamp(event['ts'], timezone)
                 result.protection.append(ProtectionEvent(**fields))
-            elif kind == 'metric':
-                # Reported values are currency magnitudes using the same gross-equity definition.
-                if event.get('units') != 'currency' or event.get('definition') != 'position-equity':
-                    raise ValueError('Metrics need units=currency and definition=position-equity.')
-                if not isinstance(event.get('provider'), str) or not event['provider'].strip():
-                    raise ValueError('A metric needs its provider identity.')
-                if not event.get('trade_id') and not all(event.get(k) for k in ('account', 'symbol', 'entry_execution_id')):
-                    raise ValueError('A metric needs trade_id or account/symbol/entry_execution_id.')
-                if event.get('basis', 'last') not in ('last', 'liquidation'):
-                    raise ValueError('Metric basis must be last or liquidation.')
-                observations = finite(event.get('observations', 0), 'Observation count')
-                if observations < 0 or not observations.is_integer():
-                    raise ValueError('Observation count must be a non-negative whole number.')
-                report = dict(event, mae=finite(event['mae'], 'MAE'), mfe=finite(event['mfe'], 'MFE'),
-                              observations=int(observations))
-                if report['mae'] < 0 or report['mfe'] < 0:
-                    raise ValueError('MAE and MFE must be non-negative magnitudes.')
-                result.reports.append(report)
             elif kind == 'gap':
                 if not isinstance(event.get('provider'), str) or not event['provider'].strip():
                     raise ValueError('A capture gap needs its provider identity.')
@@ -245,28 +227,5 @@ def apply_preview(journal, preview: Preview) -> dict:
         prices = journal.ingest_prices(preview.prices, db=db)
         gaps = journal.ingest_gaps(preview.gaps, db=db)
         protection = journal.ingest_protection(preview.protection, db=db)
-    reports = 0
-    unresolved = []
-    trades = journal.trades() if preview.reports else []
-    for report in preview.reports:
-        candidates = [t for t in trades if t.id == report.get('trade_id')] if report.get('trade_id') else [
-            t for t in trades if t.provider == report.get('provider') and t.account == report.get('account')
-            and t.symbol == str(report.get('symbol', '')).upper()
-            and t.fills[0]['execution_id'] == report.get('entry_execution_id')]
-        if len(candidates) == 1 and not candidates[0].complete:
-            continue    # the fills held here are not the whole position, so no excursion is attached to them
-        if len(candidates) != 1 or not candidates[0].closed:
-            unresolved.append('Platform metric needs one matching closed trade; import its executions first.')
-            continue
-        trade = candidates[0]
-        if report.get('currency', 'USD') != trade.currency:
-            unresolved.append('Platform metric currency differs from the trade currency.')
-            continue
-        journal.record_metric(trade, {'source': report['provider'] + ':reported', 'precision': 'platform-reported',
-                                     'mae': report['mae'], 'mfe': report['mfe'], 'basis': report.get('basis', 'last'),
-                                     'observations': report.get('observations', 0), 'path': [],
-                                     'notes': ['Reported by the platform; definition: gross realised + open P&L.'],
-                                     'through': trade.closed})
-        reports += 1
-    return {'executions': added, 'prices': prices, 'metrics': reports, 'gaps': gaps, 'protection': protection,
-            'duplicates': len(preview.fills) - added, 'relabelled': relabelled, 'unresolved': unresolved}
+    return {'executions': added, 'prices': prices, 'gaps': gaps, 'protection': protection,
+            'duplicates': len(preview.fills) - added, 'relabelled': relabelled}

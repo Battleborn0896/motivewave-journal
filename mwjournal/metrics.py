@@ -1,10 +1,11 @@
 """MAE and MFE of a trade from the prices observed while it was held.
 
-One definition in every unit: how far price went against (MAE) or for (MFE) the position held at that
-moment, measured from its average entry. Points are that move; dollars are the move times the contracts
-held and the point value, at each moment; ticks and R are converted from these. Profit already banked by a
-partial exit never enters: long 2 at 100, sell 1 at 104, then a low of 99 is an MAE of 1 point on the one
-contract still held, $20 on NQ, not $0. Bar extremes are estimates, especially boundary bars.
+One definition in every unit: how far the position you held went against you (MAE) or for you (MFE), from its
+average entry. The moment is the one where that price move times the contracts held was largest: the move then
+is the points, and the points times the contracts held then and the point value are the dollars. Ticks and R
+rescale these, so switching units changes nothing else. Profit already banked by a partial exit never enters:
+long 2 NQ at 100, a dip to 97, sell 1 at 102, then the runner dips to 96 is an MAE of 3 points on the 2
+contracts held then, $120, not 4 points. Bar extremes are estimates, especially boundary bars.
 """
 
 from __future__ import annotations
@@ -12,8 +13,7 @@ from __future__ import annotations
 import datetime as dt
 
 from .model import PriceSample, Trade, instant, trade_prices
-from .scope import allows_source, is_history, is_simulated, provenance
-from .units import POINT_DEFINITION
+from .scope import allows_source, is_simulated, provenance
 
 
 def measurements(trade: Trade, samples: list[PriceSample], source: str, *, now=None) -> list[dict]:
@@ -55,10 +55,10 @@ def price_boundaries(trade):
     return values
 
 
-def walk(trade, samples, states, start, end, values, point_values, path, used, covered):
+def walk(trade, samples, states, start, end, marks, path, used):
     """Each price's moves in the holding states it falls in, added to the lists given: the one loop
-    excursions and carry_on both measure with. values gets the dollar move of the contracts held (move x held
-    x point value), point_values the move itself."""
+    excursions and carry_on both measure with. marks gets (move x contracts held x point value, move) for each,
+    which extremes() takes MAE and MFE from."""
     multiplier = trade.point_value if trade.point_value is not None else 1.
     sign = 1 if trade.direction == 'long' else -1
     for sample in samples:
@@ -75,16 +75,23 @@ def walk(trade, samples, states, start, end, values, point_values, path, used, c
         prices = [sample.low, sample.high]
         for a, b, qty, cost in active:
             moves = [(p - cost) * sign for p in prices]
-            marks = [move * qty * multiplier for move in moves]
-            values.extend(marks)
-            point_values.extend(moves)
-            path.append({'ts': sample.ts, 'low': min(marks) if trade.point_value is not None else None,
-                         'high': max(marks) if trade.point_value is not None else None, 'held_qty': qty,
+            values = [move * qty * multiplier for move in moves]
+            marks.extend(zip(values, moves))
+            path.append({'ts': sample.ts, 'low': min(values) if trade.point_value is not None else None,
+                         'high': max(values) if trade.point_value is not None else None, 'held_qty': qty,
                          'point_low': min(moves), 'point_high': max(moves), 'average_cost': cost,
                          'price_low': min(prices), 'price_high': max(prices),
                          'resolution_seconds': sample.resolution_seconds})
-            covered.append((max(a, stamp), min(b, stop)))
         used.append(sample)
+
+
+def extremes(trade, worst, best) -> dict:
+    """MAE and MFE from the most adverse and the most favourable mark (walk): the move at that moment in points,
+    and that move of the contracts held then in dollars, which need the point value. Of marks worth the same,
+    the larger move counts."""
+    priced = trade.point_value is not None
+    return {'mae': max(0., -worst[0]) if priced else None, 'mfe': max(0., best[0]) if priced else None,
+            'mae_points': max(0., -worst[1]), 'mfe_points': max(0., best[1])}
 
 
 def bucket_size(count, max_path_points):
@@ -112,8 +119,6 @@ def compact(trade, path, max_path_points):
 
 
 PATH_POINTS = 1000            # a stored measurement's path, for the chart; the values use every price
-COMPACTED = ('Chart path is compacted for display; original prices remain stored. '
-             'Use the full recorded path view/export for every observation.')
 
 
 def newest(trade, used) -> dict:
@@ -134,70 +139,30 @@ def excursions(trade: Trade, samples: list[PriceSample], source: str, *, now=Non
     end = instant(trade.closed) if trade.closed else (now or dt.datetime.now(dt.timezone.utc))
     start = instant(trade.opened)
     common = {'source': source, 'basis': 'last', 'precision': 'pending', 'mae': None, 'mfe': None,
-              'mae_points': None, 'mfe_points': None, 'point_definition': POINT_DEFINITION,
-              'observations': 0, 'notes': [], 'path': [], 'through': end.isoformat(),
+              'mae_points': None, 'mfe_points': None, 'observations': 0, 'path': [], 'through': end.isoformat(),
               'provenance': provenance(source)}
-    if not trade.complete:
-        # Part of this position is not in the fills, so how far price went against or for it is not known.
-        common['notes'] = ['Excursions are unknown for this trade: ' + ', '.join(trade.incomplete) + '.']
+    # Part of the position is not in the fills, or the prices are another replay run's: nothing is measured.
+    # Why a trade has no MAE / MFE is said by the app (common.no_excursions), not stored here.
+    if not trade.complete or not allows_source(trade, source):
         return common
-    if not allows_source(trade, source):
-        common['notes'] = ['These prices belong to a different replay run.']
-        return common
-    # Price excursions remain calculable without a cash multiplier. Temporary scale 1 is internal
-    # only: all currency fields stay None until that multiplier is known.
+    # Points remain calculable without a cash multiplier. Temporary scale 1 is internal only: the dollar
+    # fields stay None until that multiplier is known.
     multiplier = trade.point_value if trade.point_value is not None else 1.
     states = holding_states(trade, end)
-    boundaries = price_boundaries(trade)
-    values = [move * held * multiplier for move, held in boundaries]
-    point_values = [move for move, _ in boundaries]
-    path, used, covered = [], [], []
-    walk(trade, trade_prices(samples, trade.symbol, source), states, start, end,
-         values, point_values, path, used, covered)
+    marks = [(move * held * multiplier, move) for move, held in price_boundaries(trade)]
+    path, used = [], []
+    walk(trade, trade_prices(samples, trade.symbol, source), states, start, end, marks, path, used)
     if not used:
-        common['notes'] = ['No matching prices inside the holding interval. Capture or import ticks/bars for this period.']
         return common
     bars = any(s.resolution_seconds > 0 for s in used)
     proxy = any(s.proxy for s in used)
-    simulated = is_simulated(source)
-    precision = ('replay-simulated' if simulated else
+    precision = ('replay-simulated' if is_simulated(source) else
                  'proxy-estimate' if proxy else 'estimated-bars' if bars else 'observed-ticks')
-    notes = []
-    if simulated:
-        notes.append('Replay generated/unknown ticks: synthetic price path, not historical tick-accurate MAE/MFE.')
-    if bars:
-        notes.append('OHLC estimate: boundary bars may include prices before entry/after exit; '
-                     'bars spanning a size change cannot resolve the price path.')
-        intervals = sorted(covered)
-        cursor = start
-        for left, right in intervals:
-            if left > cursor + dt.timedelta(milliseconds=1):
-                notes.append('The history has gaps in the holding window; extrema may be understated.')
-                break
-            cursor = max(cursor, right)
-        if cursor < end:
-            notes.append('History does not cover the end of the holding window.')
-    else:
-        notes.append('Observed ticks: completeness is not guaranteed; missing ticks can understate excursions.')
-        if is_history(source):
-            notes.append("History backfill: real prints loaded from the platform's history afterwards, "
-                         'not recorded while the trade was open.')
-    if proxy:
-        notes.append('Uses an explicitly selected proxy/continuous contract; this is not the exact traded contract.')
-    if trade.flags:
-        notes.append('Execution timing/identity limitations: ' + ', '.join(trade.flags))
-    if trade.point_value is None:
-        notes.append('Currency/R excursions are unavailable until the instrument currency-per-point multiplier is set. '
-                     'Price-based points remain available.')
     if max_path_points is not None and len(path) > max_path_points:
         path = compact(trade, path, max_path_points)
-        notes.append(COMPACTED)
     common.update(newest(trade, used))
-    common.update(precision=precision, mae=max(0., -min(values)) if trade.point_value is not None else None,
-                  mfe=max(0., max(values)) if trade.point_value is not None else None,
-                  mae_points=max(0., -min(point_values)), mfe_points=max(0., max(point_values)),
-                  point_precision=precision,
-                  observations=len(used), notes=notes, path=path)
+    common.update(precision=precision, observations=len(used), path=path,
+                  **extremes(trade, min(marks), max(marks)))
     return common
 
 
@@ -211,10 +176,11 @@ def carry_on(trade: Trade, previous: list[dict], samples: list[PriceSample], *, 
     the earliest previous last_ts on, as Journal.prices chooses them for that window.
 
     None when that would not be exactly the same, and the caller measures from entry: a closed or incomplete
-    trade, a measurement that is not from prints or has none yet, candles or proxy prices among the new ones,
-    new prices before the last fill or under another kind of label than before (model.trade_prices prefers
-    the contract's own)."""
-    if trade.closed or not trade.complete or not previous:
+    trade, one whose contract has no dollars per point (its measurement keeps no dollars to compare with), a
+    measurement that is not from prints or has none yet, candles or proxy prices among the new ones, new prices
+    before the last fill or under another kind of label than before (model.trade_prices prefers the contract's
+    own)."""
+    if trade.closed or not trade.complete or not previous or trade.point_value is None:
         return None
     end = now or dt.datetime.now(dt.timezone.utc)
     states = holding_states(trade, end)
@@ -239,15 +205,14 @@ def carry_on(trade: Trade, previous: list[dict], samples: list[PriceSample], *, 
             fresh.append(sample)
         if any(s.resolution_seconds or s.proxy or (s.symbol == exact) != metric.get('contract') for s in fresh):
             return None
-        values, point_values, path, used = [], [], [], []
-        walk(trade, fresh, states[-1:], last_fill, end, values, point_values, path, used, [])
+        marks, path, used = [], [], []
+        walk(trade, fresh, states[-1:], last_fill, end, marks, path, used)
         carried = {**metric, 'through': end.isoformat()}
         if used:
-            if trade.point_value is not None:
-                carried['mae'] = max(metric['mae'], -min(values))
-                carried['mfe'] = max(metric['mfe'], max(values))
-            carried['mae_points'] = max(metric['mae_points'], -min(point_values))
-            carried['mfe_points'] = max(metric['mfe_points'], max(point_values))
+            # The stored MAE and MFE are the marks they were taken from (extremes): the new marks only need
+            # comparing with them.
+            carried.update(extremes(trade, min((-metric['mae'], -metric['mae_points']), *marks),
+                                    max((metric['mfe'], metric['mfe_points']), *marks)))
             # One path point per print measured: the stored path stands for `observations` of them, in buckets
             # of bucket_size from the first, and the new prints follow. Grouping both by the new bucket size
             # gives the path compacted from entry.
@@ -263,7 +228,6 @@ def carry_on(trade: Trade, previous: list[dict], samples: list[PriceSample], *, 
                                      *((metric['observations'] + j, p) for j, p in enumerate(path))]:
                     buckets.setdefault(start // size, []).append(point)
                 path = [merge(trade, points) for _, points in sorted(buckets.items())]
-                carried['notes'] = list(dict.fromkeys([*metric['notes'], COMPACTED]))
             carried['observations'] = count
             carried['path'] = path
             mark = newest(trade, used)
@@ -272,4 +236,3 @@ def carry_on(trade: Trade, previous: list[dict], samples: list[PriceSample], *, 
             carried.update(mark, contract=metric.get('contract'))
         result.append(carried)
     return result
-

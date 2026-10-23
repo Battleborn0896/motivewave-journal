@@ -26,11 +26,11 @@ import tvchart
 import runner_controls
 import tag_controls
 from views import checklists, daily, preferences, session
-from common import PRECISION, money
+from common import money
 from mwjournal.chart import STOP, chart_window, trade_chart
 from mwjournal.model import WHY_INCOMPLETE, finite, instant
 from mwjournal.metrics import excursions
-from mwjournal.scope import LIVE_TICKS, PROVENANCE, provenance
+from mwjournal.scope import LIVE_TICKS, provenance
 from mwjournal import humanize, risk, units
 from mwjournal import journals, merging
 
@@ -42,6 +42,10 @@ LIVE = '1s'
 KEPT = 'live-chart-kept'   # per session: the prices an open trade's chart has drawn before the current minute
 CONTEXT = [15, 30, 60, 120, 0]
 LONG, SHORT = theme.SERIES[0], theme.SERIES[1]
+# Where a trade's MAE / MFE prices came from (scope.provenance), said in its caption only when they were not the
+# ticks the study recorded while you traded.
+PRICES_FROM = {'history-backfill': "From MotiveWave's tick history", 'replay-history': "From MotiveWave's tick history",
+               'imported': 'From your imported prices'}
 
 CSS = f"""
 <style>
@@ -218,7 +222,7 @@ def render(journal, rows, *, every=None) -> None:
         st.session_state[selected] = ids[0]
     trade = next((t for t in journal.trades() if t.id == st.session_state.get(selected)), None) if ids else None
     with options_slot:
-        options_menu(journal, rows, trade)
+        options_menu(journal, rows)
     list_col, review_col = st.columns([1.75, 3.25], gap='medium')
     with list_col:
         theme.section('Trades', count)
@@ -329,16 +333,9 @@ def open_row(journal, row, zone, selected) -> None:
     st.markdown(row_html({**row, 'open_net': open_net}, zone, selected), unsafe_allow_html=True)
 
 
-def options_menu(journal, rows, trade) -> None:
+def options_menu(journal, rows) -> None:
     """The rarely used actions, together: how the chart is drawn, and merging or splitting reviews."""
     st.markdown('**Chart**')
-    sources = journal.price_sources(trade.symbol, trade) if trade else []
-    if sources:
-        preferred = default_source(sources)
-        names = [PROVENANCE[provenance(s)] for s in sources]
-        st.selectbox('Chart price source', sources, index=sources.index(preferred), key='chart-source-' + trade.id,
-                     format_func=lambda s: PROVENANCE[provenance(s)] + (
-                         '' if names.count(PROVENANCE[provenance(s)]) == 1 and provenance(s) != 'imported' else f' · {s}'))
     st.selectbox('Context each side', CONTEXT, format_func=lambda n: f'{n} minutes',
                  key=common.key(journal, 'chart-context'), help='Minutes of chart before entry and after exit.')
     st.checkbox('Show Stop', value=True, key=common.key(journal, 'chart-levels'))
@@ -422,19 +419,15 @@ def detail(journal, trade, ids, zone) -> None:
 
 
 def numbers(journal, trade, annotation: dict, zone) -> None:
-    """The trade's result, MAE, MFE and size, and what they were measured from. An open trade's result is
-    what it would be if closed at the newest price its MAE and MFE were measured with."""
+    """The trade's result, MAE, MFE and size, and where their prices came from when they were not the ticks the
+    study recorded while you traded (PRICES_FROM). An open trade's result is what it would be if closed at the
+    newest price its MAE and MFE were measured with."""
     unit = common.excursion_unit(journal)
     metric = common.best_display_metric(journal, trade)
-    precision = metric.get('point_precision') if unit in ('points', 'ticks') else metric.get('precision')
-    measured = PRECISION.get(precision, 'Waiting for prices') if common.measured(metric) else ''
-    if measured and metric.get('provenance') in ('history-backfill', 'replay-history'):
-        measured += ' · ' + PROVENANCE[metric['provenance']]      # real prints, loaded after the trade
-    st.caption(' · '.join(part for part in (common.span(trade.opened, trade.closed, zone), measured) if part))
+    prices_from = PRICES_FROM.get(metric.get('provenance')) if common.measured(metric) else None
+    st.caption(' · '.join(part for part in (common.span(trade.opened, trade.closed, zone), prices_from) if part))
     if getattr(trade, 'merge_leg_ids', None):
-        st.caption(f'Merged from {len(trade.merge_leg_ids)} trades · their own fills and notes are kept',
-                   help='Overlapping positions: points and ticks are unavailable because the original trades had '
-                        'different average entries. Currency and R remain.' if getattr(trade, 'merge_overlapping', False) else None)
+        st.caption(f'Merged from {len(trade.merge_leg_ids)} trades · their own fills and notes are kept')
     cols = st.columns([1.25, 1, 1, .75])
     result, label, shown = trade.net, 'Net P&L', 'Unknown'
     why = (' '.join(WHY_INCOMPLETE[reason] for reason in trade.incomplete) if trade.incomplete
@@ -454,9 +447,8 @@ def numbers(journal, trade, annotation: dict, zone) -> None:
         st.metric(label, money(result, trade.currency) if result is not None else shown, help=why)
     plan = risk.plan_for(journal, trade)
     mae, mfe = common.excursion_values(journal, trade, metric, plan.risk)
-    explain = units.description(unit) + (f' Measured from: {measured}.' if measured else '')
-    cols[1].metric('MAE', common.excursion_amount(mae, unit, trade.currency), help=explain)
-    cols[2].metric('MFE', common.excursion_amount(mfe, unit, trade.currency), help=explain)
+    cols[1].metric('MAE', common.excursion_amount(mae, unit, trade.currency), help=units.description(unit))
+    cols[2].metric('MFE', common.excursion_amount(mfe, unit, trade.currency), help=units.description(unit))
     cols[3].metric('Peak size', f'{trade.max_qty:g}', help='The most contracts held at once.')
     if not common.measured(metric) or common.replay_ticks_pending(journal, trade):
         st.caption(common.no_excursions(journal, trade))
@@ -568,12 +560,11 @@ def excursions_panel(journal, trade, a: dict, zone) -> None:
     at_risk = risk.plan_for(journal, trade).risk
     tick = units.tick_size(trade.symbol, journal.display_settings()['tick_sizes'])
     # The one measurement the trade is shown with everywhere (common.best_display_metric): nothing to choose.
-    m = common.best_display_metric(journal, trade)
+    m = shown = common.best_display_metric(journal, trade)
     if not common.measured(m):
         st.info(common.no_excursions(journal, trade))
     else:
-        m = shown = common.display_metric(journal, trade, m)
-        common.excursion_help(journal, trade, m, at_risk)
+        common.excursion_help(journal, trade, at_risk)
         mae, mfe = common.excursion_values(journal, trade, m, at_risk)
         c1, c2 = st.columns(2)
         c1.metric('Maximum adverse excursion', common.excursion_amount(mae, unit, trade.currency), help=units.description(unit))
@@ -584,8 +575,6 @@ def excursions_panel(journal, trade, a: dict, zone) -> None:
                       help='MAE divided by the risk to your stop.')
             c2.metric('MFE / risk', f"{m['mfe'] / at_risk:.2f}R" if m.get('mfe') is not None else '—',
                       help='MFE divided by the risk to your stop.')
-        for note in dict.fromkeys([*m.get('notes', []), *(m.get('point_notes', []) if unit in ('points', 'ticks') else [])]):
-            st.caption(note)
         if m.get('path'):
             # Every recorded price is read for it: once the trade is closed, not again every second.
             full = trade.closed is not None and st.checkbox('Show/export full recorded trade path',
@@ -596,7 +585,6 @@ def excursions_panel(journal, trade, a: dict, zone) -> None:
                 samples = journal.prices(trade.symbol, m['source'], start=trade.opened, end=trade.closed)
                 clock = journal.trade_clock(trade)
                 m = excursions(trade, samples, m['source'], now=clock, max_path_points=None)
-                m = merging.mask_overlap_points(trade, m)
                 st.caption(f"{len(m['path']):,} recorded prices",
                            help='Every observation that was recorded, not proof that the feed delivered every tick. '
                                 'OHLC paths remain bounds, not exact ticks. The CSV times are UTC.')
@@ -623,18 +611,13 @@ def excursions_panel(journal, trade, a: dict, zone) -> None:
                 for fill in trade.fills:
                     fig.add_vline(x=common.wall_clock([fill['ts']], zone)[0], line_width=1,
                                   line_dash='dot', line_color=theme.UP if fill['role'] == 'entry' else theme.DOWN)
-                definition = 'Price move from held average entry' if unit in ('points', 'ticks') else 'Move of the position held'
                 # uirevision: a zoom survives the redraws of an open trade's path.
-                fig.update_layout(height=290, yaxis_title=f'{definition} ({units.suffix(unit, trade.currency)})',
+                fig.update_layout(height=290, yaxis_title=f'Move from your average entry ({units.suffix(unit, trade.currency)})',
                                   xaxis_title=f'Time ({humanize.zone_name(zone, trade.opened)})', uirevision=trade.id)
                 if unit == 'currency':
                     theme.money_axis(fig, trade.currency, [*high, *low])
                 st.plotly_chart(fig, width='stretch', config=theme.PLOTLY_CONFIG,
                                 key=common.key(journal, 'path-' + trade.id))
-    if st.button('Recalculate From Stored Prices', key=common.key(journal, 'recalculate'),
-                 help='Measures MAE / MFE again from the prices already stored.'):
-        common.recalculate(journal)
-        st.rerun()
 
 
 def window_prices(journal, trade, source, start, end) -> list:
@@ -671,8 +654,8 @@ def window_prices(journal, trade, source, start, end) -> list:
 
 
 def default_source(sources) -> str:
-    """What a trade's chart is drawn from unless another source is chosen under Options: MotiveWave's 1-minute
-    bars (a replay trade's are its own run's), else the first source."""
+    """What a trade's chart is drawn from: MotiveWave's 1-minute bars (a replay trade's are its own run's), else
+    the first source. The recorded prints fill the minutes that have no candle (chart_panel)."""
     return next((s for s in sources if provenance(s) == 'platform-bars'), sources[0])
 
 
@@ -682,9 +665,8 @@ def chart_panel(journal, trade, annotation: dict, zone) -> None:
         st.info('No candles yet for this contract. Add the study to its chart in MotiveWave, or import '
                 '1-minute bars or ticks in Import.')
         return
-    source = st.session_state.get('chart-source-' + trade.id)
-    source = source if source in sources else default_source(sources)
-    context = st.session_state.get(common.key(journal, 'chart-context'), CONTEXT[0])
+    source = default_source(sources)
+    context =st.session_state.get(common.key(journal, 'chart-context'), CONTEXT[0])
     levels = st.session_state.get(common.key(journal, 'chart-levels'), True)
     clock = journal.trade_clock(trade)
     start, end = chart_window(trade, context, now=clock)

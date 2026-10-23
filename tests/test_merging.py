@@ -61,8 +61,9 @@ def test_compound_excursions_use_recorded_combined_equity_not_sum_of_leg_extrema
     assert metric['mae'] == 100 and metric['mfe'] == 400
     assert compound.net == 292
     journal.set_excursion_unit('points')
-    # The 5-point price peak happens after a partial exit; currency peaked earlier at 2 × 4 × $50.
-    assert common.display_excursion_rows(view, common.rows_for(view))[0]['display_mfe'] == 5
+    # The dollars peaked at 2 × 4 × $50, before the 5-point price peak on the 1 left after a partial exit: the
+    # points are that moment's 4.
+    assert common.display_excursion_rows(view, common.rows_for(view))[0]['display_mfe'] == 4
 
 
 @pytest.mark.parametrize('kwargs', [{'symbol': 'ESM6'}, {'side': 'sell'}, {'account': 'other'}])
@@ -74,7 +75,9 @@ def test_merge_rejects_contract_direction_and_account_mixing(home, kwargs):
     assert not merging.definitions(journal)
 
 
-def test_overlapping_native_positions_keep_currency_but_do_not_invent_shared_point_basis(home):
+def test_overlapping_positions_merged_are_measured_from_their_combined_average_entry_in_every_unit(home):
+    """Like any scaled trade: long 1 at 100 and 1 at 110 is 2 at 105, then 1 at 105 after the first exit, so the
+    print at 120 is 15 points for on the 1 held, $300."""
     journal = Journal()
     events = [native('1', 'buy', 1, 100, '2026-10-07T14:00:00Z', 'p', True),
               native('2', 'buy', 1, 110, '2026-10-07T14:01:00Z', 'q', True),
@@ -87,9 +90,11 @@ def test_overlapping_native_positions_keep_currency_but_do_not_invent_shared_poi
     view = merging.ReviewJournal(journal)
     metric = common.best_display_metric(view, merged)
     assert merged.net == sum(t.net for t in raw) == 200
-    assert metric['mfe'] == 300 and metric['mfe_points'] is None
+    assert (metric['mfe'], metric['mfe_points']) == (300, 15)
     journal.set_excursion_unit('points')
-    assert common.display_excursion_rows(view, common.rows_for(view))[0]['display_mfe'] is None
+    assert common.display_excursion_rows(view, common.rows_for(view))[0]['display_mfe'] == 15
+    journal.set_excursion_unit('ticks')
+    assert common.display_excursion_rows(view, common.rows_for(view))[0]['display_mfe'] == 60
 
 
 def test_unavailable_or_ambiguous_legs_leave_raw_reviews_visible(home):

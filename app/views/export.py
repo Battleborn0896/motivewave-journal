@@ -15,7 +15,7 @@ import theme
 from mwjournal import backup, humanize, paths
 
 CSV_COLUMNS = ('id', 'account', 'symbol', 'direction', 'opened', 'closed', 'entry_price', 'exit_price', 'net', 'r',
-               'mae', 'mfe', 'mae_r', 'mfe_r', 'precision', 'tags')
+               'mae', 'mfe', 'mae_r', 'mfe_r', 'tags')
 # Beside the UTC columns: the same entry and exit as a person reads them, in the display time zone.
 HUMAN_COLUMNS = ('entry_time', 'exit_time', 'time_zone')
 HELP = {'backup': 'One zip of the whole journal, Live and Replay and every journal you made, safe to take while '

@@ -48,9 +48,6 @@ TIMEZONES = ['America/New_York', 'America/Chicago', 'America/Los_Angeles', 'UTC'
              'Europe/Moscow', 'Africa/Johannesburg', 'Asia/Dubai', 'Asia/Kolkata', 'Asia/Singapore',
              'Asia/Hong_Kong', 'Asia/Shanghai', 'Asia/Tokyo', 'Asia/Seoul', 'Australia/Perth',
              'Australia/Brisbane', 'Australia/Sydney', 'Pacific/Auckland']
-PRECISION = {'platform-reported': 'Platform reported', 'observed-ticks': 'Observed ticks',
-             'estimated-bars': 'OHLC estimate', 'proxy-estimate': 'Proxy estimate',
-             'replay-simulated': 'Replay simulated / source unverified', 'pending': 'Waiting for data'}
 # The study's three states, as the sidebar, Settings and Data → Connection all say them (link_state).
 RECORDING, NOT_RECORDING, ATTENTION = 'Recording', 'Not recording', 'Needs attention'
 NO_REPLAY_TRADES = 'No replay trades yet'          # the sidebar chip and the trade list of an empty Replay journal
@@ -274,9 +271,7 @@ def unit_selector(journal, container=st):
     def save():
         journal.set_excursion_unit(st.session_state[widget_key])
     container.selectbox('MAE / MFE Units', units.UNITS, format_func=units.LABELS.get, key=widget_key, on_change=save,
-                        help='How MAE and MFE are shown everywhere. Display only: fills and the raw currency '
-                             'measurements stay unchanged. Points and ticks measure price movement, not '
-                             'quantity-weighted position profit.')
+                        help='Changes only how MAE / MFE are shown.')
 
 
 def excursion_unit(journal):
@@ -293,35 +288,11 @@ def excursion_amount(value, unit, currency='USD'):
     return amount(value) + ('' if unit == 'r' else ' ') + units.suffix(unit, currency)
 
 
-def display_metric(journal, trade, metric, unit=None):
-    """Old stored reports need matching prices for points; never divide size-weighted currency blindly."""
-    unit = unit or excursion_unit(journal)
-    if getattr(trade, 'merge_overlapping', False) or unit not in ('points', 'ticks') or not metric or 'mae_points' in metric:
-        return metric
-    from mwjournal.metrics import excursions
-    samples = journal.prices(trade.symbol, metric['source'], start=trade.opened, end=trade.closed)
-    calculated = excursions(trade, samples, metric['source'], now=journal.trade_clock(trade))
-    return {**metric, **{k: calculated.get(k) for k in ('mae_points', 'mfe_points', 'point_definition', 'point_precision')},
-            'path': calculated.get('path', []), 'point_notes': calculated.get('notes', [])}
-
-
-def best_display_metric(journal, trade, *, unit=None):
-    """The measurement a trade is shown with: from recorded ticks only (metric_options). The unit is read from
-    the journal unless given: rows_for reads it once for all the trades."""
-    options = metric_options(journal, trade)
-    rank = {'platform-reported': 4, 'observed-ticks': 3, 'estimated-bars': 2,
-            'replay-simulated': 1, 'proxy-estimate': 1, 'pending': 0}
-    best = max(options, key=lambda m: (rank.get(m.get('precision'), 0), m.get('basis', 'last') == 'last',
-                                       m.get('observations', 0))) if options else {}
-    unit = unit or excursion_unit(journal)
-    if unit not in ('points', 'ticks'):
-        return best
-    options = [display_metric(journal, trade, m, unit) for m in options]
-    available = [m for m in options if m.get('mae_points') is not None and m.get('mfe_points') is not None]
-    rank = {'platform-reported': 4, 'observed-ticks': 3, 'estimated-bars': 2,
-            'replay-simulated': 1, 'proxy-estimate': 1, 'pending': 0}
-    return max(available, key=lambda m: (rank.get(m.get('point_precision'), 0),
-                                        m.get('basis', 'last') == 'last', m.get('observations', 0))) if available else display_metric(journal, trade, best, unit)
+def best_display_metric(journal, trade):
+    """The one measurement a trade is shown with, in every unit: of those from recorded ticks (metric_options),
+    the traded price's ('last'), then the one that saw the most prices. {} when there is none."""
+    return max(metric_options(journal, trade), key=lambda m: (m.get('basis', 'last') == 'last',
+                                                              m.get('observations', 0)), default={})
 
 
 def replay_ticks_pending(journal, trade) -> bool:
@@ -383,7 +354,6 @@ def row_trade(row) -> Trade:
     trade = Trade(**{f.name: row[f.name] for f in fields(Trade)})
     if row.get('merge_leg_ids'):
         trade.merge_leg_ids = row['merge_leg_ids']
-        trade.merge_overlapping = row.get('merge_overlapping', False)
     return trade
 
 
@@ -402,13 +372,13 @@ def account_name(journal, provider, account) -> str:
 
 def metric_options(journal, trade):
     """The measurements a trade can be shown with: from recorded ticks only, and none whose ticks the study
-    reported a gap in. Candles, proxies, simulated replay prints and platform reports never measure a trade."""
+    reported a gap in. Candles, proxies and simulated replay prints never measure a trade."""
     return [m for m in journal.metric_options(trade) if m.get('precision') == 'observed-ticks'
             and not journal.capture_gaps(m['source'], start=trade.opened, end=trade.closed, symbol=trade.symbol)]
 
 
 def excursion_values(journal, trade, metric, risk=None):
-    metric = display_metric(journal, trade, metric)
+    """MAE and MFE of a trade's measurement (best_display_metric) in the chosen unit."""
     unit = excursion_unit(journal)
     tick = units.tick_size(trade.symbol, journal.display_settings()['tick_sizes'])
     return tuple(units.value(metric, name, unit, risk=risk, tick=tick) for name in ('mae', 'mfe'))
@@ -416,7 +386,7 @@ def excursion_values(journal, trade, metric, risk=None):
 
 def display_excursion_rows(journal, rows):
     """MAE and MFE of trade rows (rows_for) in the chosen unit. Each row carries the measurement it is shown with,
-    chosen when the rows were built for this unit, so no trade is read again here."""
+    so no trade is read again here."""
     result = []
     unit = excursion_unit(journal)
     sizes = journal.display_settings()['tick_sizes']
@@ -424,13 +394,11 @@ def display_excursion_rows(journal, rows):
         metric = row['metric']
         mae, mfe = (units.value(metric, name, unit, risk=row.get('initial_risk'), tick=units.tick_size(row['symbol'], sizes))
                     for name in ('mae', 'mfe'))
-        precision = metric.get('point_precision') if unit in ('points', 'ticks') else metric.get('precision')
-        result.append({**row, 'display_mae': mae, 'display_mfe': mfe,
-                       'display_precision': PRECISION.get(precision, 'Waiting for prices')})
+        result.append({**row, 'display_mae': mae, 'display_mfe': mfe})
     return result
 
 
-def excursion_help(journal, trade, metric, at_risk):
+def excursion_help(journal, trade, at_risk):
     unit = excursion_unit(journal)
     if unit == 'r' and not units.positive(at_risk):
         # Why there is no risk, as the Stop box under Notes says it: no stop reported, a stop on the wrong side...
@@ -448,9 +416,6 @@ def excursion_help(journal, trade, metric, at_risk):
                         return
                     journal.set_tick_size(trade.symbol, size)
                     st.rerun()
-    if unit in ('points', 'ticks') and metric.get('mae') is not None and metric.get('mae_points') is None:
-        st.info('This report has currency excursions but no matching price path for points/ticks. '
-                'It cannot be converted safely from whole-position dollars alone.')
 
 
 # What the trade rows show besides fills, measurements, linked orders and multipliers (changes()): the journal_meta
@@ -480,7 +445,7 @@ def rows_signature(journal) -> tuple | None:
     except sqlite3.Error:
         return None                            # never equal to a signature read before: the rows are built again
     # A journal shown with its merged trades (merging.ReviewJournal) has other rows than the same journal without.
-    return (changes(journal), found.hexdigest(), names and names[0], excursion_unit(journal), humanize.local_zone(),
+    return (changes(journal), found.hexdigest(), names and names[0], humanize.local_zone(),
             hasattr(journal, 'original')), measured
 
 
@@ -517,13 +482,12 @@ def rows_for(journal) -> list[dict]:
     aliases = journals.registry(getattr(journal, 'capture_journal', journal))['account_aliases']
     import json
     zone = display_zone(journal)
-    unit = excursion_unit(journal)
     rows = []
     trades = journal.trades()
     plans = risk.plans(journal, trades, annotations)
     for trade in trades:
         a = annotations.get(trade.id, {})
-        m = best_display_metric(journal, trade, unit=unit)
+        m = best_display_metric(journal, trade)
         day = tagging.day_key(trade.opened, zone)     # its trading day: its day tags and what date filters compare
         tag_ids = tagging.effective(library, a, sessions.get(day, {}))
         # The risk to the trade's stop (risk.py): every R the app shows divides by it.
@@ -531,7 +495,6 @@ def rows_for(journal) -> list[dict]:
         rows.append({**trade.row(), **a, 'initial_risk': at_risk, 'stop': plans[trade.id].stop,
                      'market': instrument_market(trade.symbol),
                      'merge_leg_ids': getattr(trade, 'merge_leg_ids', []),
-                     'merge_overlapping': getattr(trade, 'merge_overlapping', False),
                      'account_label': aliases.get(json.dumps([trade.provider, trade.account], sort_keys=True), trade.account),
                      'tags': tagging.names(library, tag_ids), 'tag_ids': sorted(tag_ids),
                      'playbooks': tagging.matched_playbooks(library, tag_ids), 'metric': m,
@@ -540,7 +503,6 @@ def rows_for(journal) -> list[dict]:
                                       if tagging.matches(library, tag_ids, book)],
                      'tag_score': tag_score(library, tag_ids),
                      'mae': m.get('mae'), 'mfe': m.get('mfe'),
-                     'precision': PRECISION.get(m.get('precision'), 'Waiting for data'),
                      # An open trade's net is only its fees so far: it has no R until it is closed.
                      'r': trade.net / at_risk if trade.status == 'closed' and trade.net is not None and at_risk else None,
                      'mae_r': m['mae'] / at_risk if m.get('mae') is not None and at_risk else None,
@@ -551,7 +513,7 @@ def rows_for(journal) -> list[dict]:
 
 def recalculate(journal) -> None:
     """MAE/MFE for every trade from the prices already stored. The watcher does this for what it
-    imports; fills and prices added by hand in the app go through here."""
+    imports; fills imported or added by hand in the app, and a multiplier set on a trade, go through here."""
     for trade in journal.trades():
         for source in journal.price_sources(trade.symbol, trade):
             samples = journal.prices(trade.symbol, source, start=trade.opened, end=trade.closed)
@@ -561,12 +523,10 @@ def recalculate(journal) -> None:
 
 def show_result(result: dict) -> None:
     st.success(f"Imported {result['executions']} new executions, {result['prices']} prices, "
-               f"{result['metrics']} platform metrics, {result.get('protection', 0)} protective-order events. "
+               f"{result.get('protection', 0)} protective-order events. "
                f"Skipped {result['duplicates']} existing fills.")
-    for warning in result['unresolved']:
-        st.warning(warning)
     if result['gaps']:
-        st.warning('The file reports dropped ticks. The warning is kept with the affected trades.')
+        st.warning('The file reports dropped ticks: the trades they fall in show no MAE / MFE, and say why.')
 
 
 # The number limits the Filters menu offers, by their name in a filter rule.

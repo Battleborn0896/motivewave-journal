@@ -139,8 +139,6 @@ class SyncWorker:
                 if parsed.errors:
                     raise ValueError('; '.join(parsed.errors[:3]))
                 result = apply_preview(self.journal, parsed)
-                if result['unresolved']:
-                    raise ValueError(result['unresolved'][0])
                 self.journal.set_bridge_offset(name, *position)   # only after its lines are in the journal
                 write_receipt(path, *position[1:])                # and only once that is stored
                 if result['executions'] or result['relabelled']:

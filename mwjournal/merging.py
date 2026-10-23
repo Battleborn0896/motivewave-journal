@@ -53,21 +53,7 @@ def compound(id, legs):
                    commission=sum(t.commission for t in legs), point_value=first.point_value, fills=ordered,
                    flags=list(dict.fromkeys(flag for t in legs for flag in t.flags)))
     result.merge_leg_ids = [t.id for t in legs]
-    result.merge_overlapping = any(instant(a.opened) < instant(b.closed) and instant(b.opened) < instant(a.closed)
-                                  for index, a in enumerate(legs) for b in legs[index + 1:])
     return result
-
-
-def mask_overlap_points(trade, metric):
-    if not getattr(trade, 'merge_overlapping', False):
-        return metric
-    metric = {**metric, 'mae_points': None, 'mfe_points': None, 'point_precision': 'pending',
-              'point_definition': 'Unavailable: overlapping original positions have different held-entry bases.',
-              'path': [{**point, 'point_low': None, 'point_high': None, 'average_cost': None}
-                       for point in metric.get('path', [])],
-              'notes': [*metric.get('notes', []), 'Points and ticks are unavailable for overlapping merged positions: '
-                        'their legs had different average entries. Inspect the original trades.']}
-    return metric
 
 
 def projected(journal):
@@ -148,14 +134,13 @@ class ReviewJournal:
         if not getattr(trade, 'merge_leg_ids', None):
             return self.original.metric_options(trade)
         if trade.basis not in self._metrics:
+            # Measured like any scaled trade: the combined position held at each moment, from its combined
+            # average entry, overlapping legs included.
             result = []
             for source in self.original.price_sources(trade.symbol, trade):
                 samples = self.original.prices(trade.symbol, source, start=trade.opened, end=trade.closed)
                 result.extend(measurements(trade, samples, source))
-            for metric in result:
-                metric['notes'].append('Merged review: the combined position held at each moment, from its combined '
-                                       'average entry. Original legs are preserved.')
-            self._metrics[trade.basis] = [mask_overlap_points(trade, metric) for metric in result]
+            self._metrics[trade.basis] = result
         return self._metrics[trade.basis]
 
     def protection_events(self, trade):

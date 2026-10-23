@@ -301,18 +301,18 @@ def test_incomplete_trades_have_no_excursions_stored_measurements_runner_or_zero
     for trade in (lone_exit, unpriced, lone_entry):
         result, = measurements(trade, samples, 'test-prices')
         assert result['precision'] == 'pending' and result['mae'] is None and result['mfe_points'] is None
-        assert result['path'] == [] and trade.incomplete[0] in result['notes'][0]
+        assert result['path'] == [] and trade.incomplete
         journal.record_metric(trade, {**measured, 'source': 'by-mistake'})
-        assert journal.metric_options(trade) == [] and journal.best_metric(trade) is None
+        assert journal.metric_options(trade) == []
         runner = post_exit(trade, samples, 'test-prices', minutes=5)
         assert runner['extra_mfe'] is None and runner['coverage'] == 'unavailable' and trade.incomplete[0] in runner['notes'][0]
         assert best_post_exit(journal, trade, minutes=5)['extra_mfe'] is None
     with journal.connect() as db:
         assert db.execute('SELECT count(*) FROM metrics').fetchone()[0] == 0
-    # A platform's own excursion report for such a trade is not attached either, and blocks nothing.
+    # A platform's own excursion report is an event this version skips and counts: it attaches nothing.
     report = {'type': 'metric', 'provider': PROVIDER, 'account': 'SIM-1', 'symbol': 'NQZ6', 'entry_execution_id': 'c1',
               'units': 'currency', 'definition': 'position-equity', 'mae': 25, 'mfe': 100}
-    assert apply_preview(journal, preview_bridge(json.dumps(report)))['unresolved'] == []
+    assert preview_bridge(json.dumps(report)).unknown == 1
     assert journal.metric_options(unpriced) == []
     chart = trade_chart(unpriced, samples, 'test-prices')
     assert [f['execution_id'] for f in chart['overlays']['fills']] == ['c2'] and chart['overlays']['fills'][0]['sequence'] == 1
@@ -381,7 +381,7 @@ def test_watcher_rebuilds_trades_and_their_measurements_when_known_fills_gain_po
     worker = SyncWorker(journal)
     worker.poll()
     paired, = journal.trades()                                # flat to flat: one four-lot long
-    assert paired.max_qty == 4 and journal.best_metric(paired)['mae'] == 140
+    assert paired.max_qty == 4 and journal.metric_options(paired)[0]['mae'] == 140
     with path.open('a') as fh:
         fh.write(lines(events))                               # the same fills, now with the platform's positions
     worker.poll()
@@ -389,6 +389,6 @@ def test_watcher_rebuilds_trades_and_their_measurements_when_known_fills_gain_po
     assert (status['status'], status['executions'], status['relabelled']) == ('synced', 0, 4)
     first, second = journal.trades()
     assert first.id == paired.id and (first.max_qty, second.max_qty) == (1, 3)
-    assert journal.best_metric(first)['mae'] == 20 and journal.best_metric(second)['mae'] == 120
+    assert journal.metric_options(first)[0]['mae'] == 20 and journal.metric_options(second)[0]['mae'] == 120
     worker.poll()
-    assert len(journal.executions()) == 4 and journal.best_metric(second)['observations'] == 1
+    assert len(journal.executions()) == 4 and journal.metric_options(second)[0]['observations'] == 1

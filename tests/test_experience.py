@@ -38,7 +38,7 @@ def recorded(journal):
 def test_only_recorded_ticks_measure_in_every_unit_and_raw_estimates_remain_in_backup(home, unit):
     journal = seed_preview(home)
     trade = journal.trades()[0]
-    original = journal.best_metric(trade)
+    original, = journal.metric_options(trade)
     assert original['precision'] == 'estimated-bars'
     journal.set_excursion_unit(unit)
     assert 'excursion_policy' not in journal.display_settings()           # there is no accuracy to choose
@@ -51,12 +51,13 @@ def test_only_recorded_ticks_measure_in_every_unit_and_raw_estimates_remain_in_b
     snapshot = sqlite3.connect(backup)  # a WAL-mode snapshot needs a real path, not deserialize(:memory:)
     assert json.loads(snapshot.execute('SELECT payload FROM metrics').fetchone()[0])['mfe'] == original['mfe']
     snapshot.close()
-    assert journal.best_metric(trade) == original
+    assert journal.metric_options(trade) == [original]
 
 
-def test_ticks_measure_never_platform_reports_and_a_reported_capture_gap_leaves_none(home):
+def test_ticks_measure_never_a_stored_platform_report_and_a_reported_capture_gap_leaves_none(home):
     journal = seed_preview(home)
     trade = recorded(journal)
+    # As 0.4.17 kept a platform's own report, until the measuring pass removes it (test_upgrade): never shown.
     journal.record_metric(trade, {'source': 'platform', 'precision': 'platform-reported', 'mfe': 99999, 'mae': 999,
                                   'notes': [], 'path': []})
     assert common.best_display_metric(journal, trade)['source'] == 'fixture-ticks'
@@ -77,7 +78,7 @@ def test_there_is_no_accuracy_to_choose_and_candles_never_measure_even_where_0_4
     open_tab(app, 'MAE / MFE')
     assert said(app.caption, '0 of 1 closed trades measured')
     assert widget(app.metric, 'Net P&L').value == '+$242.00'
-    assert journal.best_metric(journal.trades()[0])['precision'] == 'estimated-bars'
+    assert [m['precision'] for m in journal.metric_options(journal.trades()[0])] == ['estimated-bars']
 
 
 def test_ticks_survive_unit_change_and_selected_trade_remains_visible_with_list(home):
