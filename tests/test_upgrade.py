@@ -270,9 +270,12 @@ def test_reviews_stay_on_trades_that_begin_with_the_same_fill_and_the_rest_are_r
     assert journal.annotations()[swallowed.id]['notes'] == 'adrift' and len(journal.trade_media(swallowed.id)) == 1
 
 
-def test_watcher_measures_the_regrouped_trades_again_and_measurements_of_unchanged_trades_survive(tmp_path):
+def test_watcher_measures_every_trade_again_once_and_the_platforms_own_reports_go(tmp_path):
+    """MEASUREMENT_RULES 3: the regrouped trades and the unchanged ones are measured again from their stored
+    prices, the MAE / MFE a platform reported (which no price can rebuild, and which 0.3.0 kept) are removed, and
+    Settings says so once. A second pass finds nothing to do."""
     path, _ = journal_0_3_0(tmp_path / 'home')
-    # 0.3.0 had measured the trade that is the same before and after: the last round trip, p5.
+    # 0.3.0 had a platform's report for the trade that is the same before and after: the last round trip, p5.
     unchanged = Journal(tmp_path / 'scratch.sqlite3')
     apply_preview(unchanged, preview_bridge(lines(unlabelled(history()[9:11])), dataset='live'))
     kept = unchanged.trades()[0]
@@ -282,19 +285,58 @@ def test_watcher_measures_the_regrouped_trades_again_and_measurements_of_unchang
     db = sqlite3.connect(path)
     with db:
         db.execute('INSERT INTO metrics VALUES(?,?,?,?)', stored)
+        db.execute('INSERT INTO metrics VALUES(?,?,?,?)', ('gone', 'old-basis', *stored[2:]))   # a trade long gone
     db.close()
     journal = Journal(path)
     assert journal.recalculation_due()
     round_trip, last = journal.trades()[1], journal.trades()[5]
-    assert last.id == kept.id and journal.best_metric(last)['mae'] == 60          # a report no price can rebuild
+    assert last.id == kept.id and [m['precision'] for m in journal.metric_options(last)] == ['platform-reported']
     assert journal.metric_options(round_trip) == []                              # 0.3.0 never saw this trade
     SyncWorker(journal).poll()                                                   # nothing new in the file
-    measured = journal.best_metric(round_trip)
+    measured, = journal.metric_options(round_trip)
     bars = journal.prices('NQZ6', 'motivewave-bars:1m', start=round_trip.opened, end=round_trip.closed)
     assert measured == excursions(round_trip, bars, 'motivewave-bars:1m')
     assert (measured['mae'], measured['mfe'], measured['precision']) == (100, 240, 'estimated-bars')
-    assert not journal.recalculation_due() and journal.best_metric(last)['precision'] == 'platform-reported'
+    assert not journal.recalculation_due()
+    assert rows(path, "SELECT count(*) FROM metrics WHERE json_extract(payload, '$.precision')='platform-reported'") == [(0,)]
+    assert 'platform-reported' not in [m['precision'] for m in journal.metric_options(last)]
     assert all(journal.metric_options(t) == [] for t in journal.trades() if not t.complete)
+    note = journal.upgrade_note()['measurement_rules_3']
+    assert note['reports_removed'] == 2 and journal.unseen_notes()['measurement_rules_3'] == store.MEASURED_AGAIN
+    # Once only: a report stored again stays, and the note is the same one.
+    journal.record_metric(last, json.loads(stored[3]))
+    journal.recalculation_done()
+    SyncWorker(Journal(path)).poll()
+    assert 'platform-reported' in [m['precision'] for m in journal.metric_options(last)]
+    assert journal.upgrade_note()['measurement_rules_3'] == note
+
+
+def test_a_journal_with_nothing_measured_is_told_nothing_about_measuring_again(tmp_path):
+    journal = Journal(tmp_path / 'replay.sqlite3', dataset='replay')       # the Replay journal of a live-only trader
+    with journal.connect() as db:
+        db.execute("UPDATE journal_meta SET value='2' WHERE key='measurement_rules'")
+    assert journal.recalculation_due()
+    SyncWorker(journal).recalculate()
+    assert not journal.recalculation_due() and journal.upgrade_note() is None and journal.unseen_notes() == {}
+
+
+def test_points_stored_under_rules_2_become_the_points_of_the_dollars_moment_after_one_pass(tmp_path):
+    """Long 2 at 100, a dip to 97, sell 1 at 102, the runner dips to 96: rules 2 stored the runner's 4 points beside
+    the $300 of the dip with 2 held. The pass measures it again from its stored ticks: 3 points, the same moment."""
+    from test_core import fill, tick
+    journal = Journal(tmp_path / 'trades.db')
+    journal.ingest([(fill('a', 'buy', 2, 100), {}), (fill('b', 'sell', 1, 102, 1), {}), (fill('c', 'sell', 1, 101, 2), {})])
+    journal.ingest_prices([tick(0, 97), tick(1, 96)])
+    trade, = journal.trades()
+    old = {'source': 'test-prices', 'basis': 'last', 'precision': 'observed-ticks', 'mae': 300., 'mfe': 200.,
+           'mae_points': 4., 'mfe_points': 2., 'path': [], 'observations': 2}
+    journal.record_metric(trade, old)
+    with journal.connect() as db:
+        db.execute("UPDATE journal_meta SET value='2' WHERE key='measurement_rules'")
+    SyncWorker(Journal(journal.path)).recalculate()
+    metric, = journal.metric_options(trade)
+    assert (metric['mae'], metric['mae_points'], metric['mfe'], metric['mfe_points']) == (300, 3, 200, 2)
+    assert not journal.recalculation_due() and 'measurement_rules_3' in journal.unseen_notes()
 
 
 def test_fills_that_never_had_position_fields_are_left_byte_for_byte(tmp_path):

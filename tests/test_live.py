@@ -5,6 +5,7 @@ import dataclasses
 import json
 import types
 
+import common
 from mwjournal import Execution, Journal, PriceSample
 from mwjournal import journals
 from mwjournal.chart import trade_chart
@@ -43,7 +44,7 @@ def test_an_open_trade_is_measured_again_as_prices_arrive(tmp_path):
     worker = SyncWorker(journal)
     worker.poll()
     trade, = journal.trades()
-    metric = journal.best_metric(trade)
+    metric = common.best_display_metric(journal, trade)
     assert not trade.closed and metric['mae_points'] == 5
     # The newest price measured, which the open result is shown at: -$100 and the $2 entry fee.
     assert (metric['last_price'], metric['last_ts']) == (19995, '2026-10-07T14:00:01+00:00')
@@ -51,7 +52,7 @@ def test_an_open_trade_is_measured_again_as_prices_arrive(tmp_path):
     # The next poll measures it again: a measurement this small leaves no wait.
     write(bridge, [tick(20030, '2026-10-07T14:00:02Z')])
     worker.poll()
-    metric = journal.best_metric(trade)
+    metric = common.best_display_metric(journal, trade)
     assert (metric['mae_points'], metric['mfe_points'], metric['observations'], metric['last_price']) == (5, 30, 2, 20030)
     assert POLL_SECONDS <= 1
 
@@ -67,15 +68,15 @@ def test_new_prices_alone_wait_as_long_as_the_last_measurement_took_and_fills_ne
     worker.measure_after = 103.0                      # as if the last measurement had taken three seconds
     write(bridge, [tick(19990, '2026-10-07T14:00:02Z')])
     worker.poll()
-    assert journal.best_metric(trade)['observations'] == 1            # read, not yet measured
+    assert common.best_display_metric(journal, trade)['observations'] == 1            # read, not yet measured
     clock[0] = 103.5
     worker.poll()
-    assert journal.best_metric(trade)['observations'] == 2            # measured, with the price that waited
+    assert common.best_display_metric(journal, trade)['observations'] == 2            # measured, with the price that waited
     worker.measure_after = 200.0
     write(bridge, [fill('sell', 'out', 19990, '2026-10-07T14:00:03Z')])
     worker.poll()
     trade, = journal.trades()
-    assert trade.closed and journal.best_metric(trade)['observations'] == 2
+    assert trade.closed and common.best_display_metric(journal, trade)['observations'] == 2
     assert worker.measure_after == 0                  # a pass for fills holds back no later prices
 
 
@@ -90,7 +91,7 @@ def test_the_watcher_builds_its_trades_again_only_when_fills_or_multipliers_chan
     for second in range(1, 4):
         write(bridge, [tick(20000 + second, f'2026-10-07T14:00:0{second}Z')])
         worker.poll()
-    assert built == [] and journal.best_metric(original(journal)[0])['observations'] == 3
+    assert built == [] and common.best_display_metric(journal, original(journal)[0])['observations'] == 3
     journal.set_instrument('NQZ6', 20)                # set in the app, which the watcher is not told about
     write(bridge, [tick(20009, '2026-10-07T14:00:05Z')])
     worker.poll()
@@ -126,7 +127,7 @@ def test_a_new_fill_measures_only_the_trade_whose_fills_it_changed(tmp_path, mon
     worker.poll()
     assert measured == [opened.id]
     _, scaled = journal.trades()
-    assert scaled.basis != opened.basis and journal.best_metric(scaled)['observations'] == 1
+    assert scaled.basis != opened.basis and common.best_display_metric(journal, scaled)['observations'] == 1
     assert journal.metric_options(closed) == before
     # The fill that closes it: the same, and the closed trade's measurement is still the one stored at first.
     measured.clear()
@@ -183,6 +184,12 @@ def test_prices_read_back_are_the_prices_stored(tmp_path):
     assert [dataclasses.asdict(s) for s in read] == [dataclasses.asdict(s) for s in stored]
 
 
+def stored(journal, trade):
+    """A trade's one stored measurement, shown or not: one the study reported a gap in is still stored."""
+    metric, = journal.metric_options(trade)
+    return metric
+
+
 def test_a_named_journals_open_trade_is_brought_up_to_date_at_each_redraw(tmp_path):
     capture, bridge = watched(tmp_path)
     write(bridge, [fill('buy', 'in', 20000, '2026-10-07T14:00:00Z'), tick(19995, '2026-10-07T14:00:01Z')])
@@ -197,15 +204,15 @@ def test_a_named_journals_open_trade_is_brought_up_to_date_at_each_redraw(tmp_pa
                    {'version': 1, 'type': 'gap', 'provider': 'motivewave-ticks', 'symbol': 'NQ', 'dropped': 1,
                     'start_ts': '2026-10-07T14:00:02Z', 'end_ts': '2026-10-07T14:00:02Z', 'ts': '2026-10-07T14:00:02Z'}])
     worker.poll()
-    assert named.best_metric(trade)['observations'] == 1 and len(named.prices('NQZ6', 'motivewave-ticks')) == 1
+    assert stored(named, trade)['observations'] == 1 and len(named.prices('NQZ6', 'motivewave-ticks')) == 1
     journals.follow(named, trade)
-    assert named.best_metric(trade) == capture.best_metric(trade)
-    assert named.best_metric(trade)['observations'] == 2 and len(named.prices('NQZ6', 'motivewave-ticks')) == 2
+    assert stored(named, trade) == stored(capture, trade)
+    assert stored(named, trade)['observations'] == 2 and len(named.prices('NQZ6', 'motivewave-ticks')) == 2
     assert named.capture_gaps('motivewave-ticks') == capture.capture_gaps('motivewave-ticks')
     # Its own settings stay its own; following again with nothing new changes nothing.
     assert named.display_settings()['excursion_unit'] == 'points' != capture.display_settings()['excursion_unit']
     journals.follow(named, trade)
-    assert named.best_metric(trade)['observations'] == 2
+    assert stored(named, trade)['observations'] == 2
     # A capture journal and a closed trade: nothing to do.
     journals.follow(capture, trade)
     journals.follow(named, dataclasses.replace(trade, closed='2026-10-07T14:00:05+00:00'))
@@ -217,13 +224,13 @@ def test_a_named_journals_open_trade_is_brought_up_to_date_at_each_redraw(tmp_pa
     write(bridge, [tick(19980, '2026-10-07T14:00:03Z')])
     worker.poll()
     journals.follow(named, by_hand)
-    measured = named.best_metric(by_hand)                  # measured from entry the first time
+    measured = stored(named, by_hand)                  # measured from entry the first time
     assert measured['observations'] == 3 and measured['last_price'] == 19980
     assert measured['mae_points'] == 25                    # from the average of 20000 and 20010
     write(bridge, [tick(19970, '2026-10-07T14:00:04Z')])
     worker.poll()
     journals.follow(named, by_hand)
-    assert named.best_metric(by_hand)['mae_points'] == 35 and named.best_metric(by_hand)['observations'] == 4
+    assert stored(named, by_hand)['mae_points'] == 35 and stored(named, by_hand)['observations'] == 4
 
 
 def test_an_open_trades_chart_reads_only_the_prices_after_its_kept_minutes(tmp_path, monkeypatch):
@@ -370,7 +377,7 @@ def test_a_second_window_on_the_named_journal_makes_follow_wait_not_fail(tmp_pat
     other.rollback()
     other.close()
     thread.join(10)
-    assert not failed and named.best_metric(trade)['observations'] == 2
+    assert not failed and common.best_display_metric(named, trade)['observations'] == 2
 
 
 def _follow(named, trade, failed):
@@ -400,17 +407,17 @@ def test_prices_a_whole_page_copies_are_measured_on_that_page_and_by_follow(tmp_
                              execution_id='by-hand'), {})])
     by_hand, = named.trades()
     journals.follow(named, by_hand)                       # measured here: the capture does not hold this trade
-    assert named.best_metric(by_hand)['observations'] == 1
+    assert common.best_display_metric(named, by_hand)['observations'] == 1
     # A print the capture stores late, with a time before the measurement's newest: the whole page copies it.
     write(bridge, [tick(19970, '2026-10-07T14:00:03Z')])
     worker.poll()
     named = journals.open_named(capture, id)             # its mirror copies the print and measures from entry
     by_hand, = named.trades()
-    assert named.best_metric(by_hand)['observations'] == 2 and named.best_metric(by_hand)['mae_points'] == 35
+    assert common.best_display_metric(named, by_hand)['observations'] == 2 and common.best_display_metric(named, by_hand)['mae_points'] == 35
     write(bridge, [tick(19960, '2026-10-07T14:00:04Z')])
     worker.poll()
     journals.follow(named, by_hand)                       # and the next print by follow, carried on
-    assert named.best_metric(by_hand)['observations'] == 3 and named.best_metric(by_hand)['mae_points'] == 45
+    assert common.best_display_metric(named, by_hand)['observations'] == 3 and common.best_display_metric(named, by_hand)['mae_points'] == 45
 
 
 def test_a_named_journals_own_trades_are_measured_again_once_under_new_rules(tmp_path):
@@ -424,7 +431,7 @@ def test_a_named_journals_own_trades_are_measured_again_once_under_new_rules(tmp
     named = journals.open_named(capture, id)
     own, = named.trades()
     assert own.closed and not capture.metric_options(own)
-    fresh = named.best_metric(own)
+    fresh = common.best_display_metric(named, own)
     assert (fresh['mae'], fresh['mae_points']) == (100, 5)    # 19995 against 20000, 1 contract of $20 a point
     # As 0.4.7 left both journals: measured under rules 1, a stale number and bid / ask rows.
     stale = {**fresh, 'mae': 999.0}
@@ -447,7 +454,7 @@ def test_a_named_journals_own_trades_are_measured_again_once_under_new_rules(tmp
         assert db.execute("SELECT count(*) FROM metrics WHERE json_extract(source, '$[1]')='liquidation'").fetchone()[0] == 0
     named.record_metric(own, stale)                       # once only: a closed trade is not measured again
     journals.open_named(capture, id)
-    assert named.best_metric(own)['mae'] == 999
+    assert common.best_display_metric(named, own)['mae'] == 999
 
 
 def test_a_named_journal_copying_does_not_hold_up_the_watcher(tmp_path):

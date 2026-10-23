@@ -34,11 +34,31 @@ def test_short_scale_in_and_partial_exits_use_the_held_average_not_final_size():
                    fill('c', 'sell', 1, 104, 2), fill('d', 'buy', 2, 101, 4)])[0]
     m = excursions(trade, [tick(0, 102), tick(1, 94), tick(2, 99), tick(3, 107)], 'test')
     assert m['mae_points'] == 5  # after scale-in: average 102, adverse price 107
-    assert m['mfe_points'] == 6  # at 94 while holding the original average 100
-    assert m['mfe'] == 400      # 4 points on 2 at the partial exit beats 6 on the 1 left; $50/point, nothing banked added
     assert m['mae'] == 500      # 5 points on the 2 held after the scale-in; 0.4.7 netted the banked 4 and said 300
+    # 4 points on 2 at the partial exit beats 6 on the 1 left ($400 against $300, $50/point, nothing banked added),
+    # so the points are that moment's 4, not the 6 at 94.
+    assert (m['mfe'], m['mfe_points']) == (400, 4)
     assert m['path'][2]['point_high'] == 3
     assert m['path'][2]['average_cost'] == 102
+
+
+def test_points_come_from_the_moment_of_the_dollars_so_switching_units_only_rescales():
+    """Long 2 NQ at 100, a dip to 97, sell 1 at 102, then the runner dips to 96: the worst moment is the dip with
+    2 held, $120, so MAE is 3 points there, not the runner's 4. Every unit is that one moment."""
+    trade = match([fill('a', 'buy', 2, 100, symbol='NQZ6'), fill('b', 'sell', 1, 102, 2, symbol='NQZ6'),
+                   fill('c', 'sell', 1, 101, 4, symbol='NQZ6')])[0]
+    m = excursions(trade, [tick(1, 97, 'NQZ6'), tick(2, 103, 'NQZ6'), tick(3, 96, 'NQZ6')], 'test')
+    assert (m['mae'], m['mae_points']) == (120, 3)
+    # MFE: 2 points on the 2 held at the partial exit ($80) beats 3 on the 1 left at 103 ($60).
+    assert (m['mfe'], m['mfe_points']) == (80, 2)
+    held_then = 2
+    assert m['mfe_points'] == m['mfe'] / (held_then * trade.point_value)
+    assert units.value(m, 'mae', 'ticks', tick=.25) == 12 and units.value(m, 'mae', 'r', risk=60) == 2
+    # Two moments worth the same dollars: the larger move counts. A dip of 1 with 2 held, then of 2 with 1 held.
+    even = match([fill('a', 'buy', 2, 100, symbol='NQZ6'), fill('b', 'sell', 1, 101, 2, symbol='NQZ6'),
+                  fill('c', 'sell', 1, 100, 4, symbol='NQZ6')])[0]
+    m = excursions(even, [tick(1, 99, 'NQZ6'), tick(3, 98, 'NQZ6')], 'test')
+    assert (m['mae'], m['mae_points']) == (40, 2)
 
 
 def test_exit_fills_mark_points_but_missing_history_stays_unavailable():
@@ -71,7 +91,7 @@ def test_points_work_without_cash_multiplier_and_never_invent_dollars():
 
 
 def test_ticks_and_r_require_metadata_and_do_not_turn_missing_into_zero():
-    m = {'mae': 0, 'mfe': 100, 'mae_points': 0, 'mfe_points': 2, 'point_definition': units.POINT_DEFINITION}
+    m = {'mae': 0, 'mfe': 100, 'mae_points': 0, 'mfe_points': 2}
     for risk in (None, 0, -1, float('nan'), float('inf'), True):
         assert units.value(m, 'mfe', 'r', risk=risk) is None
     for tick_size in (None, 0, -1, float('nan'), True):

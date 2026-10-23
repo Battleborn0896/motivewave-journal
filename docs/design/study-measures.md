@@ -75,15 +75,24 @@ Every claim in this table was checked against the code, or against the owner's b
 - at each fill, while held before it: move = (fill price − c_before)·s, with q_before;
 - after an entry fill: move = (fill price − c_after)·s, with q_after.
 
-**Numbers.** Every number is ≥ 0. Each is null until at least one print has been counted.
-- `mae_points` = max(0, max adverse).
-- `mfe_points` = max(0, max favourable).
-- `mae_held` = max(0, max adverse·q).
-- `mfe_held` = max(0, max favourable·q).
+**Numbers.** One moment for MAE and one for MFE; every unit is that moment rescaled (`metrics.extremes` today).
+- Each print in a state, and each fill boundary, is a mark: (held move = move·q, move). A boundary (0, 0) comes
+  first, so both numbers are ≥ 0.
+- The MAE moment is the mark with the smallest held move; of marks with the same held move, the one with the
+  smaller move. The MFE moment is the mark with the largest held move; of the same held move, the larger move.
+  The choice needs no point value.
+- `mae_points` = max(0, −move at the MAE moment); `mae_held` = max(0, −held move there) = `mae_points` × q then.
+- `mfe_points` = max(0, move at the MFE moment); `mfe_held` = max(0, held move there) = `mfe_points` × q then.
+- Each is null until at least one print has been counted.
 - Banked profit from partial exits never enters. The app converts the units:
-  - dollars = held × the trade's point value;
+  - dollars = held × the trade's point value = points × q then × the point value;
   - ticks = points ÷ `tick_size`;
   - R = dollars ÷ the risk to the stop (`risk.py`, unchanged).
+- Example: long 2 NQ at 100, a dip to 97, sell 1 at 102, the runner dips to 96. MAE moment: 97 with 2 held
+  (held move −6) beats 96 with 1 held (−4), so `mae_points` 3, `mae_held` 6, $120. MFE moment: the sell at 102
+  with 2 held (held move 4), so `mfe_points` 2, $80.
+- Carrying on a measurement compares new marks with the stored moment's mark only, so it equals measuring
+  from entry. Merged trades are measured the same way, from the combined position's average entry.
 
 **Path.**
 - One entry per minute and holding size: [minute start, lowest move, highest move, q], with moves signed (favourable positive).

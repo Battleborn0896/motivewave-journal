@@ -112,10 +112,10 @@ def test_dollar_excursions_of_a_scale_out_are_the_moves_of_the_contracts_held():
     trade = match([fill('a', 'buy', 2, 100), fill('b', 'sell', 1, 104, 1),
                    fill('c', 'sell', 1, 99, 3)])[0]
     metrics = excursions(trade, [tick(0, 98), tick(1, 106), tick(2, 97)], 'test-prices')
-    # Points: 3 against (97, one held), 6 for (106, one held). Dollars weigh each move by what was held then:
-    # 2 against on 2 contracts ($200) beats 3 on 1 ($150), and 4 for on 2 at the partial exit ($400) beats 6
-    # on 1 ($300). The 4 points banked by the partial exit are not added: 0.4.7 said $500.
-    assert (metrics['mae_points'], metrics['mfe_points']) == (3, 6)
+    # Each move is weighed by what was held then: 2 against on 2 contracts ($200) beats 3 on 1 ($150), and 4 for
+    # on 2 at the partial exit ($400) beats 6 on 1 ($300). The points are those moments' moves, 2 and 4, not the
+    # 3 and 6 the one contract left saw. The 4 points banked by the partial exit are not added: 0.4.7 said $500.
+    assert (metrics['mae_points'], metrics['mfe_points']) == (2, 4)
     assert metrics['mae'] == 200 and metrics['mfe'] == 400
 
 
@@ -135,7 +135,7 @@ def test_bar_boundary_is_estimated_and_missing_data_stays_null():
     bar = PriceSample('ESZ6', '2026-10-07T13:59:30Z', 'bars', 110, 90, 60)
     m = excursions(trade, [bar], 'bars')
     assert m['mae'] == 500 and m['mfe'] == 500
-    assert m['precision'] == 'estimated-bars' and 'boundary' in m['notes'][0]
+    assert m['precision'] == 'estimated-bars' and 'notes' not in m
     absent = excursions(trade, [tick(4, 999)], 'test-prices')
     assert absent['mae'] is None and absent['mfe'] is None and absent['precision'] == 'pending'
 
@@ -168,8 +168,9 @@ def test_price_window_reads_only_held_ticks_and_overlapping_boundary_bars(tmp_pa
 
 
 def test_journals_from_0_4_7_are_measured_again_once_and_lose_their_bid_ask_rows(tmp_path):
-    """MEASUREMENT_RULES 2: every trade is measured again from its stored ticks under the new dollar definition,
-    and the bid/ask measurements 0.4.7 stored are removed, of trades still there and of trades long gone."""
+    """MEASUREMENT_RULES 2 and on: every trade is measured again from its stored ticks under the new dollar
+    definition, and the bid/ask measurements 0.4.7 stored are removed, of trades still there and of trades long
+    gone."""
     journal = Journal(tmp_path / 'trades.db')
     journal.ingest([(fill('a', 'buy', 2, 100), {}), (fill('b', 'sell', 1, 104, 1), {}), (fill('c', 'sell', 1, 102, 3), {})])
     trade, = journal.trades()
@@ -196,7 +197,8 @@ def test_journals_from_0_4_7_are_measured_again_once_and_lose_their_bid_ask_rows
     assert {m['basis'] for m in journal.metric_options(trade)} == {'last', 'liquidation'}
 
 
-def test_capture_gaps_are_persistent_deduplicated_and_visible_on_metrics(tmp_path):
+def test_capture_gaps_are_persistent_deduplicated_and_leave_the_measurement_unshown(tmp_path):
+    import common
     journal = Journal(tmp_path / 'trades.db')
     journal.ingest([(fill('a', 'buy', 1, 100), {}), (fill('b', 'sell', 1, 101, 2), {})])
     gap = {'type': 'gap', 'provider': 'test-prices', 'ts': '2026-10-07T14:01:00Z', 'dropped': 12}
@@ -204,7 +206,7 @@ def test_capture_gaps_are_persistent_deduplicated_and_visible_on_metrics(tmp_pat
     assert apply_preview(journal, preview_bridge(json.dumps(gap)))['gaps'] == 0
     trade = journal.trades()[0]
     journal.record_metric(trade, excursions(trade, [tick(0, 100)], 'test-prices'))
-    assert any('dropped ticks' in note for note in journal.best_metric(trade)['notes'])
+    assert len(journal.metric_options(trade)) == 1 and common.best_display_metric(journal, trade) == {}
     assert Journal(journal.path).capture_gaps()[0]['dropped'] == 12
 
 
@@ -262,7 +264,7 @@ def test_invalid_csv_cannot_partially_import_and_nan_is_rejected(tmp_path):
 
 
 def test_malformed_bridge_events_are_preview_errors_not_uncaught_exceptions():
-    assert preview_bridge('[]\nnull\n{"type":"metric","mae":0,"mfe":1}').errors
+    assert len(preview_bridge('[]\nnull\n{"type":"tick","price":1}').errors) == 3
     bad_symbol = {'type': 'tick', 'provider': 'test-prices', 'symbol': None,
                   'ts': '2026-10-07T14:00:00Z', 'price': 100}
     assert preview_bridge(json.dumps(bad_symbol)).errors
@@ -272,7 +274,9 @@ def test_malformed_bridge_events_are_preview_errors_not_uncaught_exceptions():
     assert not preview_bridge(json.dumps({**absent_fee, 'type': 'execution'})).fills[0][0].commission_known
 
 
-def test_platform_reports_and_historical_estimates_coexist(tmp_path):
+def test_a_platforms_own_mae_mfe_report_is_skipped_and_counted(tmp_path):
+    """Only recorded ticks measure a trade: a 'metric' event (MAE / MFE a platform reported) is an event this
+    version does not read, skipped and counted like any other."""
     journal = Journal(tmp_path / 'trades.db')
     journal.ingest([(fill('a', 'buy', 1, 100), {}), (fill('b', 'sell', 1, 101, 2), {})])
     trade = journal.trades()[0]
@@ -280,10 +284,10 @@ def test_platform_reports_and_historical_estimates_coexist(tmp_path):
     event = {'type': 'metric', 'provider': 'test', 'account': 'paper', 'symbol': 'ESZ6',
              'entry_execution_id': 'a', 'units': 'currency', 'definition': 'position-equity',
              'mae': 25, 'mfe': 100}
-    result = apply_preview(journal, preview_bridge(json.dumps(event)))
-    assert result['metrics'] == 1
-    assert len(journal.metric_options(trade)) == 2
-    assert journal.best_metric(trade)['precision'] == 'platform-reported'
+    preview = preview_bridge(json.dumps(event))
+    assert not preview.errors and preview.unknown == 1 and not preview.count
+    apply_preview(journal, preview)
+    assert [m['source'] for m in journal.metric_options(trade)] == ['test-prices']
     # Late executions/multiplier changes invalidate calculations bound to the former fill set.
     journal.set_instrument('ESZ6', 5)
     assert journal.metric_options(journal.trades()[0]) == []
@@ -475,7 +479,7 @@ def test_watcher_recalculates_late_fills_and_only_price_windows_affected(tmp_pat
     bridge.write_text(newline='', data=json.dumps(event) + '\n')
     worker = SyncWorker(journal)
     worker.poll()
-    assert journal.best_metric(journal.trades()[0])['mae'] == 100
+    assert journal.metric_options(journal.trades()[0])[0]['mae'] == 100
     called = []
     original = store.measurements
     monkeypatch.setattr(store, 'measurements', lambda *args, **kw: called.append(args[0].id) or original(*args, **kw))

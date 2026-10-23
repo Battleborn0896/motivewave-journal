@@ -40,9 +40,9 @@ def fills(rng, direction, scale_in_at):
 
 
 def same(carried, full):
-    """Identical, path and notes included."""
+    """Identical, path included."""
     assert {k: carried.get(k) for k in COMPARED} == {k: full.get(k) for k in COMPARED}
-    assert carried['path'] == full['path'] and carried['notes'] == full['notes']
+    assert carried['path'] == full['path'] and carried.keys() == full.keys()
     assert len(carried['path']) <= PATH_POINTS
 
 
@@ -115,6 +115,10 @@ def test_it_does_not_carry_on_what_would_differ_from_measuring_again(tmp_path):
     # A closed trade, and a measurement that stopped before the last fill.
     assert carry_on(dataclasses.replace(trade, closed=at(8)), previous, [], now=later) is None
     assert carry_on(trade, [{**previous[0], 'last_ts': '2026-10-07T13:59:00+00:00'}], [], now=later) is None
+    # A contract with no dollars per point: its measurement keeps no dollars to compare new prices with.
+    unpriced = dataclasses.replace(trade, point_value=None)
+    first = measurements(unpriced, journal.prices('NQZ6', SOURCE), SOURCE, now=T0 + dt.timedelta(seconds=3))
+    assert first[0]['mae'] is None and carry_on(unpriced, first, [tick('NQ', 4, 19980)], now=later) is None
 
 
 def test_a_print_stored_late_with_the_time_already_measured_is_counted_once(tmp_path):
@@ -157,7 +161,7 @@ def test_the_watcher_carries_an_open_trade_on_and_reads_only_the_new_prices(tmp_
     write(print_at(200, 19950))
     worker.poll()
     trade, = journal.trades()
-    metric = journal.best_metric(trade)
+    metric, = journal.metric_options(trade)
     assert (metric['observations'], metric['mae_points'], metric['last_price']) == (200, 50, 19950)
     assert reads == [at(199)]                      # from where it stopped, not from entry
 
@@ -203,5 +207,5 @@ def test_a_long_trades_path_carried_on_many_times_is_the_path_from_entry(tmp_pat
         metric, = carry_on(trade, [metric], journal.prices('NQZ6', SOURCE, start=metric['last_ts']), now=clock)
     full, = measurements(trade, journal.prices('NQZ6', SOURCE), SOURCE, now=clock)
     same(metric, full)
-    assert metric['observations'] == 5000 and len(full['path']) == 5000 // 8 and any('compacted' in n for n in full['notes'])
+    assert metric['observations'] == 5000 and len(full['path']) == 5000 // 8
 

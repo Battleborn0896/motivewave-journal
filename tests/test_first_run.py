@@ -174,8 +174,7 @@ def test_options_hold_the_chart_settings_and_merging_next_to_filters(home):
     popovers = [p.proto.popover.label for p in app.main.get('popover')]
     assert popovers[3:5] == ['Filters', 'Options']                 # after the session tools' three menus
     assert not any(label in popovers for label in ('More', 'Chart settings', 'Trade filters'))
-    assert widget(app.selectbox, 'Chart price source').value == 'motivewave-bars:1m'
-    assert widget(app.selectbox, 'Chart price source').format_func('motivewave-bars:1m') == 'Platform candles'
+    assert not any(s.label == 'Chart price source' for s in app.selectbox)    # MotiveWave's candles, nothing to pick
     assert widget(app.selectbox, 'Context each side').value == 15
     assert not any(s.label in ('Chart timezone', 'Review a trade') for s in app.selectbox)
     widget(app.multiselect, 'Original trades to merge').set_value([t.id for t in journal.trades()])

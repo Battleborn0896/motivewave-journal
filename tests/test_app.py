@@ -20,7 +20,7 @@ import common
 import theme
 import runtime
 from views import setup
-from mwjournal import Execution, Journal, PriceSample, backup, paths, tagging
+from mwjournal import Execution, Journal, PriceSample, backup, paths, tagging, units
 from mwjournal.importers import apply_preview, preview_bridge
 from mwjournal.metrics import measurements
 from mwjournal.sync import DEFAULT_CONNECTION
@@ -288,7 +288,8 @@ def test_a_replay_trade_without_ticks_says_the_study_fills_them_in_after_it_clos
     app.run()
     assert not app.exception and not said(app.main.caption, common.REPLAY_TICKS_LATER)
     assert widget(app.metric, 'MAE').value == '$100.00'
-    assert said(app.main.caption, 'Observed ticks · Backfilled from MotiveWave history')
+    assert said(app.main.caption, "From MotiveWave's tick history")            # not the ticks recorded live
+    assert not said(app.main.caption, 'Observed ticks') and 'Measured from' not in widget(app.metric, 'MAE').help
     # A live trade never gets the line, ticks or not.
     live = Journal()
     apply_preview(live, preview_bridge(lines([fill('l1', mode='live', ts='2026-10-07T14:00:00Z'),
@@ -405,8 +406,7 @@ def test_measured_trade_risk_renders_from_the_traded_price_alone():
 def test_chart_renders_and_planned_protection_persists_with_tags(home):
     journal = seed_preview(home)
     app = open_app()
-    assert any(x.label == 'Chart price source' for x in app.selectbox)
-    assert widget(app.selectbox, 'Chart price source').value == 'motivewave-bars:1m'
+    assert not any(x.label == 'Chart price source' for x in app.selectbox)    # MotiveWave's candles, always
     assert said(app.main.caption, CREDIT)           # under the chart too, for a closed sidebar
     assert not any(w.label.startswith(('Planned take-profit', 'Initial planned risk'))
                    for w in [*app.text_input, *app.number_input])
@@ -515,8 +515,8 @@ def test_trade_rows_are_built_again_only_when_something_they_show_changed(home, 
     from mwjournal.metrics import excursions
     deeper = [dataclasses.replace(s, high=s.high - 3, low=s.low - 3) for s in journal.prices(trade.symbol, 'motivewave-ticks')]
     journal.record_metric(trade, excursions(trade, deeper, 'motivewave-ticks'))
-    assert shown(trade.id)['mae'] != journal.best_metric(trade)['mae']
-    assert clicks(app.run) == 1 and shown(trade.id)['mae'] == journal.best_metric(trade)['mae']
+    assert shown(trade.id)['mae'] != common.best_display_metric(journal, trade)['mae']
+    assert clicks(app.run) == 1 and shown(trade.id)['mae'] == common.best_display_metric(journal, trade)['mae']
     # A multiplier set again to another value: the trade's result in the list follows it.
     journal.set_instrument('ESZ6', 50)
     assert clicks(app.run) == 1 and '242.00' in app.button(key=f'pick-{trade.id}-live').label
@@ -644,8 +644,21 @@ def test_edge_draws_excursions_for_captured_trades_nobody_has_reviewed(home):
     assert widget(app.metric, 'Win Rate').value == '50.0%'
     assert len(app.get('plotly_chart')) == 2                  # Overview: the equity curve and the results
     open_tab(app, 'MAE / MFE')
-    assert helped(app.markdown, 'Colour shows how the move was measured') and not helped(app.markdown, 'Giveback')
-    assert len(app.get('plotly_chart')) == 1
+    assert helped(app.markdown, units.description('currency')) and not helped(app.markdown, 'Giveback')
+    assert not helped(app.markdown, 'Colour shows how the move was measured')
+    scatter, = (json.loads(x.proto.spec) for x in app.get('plotly_chart'))
+    assert len(scatter['data']) == 1 and not scatter['data'][0].get('showlegend')    # one colour, no legend
+    # In points a point of NQ is not a point of ES: the page says so once both markets are measured.
+    journal.set_excursion_unit('points')
+    app.run()
+    assert said(app.caption, '1 of 2 closed trades measured') and not said(app.caption, 'differ by market')
+    nq = next(t for t in journal.trades() if t.symbol == 'NQZ6')
+    prints = [PriceSample('NQZ6', '2026-10-08T14:11:00Z', 'motivewave-ticks', 19995, 19995)]
+    journal.ingest_prices(prints)
+    for metric in measurements(nq, prints, 'motivewave-ticks'):
+        journal.record_metric(nq, metric)
+    app.run()
+    assert said(app.caption, '2 of 2 closed trades measured · points and ticks differ by market: filter to one')
 
 
 # ---------------------------------------------------------------- import
@@ -761,7 +774,7 @@ def test_a_fill_typed_by_hand_is_measured_against_stored_prices():
     record_by_hand(app, day=dt.date(2026, 10, 7), time=dt.time(10, 2), side='sell')
     trade = journal.trades()[0]
     assert (trade.opened, trade.closed) == ('2026-10-07T14:00:00+00:00', '2026-10-07T14:02:00+00:00')
-    assert journal.best_metric(trade)['precision'] == 'estimated-bars'
+    assert [m['precision'] for m in journal.metric_options(trade)] == ['estimated-bars']
 
 
 # ---------------------------------------------------------------- daily review and export
@@ -883,13 +896,12 @@ def test_trades_the_study_writes_show_up_without_any_setup():
                    'ts': '2026-10-07T14:00:30Z', 'price': 4999},
                   fill('b', 'sell', 5002, mode='live', ts='2026-10-07T14:00:50Z')])
     study_writes([heartbeat(mode='replay'), fill('r1'), tick(5001)], 'replay')
-    wait_until(lambda: Journal().trades() and Journal().best_metric(Journal().trades()[0]))
+    wait_until(lambda: Journal().trades() and Journal().metric_options(Journal().trades()[0]))
     wait_until(lambda: status_of('replay').get('heartbeat'))         # read while Live is on screen
     app.run()
     open_review(app)
     assert not app.exception
     assert widget(app.metric, 'Net P&L').value == '+$96.00'
-    assert widget(app.selectbox, 'Chart price source').value == 'motivewave-bars:1m'
     assert widget(app.metric, 'Maximum adverse excursion').value == '$50.00'      # a magnitude: no sign
     assert len(Journal().executions()) == 2 and len(Journal(dataset='replay').executions()) == 1
     app.radio(key='journal-environment').set_value('Replay').run()
@@ -1017,28 +1029,31 @@ def test_connection_is_the_status_and_the_install_with_the_details_under_a_close
 def test_excursion_unit_picker_updates_detail_list_plot_and_persists_without_rewriting_data(home):
     journal = seed_ticks(seed_preview(home))
     trade = journal.trades()[0]
-    before = journal.best_metric(trade)
+    before = journal.metric_options(trade)
     reviews = journal.annotations()
     app = open_app('Settings')
     assert widget(app.selectbox, 'MAE / MFE Units').options == [
         'Dollars / account currency', 'Points', 'Ticks', 'R · risk to your stop']
+    assert widget(app.selectbox, 'MAE / MFE Units').help == 'Changes only how MAE / MFE are shown.'
+    # The most in your favour was with both contracts held, 2.5 points up: $250, over $200 at risk to 4998. Every
+    # unit is that one moment, never the 3.5 points the one contract left saw later.
     display_setting(app, 'MAE / MFE Units', 'points')
-    assert widget(app.metric, 'MFE').value == '3.50 pts'
-    path = next(json.loads(x.proto.spec) for x in app.get('plotly_chart') if 'Price move' in x.proto.spec)
-    assert path['layout']['yaxis']['title']['text'].endswith('(pts)')
-    assert common.display_excursion_rows(journal, common.rows_for(journal))[0]['display_mfe'] == pytest.approx(3.5)
-    assert 'held average entry' in widget(app.metric, 'MAE').help     # the unit is explained on hover
+    assert widget(app.metric, 'MFE').value == '2.50 pts'
+    path = next(json.loads(x.proto.spec) for x in app.get('plotly_chart') if 'Move from your average entry' in x.proto.spec)
+    assert path['layout']['yaxis']['title']['text'] == 'Move from your average entry (pts)'
+    assert common.display_excursion_rows(journal, common.rows_for(journal))[0]['display_mfe'] == pytest.approx(2.5)
+    assert widget(app.metric, 'MAE').help == units.description('points')    # the one definition, on hover
     open_review(app)
     display_setting(app, 'MAE / MFE Units', 'ticks')
-    assert widget(app.metric, 'MFE').value == '14.00 ticks'
-    # In dollars and R the most was with both contracts held, 2.5 points up: $250, over $200 at risk to 4998.
+    assert widget(app.metric, 'MFE').value == '10.00 ticks'
     display_setting(app, 'MAE / MFE Units', 'r')
     assert widget(app.metric, 'MFE').value == '1.25R'
     display_setting(app, 'MAE / MFE Units', 'currency')
     assert widget(app.metric, 'MFE').value == '$250.00'
-    path = next(json.loads(x.proto.spec) for x in app.get('plotly_chart') if 'Move of the position held' in x.proto.spec)
+    path = next(json.loads(x.proto.spec) for x in app.get('plotly_chart') if 'Move from your average entry' in x.proto.spec)
+    assert path['layout']['yaxis']['title']['text'] == 'Move from your average entry (USD)'   # one title in every unit
     assert path['layout']['yaxis']['tickformat'].startswith('$')        # its axis reads like every other amount
-    assert journal.best_metric(trade) == before
+    assert journal.metric_options(trade) == before
     assert journal.annotations() == reviews
     display_setting(app, 'MAE / MFE Units', 'points')
     fresh = open_app('Settings')
@@ -1062,7 +1077,7 @@ def test_missing_risk_and_unknown_tick_size_show_unavailable_with_one_time_setup
     app = open_app()
     display_setting(app, 'MAE / MFE Units', 'r')
     assert widget(app.metric, 'MFE').value == '—' and said(app.info, 'No stop order 10 seconds after entry')
-    assert any(b.label == 'Recalculate From Stored Prices' for b in app.button)
+    assert not any(b.label == 'Recalculate From Stored Prices' for b in app.button)    # the watcher measures
     display_setting(app, 'MAE / MFE Units', 'ticks')
     assert widget(app.metric, 'MFE').value == '—'
     widget(app.number_input, 'Minimum price increment').set_value(.5)
@@ -1075,26 +1090,25 @@ def test_missing_risk_and_unknown_tick_size_show_unavailable_with_one_time_setup
     assert float(table[1].split(',')[table[0].split(',').index('mfe')]) == 6  # account currency, not ticks
 
 
-def test_old_tick_metrics_get_points_for_display_and_platform_reports_are_never_shown(home):
+def test_one_measurement_from_recorded_ticks_in_every_unit_and_no_word_about_how_it_was_measured(home):
     journal = seed_ticks(seed_preview(home))
     trade = journal.trades()[0]
-    legacy = next(m for m in journal.metric_options(trade) if m['source'] == 'motivewave-ticks')
-    for name in ('mae_points', 'mfe_points', 'point_definition', 'point_precision'):
-        legacy.pop(name, None)
-    journal.record_metric(trade, legacy)
+    # A platform's own report, as 0.4.17 kept one until the measuring pass removes it: never shown.
     report = {'source': 'platform-report-only', 'precision': 'platform-reported', 'mae': 999, 'mfe': 9999,
               'notes': [], 'path': []}
     journal.record_metric(trade, report)
-    assert journal.best_metric(trade)['mfe'] == 9999
     app = open_app()
-    # Only recorded ticks measure a trade: the report's dollars are never shown, whatever their rank.
     assert widget(app.metric, 'MFE').value == '$250.00'
     display_setting(app, 'MAE / MFE Units', 'points')
-    assert widget(app.metric, 'MFE').value == '3.50 pts'          # worked out again from the stored prints
-    assert not said(app.caption, 'OHLC estimate') and not any('9,999' in m.value for m in app.metric)
-    stored_legacy = next(m for m in journal.metric_options(trade) if m['source'] == legacy['source'])
-    assert 'mfe_points' not in stored_legacy
+    assert widget(app.metric, 'MFE').value == '2.50 pts'          # the same moment as the $250
+    assert not any('9,999' in m.value for m in app.metric)
     assert not any(s.label == 'Measurement' for s in app.selectbox)
+    # The trade's own recorded ticks need no label: no caption says how MAE / MFE were measured, nor any note.
+    open_review(app)
+    for words in ('Observed ticks', 'OHLC estimate', 'Measured from', 'can understate excursions',
+                  'Chart path is compacted'):
+        assert not said(app.caption, words), words
+    assert 'Measured from' not in widget(app.metric, 'MAE').help
 
 
 def test_analytics_is_question_based_and_selected_units_change_only_excursion_axes(home):

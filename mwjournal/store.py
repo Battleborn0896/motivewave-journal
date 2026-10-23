@@ -33,7 +33,12 @@ DEFAULT_CONNECTION = 'MotiveWave'
 # 1: a trade's prices are those of its product (model.trade_prices).
 # 2: dollar MAE / MFE are the moves of the contracts held (banked profit no longer counts, metrics.py), and
 #    the bid / ask ('liquidation') measurement is gone: its stored rows are removed when this pass ends.
-MEASUREMENT_RULES = 2
+# 3: points come from the same moment as the dollars (metrics.extremes), and the platform's own MAE / MFE reports
+#    are gone: their stored rows are removed when this pass ends.
+MEASUREMENT_RULES = 3
+# What the pass for these rules says once at the top of Settings (Journal.recalculation_done).
+MEASURED_AGAIN = ('MAE / MFE were measured again from your recorded ticks, so dollars, points, ticks and R now '
+                  'show the same moment.')
 # The prints a trade uses: from 2 minutes before its first fill to 120 minutes after its last, the longest
 # post-exit horizon (post_exit.py); an open trade's run on to now, unless it is incomplete: nothing measures
 # one, so its window ends as a closed one's would. Prints outside every trade's window are removed once
@@ -637,8 +642,9 @@ class Journal(Workspace):
         """What upgrading this journal did, or None: the last schema upgrade (from, to, its backup); under 'days',
         the move to one time zone (_schema_4); under 'prices', the prints recorded away from trades that were removed
         once (_trim_prices); under 'packed', the first packing of the recorded ticks (pack_prices); under
-        'answers', the typed setups and 'Followed my plan' answers that became tags (_answers_to_tags); and under
-        'connections', the watched files that were removed (_one_connection). Each one-time step has a note in plain
+        'answers', the typed setups and 'Followed my plan' answers that became tags (_answers_to_tags); under
+        'connections', the watched files that were removed (_one_connection); and under 'measurement_rules_3', every
+        trade measured again under MEASUREMENT_RULES 3 (recalculation_done). Each one-time step has a note in plain
         words, which Settings shows once (unseen_notes)."""
         with self.connect() as db:
             row = db.execute("SELECT value FROM journal_meta WHERE key='schema_upgrade'").fetchone()
@@ -762,12 +768,24 @@ class Journal(Workspace):
         return row is None or int(row[0]) < MEASUREMENT_RULES
 
     def recalculation_done(self):
-        """Every trade has been measured under this version's rules. Bid / ask measurements, which these rules no
-        longer make, go with it, including those of trades no longer in the journal."""
+        """Every trade has been measured under this version's rules. Bid / ask measurements and the platform's
+        own reports, which these rules no longer keep, go with it, including those of trades no longer in the
+        journal, and the upgrade note says so once (MEASURED_AGAIN). Safe to run twice: the second finds nothing
+        due and nothing to remove."""
         with self.connect() as db:
+            db.execute('BEGIN IMMEDIATE')
+            row = db.execute("SELECT value FROM journal_meta WHERE key='measurement_rules'").fetchone()
+            if row is not None and int(row[0]) >= MEASUREMENT_RULES:
+                return
             db.execute("DELETE FROM metrics WHERE json_extract(source, '$[1]')='liquidation'")
+            removed = db.execute("DELETE FROM metrics WHERE json_extract(payload, '$.precision')='platform-reported'"
+                                 ).rowcount
             db.execute("INSERT OR REPLACE INTO journal_meta VALUES('measurement_rules',?)", (str(MEASUREMENT_RULES),))
             db.execute("DELETE FROM journal_meta WHERE key='recalculate'")    # what 0.4.4 and earlier set instead
+            # A journal with nothing measured, and no report removed, has nothing to be told.
+            if removed or db.execute('SELECT 1 FROM metrics LIMIT 1').fetchone():
+                _add_note(db, f'measurement_rules_{MEASUREMENT_RULES}', {'reports_removed': removed,
+                                                                          'note': MEASURED_AGAIN})
 
     @staticmethod
     def _insert(db, fill: Execution, raw: dict) -> bool:
@@ -1211,18 +1229,13 @@ class Journal(Workspace):
             db.execute("INSERT OR REPLACE INTO journal_meta VALUES('display_settings',?)", (encode(settings),))
 
     def record_metric(self, trade, metric: dict):
+        """Stores a trade's measurement from one source. A source the study reported a gap in still has its
+        measurement stored: the app shows none from it (app/common.py metric_options)."""
         if not trade.complete:
             return                                 # no excursion is kept for a position the fills only partly show
-        gaps = self.capture_gaps(metric['source'], start=trade.opened, end=trade.closed, symbol=trade.symbol)
-        if gaps:
-            note = 'Capture bridge reported dropped ticks/bars; missing prices can understate MAE/MFE.'
-            # Last, whatever the measurement's own notes: a measurement carried on adds notes after this one.
-            metric = {**metric, 'notes': [n for n in metric.get('notes', []) if n != note] + [note]}
         with self.connect() as db:
-            basis = metric.get('basis', 'last')
-            # Last-traded marks and executable bid/ask marks are kept side by side.
             db.execute('INSERT OR REPLACE INTO metrics VALUES(?,?,?,?)',
-                       (trade.id, trade.basis, encode([metric['source'], basis]), encode(metric)))
+                       (trade.id, trade.basis, encode([metric['source'], metric.get('basis', 'last')]), encode(metric)))
 
     def measure(self, trade, source: str, *, since=None):
         """Measure a trade from one source and record it. `since` is the earliest time among the prices stored
@@ -1263,15 +1276,6 @@ class Journal(Workspace):
         with self.connect() as db:
             return [json.loads(r['payload']) for r in db.execute(
                 'SELECT payload FROM metrics WHERE trade_id=? AND basis=? ORDER BY source', (trade.id, trade.basis))]
-
-    def best_metric(self, trade):
-        """The best stored measurement of any kind; the app shows only those from recorded ticks
-        (app/common.py metric_options)."""
-        options = self.metric_options(trade)
-        rank = {'platform-reported': 4, 'observed-ticks': 3, 'estimated-bars': 2,
-                'replay-simulated': 1, 'proxy-estimate': 1, 'pending': 0}
-        return max(options, key=lambda m: (rank.get(m.get('precision'), 0), m.get('basis', 'last') == 'last',
-                                           m.get('observations', 0))) if options else None
 
     def ingest_prices(self, samples: list[PriceSample], *, db=None) -> int:
         for sample in samples:

@@ -8,12 +8,14 @@ from pathlib import Path
 
 import pytest
 
+import common
 from mwjournal import Journal, risk
 from mwjournal.chart import trade_chart
 from mwjournal.importers import preview_bridge
 from mwjournal.model import instant
-from mwjournal.scope import PROVENANCE, replay_run
+from mwjournal.scope import replay_run
 from mwjournal.sync import SyncWorker
+from views.trades import PRICES_FROM
 
 
 @pytest.fixture
@@ -48,7 +50,7 @@ def test_java_bridge_to_journal_trade_chart_and_excursions(
     trade = next(trade for trade in journal.trades() if trade.symbol == 'ESZ6')
     assert trade.closed and trade.symbol == 'ESZ6' and trade.max_qty == 2
     assert trade.gross == gross and trade.net == net and trade.commission == 5
-    metric = journal.best_metric(trade)
+    metric = common.best_display_metric(journal, trade)
     assert (metric['mae'], metric['mfe'], metric['precision']) == (mae, mfe, precision)
     assert 'fees not provided' not in trade.flags   # MotiveWave's commission is the fee
     assert not any('fees may be estimated' in flag for flag in trade.flags)
@@ -65,7 +67,7 @@ def test_java_bridge_to_journal_trade_chart_and_excursions(
         recorded_source = f'motivewave-replay:{run}:ticks'
         assert sources == [history, recorded_source]
         assert metric['source'] == history and metric['provenance'] == 'replay-history'
-        assert PROVENANCE[metric['provenance']] == 'Backfilled from MotiveWave history'
+        assert PRICES_FROM[metric['provenance']] == "From MotiveWave's tick history"
         prints = journal.prices('ESZ6', history)
         # Five prints inside the window; the one the history gave after the replay clock never reached the file.
         assert [p.high for p in prints] == [4799, 4801.5, 4806, 4795.5, 4797.5]
@@ -74,8 +76,7 @@ def test_java_bridge_to_journal_trade_chart_and_excursions(
         assert (recorded['mae'], recorded['mfe'], recorded['precision']) == (400, 500, 'observed-ticks')
         assert recorded['provenance'] == 'replay-ticks' and recorded['observations'] == 3
         # Both are recorded ticks, which is what measures a trade.
-        from common import metric_options
-        assert {m['source'] for m in metric_options(journal, trade)} == {history, recorded_source}
+        assert {m['source'] for m in common.metric_options(journal, trade)} == {history, recorded_source}
     else:
         assert not any(s.startswith('motivewave-replay:') for s in sources)
     source = 'motivewave-bars:1m' if dataset == 'live' else sources[0]

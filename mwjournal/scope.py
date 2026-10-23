@@ -9,12 +9,6 @@ REPLAY_HISTORY = ':history'
 # MotiveWave's 1-minute bars of the days a replay plays (study 0.3.7): platform history, the same whichever replay
 # run plays them, so they draw the chart of every replay trade they cover. Bars never measure MAE / MFE.
 REPLAY_BARS = 'motivewave-replay:bars'
-# Where a price stream came from. A label beside a measurement, never a ranking: two streams of
-# real prints stay two measurements of one trade, and are not added together.
-PROVENANCE = {'recorded-live': 'Recorded live', 'history-backfill': 'History backfill',
-              'replay-ticks': 'Replay ticks', 'replay-simulated': 'Replay, generated from bars',
-              'replay-history': 'Backfilled from MotiveWave history',
-              'platform-bars': 'Platform candles', 'imported': 'Imported or other source'}
 
 
 def event_mode(event):
@@ -55,7 +49,10 @@ def is_history(source: str) -> bool:
 
 
 def provenance(source: str) -> str:
-    """A key of PROVENANCE for a price source, also for measurements stored before the key existed."""
+    """Where a price source's prices came from: 'recorded-live', 'history-backfill', 'replay-ticks',
+    'replay-simulated', 'replay-history', 'platform-bars' or 'imported'. A label beside a measurement, never a
+    ranking: two streams of real prints stay two measurements of one trade, and are not added together. The Trades
+    caption names the ones that are not the ticks recorded while you traded (trades.PRICES_FROM)."""
     if source == LIVE_TICKS:
         return 'recorded-live'
     if source == HISTORY_TICKS:

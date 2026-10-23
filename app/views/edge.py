@@ -40,7 +40,7 @@ SECTIONS = ['Overview', 'Compare', 'MAE / MFE', 'Runners']
 DASHBOARDS = 'Dashboards'          # always the last tab, so Customize can never hide it
 AXES = {'trade': 'By Trade', 'time': 'By Date'}
 LABELS = {'closed': 'Exit', 'net': 'Net P&L', 'mae': 'MAE', 'mfe': 'MFE', 'max_qty': 'Contracts',
-          'precision': 'Measured from', 'symbol': 'Instrument'}
+          'symbol': 'Instrument'}
 COMPARE_HELP = ('Start with Trades, the sample size, then Average Trade, the net result per trade after recorded '
                 'fees. A trade with several tags counts in each, so tag rows overlap; "No Setup tag" is the trades '
                 'with no tag in that category. Average R uses only trades with a stop. These describe your recorded '
@@ -316,14 +316,13 @@ def show_costs(closed, stat):
 def excursion(journal, closed):
     unit = common.excursion_unit(journal)
     currency = closed[0]['currency']
-    st.markdown('### How Far Did Trades Move?', help=(
-        units.description(unit) + ' Left is less movement against you; up is more movement in your favour. '
-        'Colour shows how the move was measured, not a win or loss.'
-        + (' Points and ticks are not worth the same in every market: filter to one market at a time.'
-           if unit in ('points', 'ticks') else '')))
+    st.markdown('### How Far Did Trades Move?', help=units.description(unit))
     shown = pd.DataFrame(common.display_excursion_rows(journal, closed))
     measured = shown[shown.display_mfe.notna() & shown.display_mae.notna()].copy()
-    st.caption(f'{len(measured)} of {len(closed)} closed trades measured',
+    # A point of one market is not worth a point of another: said where it applies, on the page.
+    markets = ' · points and ticks differ by market: filter to one' if unit in ('points', 'ticks') and len(
+        {instrument_market(s) for s in measured.symbol}) > 1 else ''
+    st.caption(f'{len(measured)} of {len(closed)} closed trades measured{markets}',
                help='Only trades measured from recorded ticks with a value in your MAE / MFE Units (Settings); '
                     'unavailable values are left out, never counted as zero.')
     if measured.empty:
@@ -332,10 +331,9 @@ def excursion(journal, closed):
         return
     measured['Net P&L'] = [money(v, currency) for v in measured.net]
     label = units.suffix(unit, currency)
-    labels = {**LABELS, 'display_mae': f'Against me · MAE ({label})',
-              'display_mfe': f'In my favour · MFE ({label})', 'display_precision': 'Measured from'}
-    figure = px.scatter(measured, x='display_mae', y='display_mfe', color='display_precision', size='max_qty',
-                        labels=labels, hover_data={'symbol': True, 'Net P&L': True, 'max_qty': True},
+    labels = {**LABELS, 'display_mae': f'Against me · MAE ({label})', 'display_mfe': f'In my favour · MFE ({label})'}
+    figure = px.scatter(measured, x='display_mae', y='display_mfe', size='max_qty', labels=labels,
+                        hover_data={'symbol': True, 'Net P&L': True, 'max_qty': True},
                         title='One dot per measured trade')
     if unit == 'currency':
         values = [*measured.display_mae, *measured.display_mfe]

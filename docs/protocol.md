@@ -91,18 +91,6 @@ The app reads only stops, for R (`mwjournal/risk.py`); it keeps target orders bu
 Study 0.3.5 and later write stops only (`role` is always `stop`); the [stop link rule](#stops-protection)
 says which position a stop belongs to.
 
-**metric**: excursions reported by the platform instead of computed from prices.
-
-The UI unit preference does not change this bridge contract: platform reports still require
-currency position-equity measurements. The local price engine additionally stores `mae_points`,
-`mfe_points`, `point_definition: "held-average-entry"`, and `point_precision`. Point-path bounds
-are `point_low` / `point_high`; compacting a chart preserves their extrema. Ticks are converted
-using a confirmed instrument tick size; R uses the risk to the trade's stop. Neither is guessed
-from an unknown multiplier or a missing stop. Older currency-only reports need matching price
-history or a separate valid price measurement before points/ticks can be shown.
-`provider`, `units: "currency"`, `definition: "position-equity"`, `mae`, `mfe` (both >= 0), `basis`
-(`last`/`liquidation`), `observations`, and `trade_id` or `account` + `symbol` + `entry_execution_id`.
-
 **gap**: the writer had to drop events.
 `provider`, `dropped` (whole number > 0), `ts`, and optionally `start_ts`/`end_ts` for the affected
 price window and `symbol` when only one instrument is affected. Trades overlapping a gap are marked as

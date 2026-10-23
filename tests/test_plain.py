@@ -221,6 +221,24 @@ def test_a_measured_trade_says_nothing_about_missing_mae_mfe(home):
     assert not any('MAE / MFE are not measured' in c or 'No prices were recorded' in c for c in causes(app)[0])
 
 
+@pytest.mark.parametrize('source,said_', [(TICKS, None), ('motivewave-ticks:history', "From MotiveWave's tick history"),
+                                         ('my-prices', 'From your imported prices')])
+def test_where_the_prices_came_from_is_said_once_and_only_when_they_were_not_recorded_live(home, source, said_):
+    journal = Journal()
+    journal.ingest([fill('t-in', 'buy', 5000, '2026-10-07T14:00:00Z'), fill('t-out', 'sell', 5002, '2026-10-07T14:03:00Z')])
+    trade = journal.trades()[0]
+    journal.ingest_prices([PriceSample('ESZ6', '2026-10-07T14:01:00Z', source, 4999, 4999)])
+    for metric in measurements(trade, journal.prices('ESZ6', source), source):
+        journal.record_metric(trade, metric)
+    app = open_app()
+    # The trade's line under its title: when, and nothing more when its ticks were recorded live.
+    header = next(c.value for c in app.main.caption if c.value.startswith('Oct 7'))
+    assert header.endswith(' · ' + said_) if said_ else ' · From ' not in header
+    assert [c.value for c in app.main.caption].count(said_) == 0           # said in that line only, never alone
+    for name in ('MAE', 'MFE'):
+        assert 'Measured from' not in widget(app.metric, name).help and 'Observed ticks' not in everything(app)
+
+
 # ---------------------------------------------------------------- words instead of codes and ids
 
 def test_orders_and_fills_read_as_time_stop_status_price_with_no_ids(home):
