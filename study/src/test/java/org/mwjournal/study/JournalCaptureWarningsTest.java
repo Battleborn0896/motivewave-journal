@@ -183,8 +183,8 @@ public final class JournalCaptureWarningsTest {
 
     for (var beats : List.of(beats(lines), beats(Files.readAllLines(JournalAccountCapture.replayFile(file))))) {
       assert beats.size() == 3 : "One when it starts, and one at once each time what it says changes: " + beats.size();
-      String working = "\"status\":\"connected\",\"detail\":\"Experimental read-only account capture; 4 fills read\","
-          + "\"warnings\":\"" + warning + "\",\"connector\":\"motivewave-journal-study\",\"connector_version\":\"0.3.9\"}";
+      String working = "\"status\":\"connected\",\"detail\":\"Recording fills read-only; 4 fills read\","
+          + "\"warnings\":\"" + warning + "\",\"connector\":\"motivewave-journal-study\",\"connector_version\":\"0.3.10\"}";
       assert beats.get(0).endsWith(working) : beats.get(0);
       assert beats.get(1).contains("\"status\":\"error\"")
           && beats.get(1).contains("\"detail\":\"Native MotiveWave adapter unavailable: NoSuchMethodException\"")
@@ -201,7 +201,7 @@ public final class JournalCaptureWarningsTest {
     clean.close();
     var cleanBeats = beats(Files.readAllLines(file.resolveSibling("clean.ndjson")));
     assert cleanBeats.size() == 1 && !cleanBeats.getFirst().contains("warnings")
-        && cleanBeats.getFirst().contains("\"status\":\"connected\",\"detail\":\"Experimental read-only account capture; "
+        && cleanBeats.getFirst().contains("\"status\":\"connected\",\"detail\":\"Recording fills read-only; "
             + "1 fill read\",\"connector\"") : cleanBeats;
   }
 

@@ -217,9 +217,9 @@ def test_the_watcher_measures_an_nqz6_trade_again_when_nq_prices_arrive(tmp_path
 
 
 def test_a_replay_nqz6_trade_on_a_continuous_chart_is_measured_from_its_own_runs_prints_by_default(tmp_path):
-    """What the study writes with its defaults on a replay of a continuous NQ chart: prints labelled as the
-    chart is, real ticks of the run (Real Tick Data is on by default) and not proxy (only the user's Proxy
-    Prices setting marks prints recorded as they trade). The default accuracy policy shows the result."""
+    """What the study writes on a replay of a continuous NQ chart: prints labelled as the chart is, real
+    ticks of the run and not proxy (prints recorded as they trade never are). The default accuracy policy
+    shows the result."""
     from common import metric_options
     journal = Journal(tmp_path / 'replay.sqlite3', dataset='replay')
     path = tmp_path / 'motivewave.replay.ndjson'
@@ -250,7 +250,7 @@ def test_a_replay_nqz6_trade_on_a_continuous_chart_is_measured_from_its_own_runs
     assert (metric['observations'], metric['mae'], metric['mfe'], metric['precision']) == (2, 200, 500, 'observed-ticks')
     assert metric_options(journal, trade) == [metric]
     assert excursions(trade, journal.prices('NQZ6', other), other)['mfe'] is None
-    # Prices the user marked with Proxy Prices are an estimate, which the default policy leaves out.
+    # Prices marked proxy are an estimate, which the default policy leaves out.
     marked = [dataclasses.replace(sample, proxy=True) for sample in journal.prices('NQZ6', own)]
     assert excursions(trade, marked, own)['precision'] == 'proxy-estimate'
 

@@ -33,34 +33,28 @@ final class JournalPriceEvents {
         + ",\"close\":" + close + vol + ",\"proxy\":" + proxy + "}";
   }
 
-  /** The provider of a replay chart's own prints. realTicks is the Real Tick Data setting, on by default:
-   * the prints are real ticks, unless the user says the replay is generated from bars. */
-  static String replayProvider(String run, boolean realTicks) {
-    return "motivewave-replay:" + run + (realTicks ? ":ticks" : ":simulated");
+  /** The provider of a replay chart's own prints. They are real ticks, and measure replay trades like live ones. */
+  static String replayProvider(String run) {
+    return "motivewave-replay:" + run + ":ticks";
   }
 
-  /** Whether the prices a chart writes are marked proxy: from another instrument than the one traded.
-   * marked: the Proxy Prices setting. history: loaded from MotiveWave's history when the chart loads, as
-   * opposed to recorded as they trade.
+  /** The contract a chart's prices are written under, and the one whose trades it records and backfills: its
+   * active contract, which a continuous chart names, or its own symbol when it names none. */
+  static String contract(Instrument chart) {
+    String active = chart.getActiveSymbol();
+    return active == null || active.isBlank() ? chart.getSymbol() : active;
+  }
+
+  /** Whether the history a chart loads when it opens (its one-minute bars) is marked proxy: from another
+   * instrument than the one traded. A continuous chart's (its active contract differs from its own symbol) can
+   * be back-adjusted across rolls, so it is.
    *
-   * Prints recorded as they trade (live ticks, the minute bars topped up as they close, replay prints) are
-   * the product's own prices on any chart of it, the contract's or a continuous one, and the app matches a
-   * trade's prices by product: only the setting marks them. History a continuous chart loads (its active
-   * contract differs from its own symbol) can be back-adjusted across rolls, so that is marked as well. */
-  static boolean proxy(Instrument chart, boolean marked, boolean history) {
-    if (marked) return true;
-    if (!history) return false;
+   * Everything recorded as it trades (prints, and the minute bars topped up as they close) is the product's own
+   * price on any chart of it, the contract's or a continuous one, and the app matches a trade's prices by
+   * product: none of it is marked. */
+  static boolean proxy(Instrument chart) {
     String active = chart.getActiveSymbol();
     return active != null && !active.isBlank() && !active.equals(chart.getSymbol());
-  }
-
-  static String tick(String symbol, Tick tick, boolean proxy) {
-    return tick(symbol, tick, proxy, "motivewave-ticks", "live");
-  }
-
-  static String tick(String symbol, Tick tick, boolean proxy, String source, String mode) {
-    Print print = Print.of(tick);
-    return print == null ? null : tick(symbol, print, proxy, source, mode);
   }
 
   /** One trade print's own numbers, copied out of the SDK object. A print waiting in the pre-roll is
@@ -74,7 +68,8 @@ final class JournalPriceEvents {
     }
   }
 
-  static String tick(String symbol, Print print, boolean proxy, String source, String mode) {
+  /** One trade print's event. A print is the traded contract's own price, never proxy. */
+  static String tick(String symbol, Print print, String source, String mode) {
     String bidAsk = "";
     float bid = print.bid(), ask = print.ask(), volume = print.volume();
     if (Float.isFinite(bid) && Float.isFinite(ask) && bid != 0 && ask != 0 && bid <= ask)
@@ -83,7 +78,7 @@ final class JournalPriceEvents {
     return "{\"version\":1,\"type\":\"tick\",\"mode\":" + quote(mode)
         + ",\"provider\":" + quote(source) + ",\"symbol\":"
         + quote(symbol) + ",\"ts\":" + quote(Instant.ofEpochMilli(print.time()).toString())
-        + ",\"price\":" + print.price() + bidAsk + vol + ",\"proxy\":" + proxy + "}";
+        + ",\"price\":" + print.price() + bidAsk + vol + ",\"proxy\":false}";
   }
 
   /** For MotiveWave's log only: what the chart's instrument calls itself, each name as MotiveWave returns it.

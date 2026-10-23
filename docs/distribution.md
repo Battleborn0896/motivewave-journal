@@ -10,9 +10,7 @@ contains no screen, video or audio recorder.
 2. Open **Setup** and click **Install MotiveWave study**.
 3. Restart MotiveWave.
 4. Add **Journal → MotiveWave Journal** to the chart you trade on, the contract's own (`NQZ6`) or a
-   continuous one (`NQ`).
-5. Leave the study's file setting unchanged. The app and study use the same per-user folder by
-   default.
+   continuous one (`NQ`). There is nothing to set: the app and study use the same per-user folder.
 
 The study is read-only. It observes retained account fills, stop orders, chart trade
 prints, one-minute history and replay events. It cannot place, change or cancel orders.
@@ -41,20 +39,20 @@ candles drawn from those prints. Put the study on the chart you trade, the contr
 a trade is measured with the prices of its product (`NQZ6`, `NQ` and a continuous `NQ` are all `NQ`;
 `MNQ` is another product), its exact contract's first when both were recorded.
 
-Since version 0.3.8 the study defaults to **During Trades Only**: it records the prints of each trade,
-from a few seconds before the entry to a few seconds after the exit, and loads the minutes after each exit
-(**After Exit (Minutes)**, 30 by default) from MotiveWave's own tick history once they are over, on a chart
-of the exact contract (on a continuous chart, choose **Always While Study Runs** to keep them). This
+The gate is open during each trade, from a few seconds before the entry to a few seconds after the exit.
+The holding time of every closed trade of the last 30 days, and the 30 minutes after each exit, are loaded
+from MotiveWave's own tick history once they are over, on the contract's own chart and on a continuous
+one alike: a chart loads the trades of its active contract, from the instrument the fills were in. This
 supports 5/15/30-minute runner comparisons by individual tag, tag category or setup without writing every
-print of the day; longer runner windows need a longer **After Exit (Minutes)**. Studies 0.3.2 to 0.3.7
-defaulted to **Always While Study Runs**, which keeps every print MotiveWave sends to the chart and remains
-a choice; version 0.3.3 is the first that MotiveWave actually sends them to, because it requires bar updates.
+print of the day. Study 0.3.10 has no settings; studies 0.3.8 and 0.3.9 kept the minutes after an exit
+only on a chart of the exact contract, and studies 0.3.2 to 0.3.7 recorded every print MotiveWave sent to
+the chart. Version 0.3.3 is the first that MotiveWave actually sends prints to, because it requires bar
+updates.
 
-Replay records the events the replay actually emits. Its own prints count as real ticks by default;
-switch off **Advanced → Real Tick Data** when the replay is generated from bars, and they are labelled
-simulated. Once a replay trade is flat, study 0.3.3 also loads the real ticks of its holding time from
-MotiveWave's tick history for that replay run, never past the replay's current time, on a chart of the
-exact contract; study 0.3.8 adds the minutes after its exit, as the replay plays through them.
+Replay records the events the replay actually emits, and its own prints count as real ticks. Once a
+replay trade is flat, the study also loads the real ticks of its holding time from MotiveWave's tick
+history for that replay run, never past the replay's current time, and the minutes after its exit as the
+replay plays through them.
 
 ## macOS release
 

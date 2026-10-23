@@ -7,7 +7,7 @@ import java.nio.file.Path;
  * with nothing configured both sides find the same bridge file. */
 final class JournalPaths {
   /** Sent in every heartbeat, so the app can tell which writer and which version produced a file. */
-  static final String CONNECTOR = "motivewave-journal-study", CONNECTOR_VERSION = "0.3.9";
+  static final String CONNECTOR = "motivewave-journal-study", CONNECTOR_VERSION = "0.3.10";
   static final String APP_FOLDER = "MotiveWave Journal";
 
   private JournalPaths() {}
@@ -38,7 +38,7 @@ final class JournalPaths {
     try {
       return bridge(home(System.getenv("MWJ_HOME"), os, user, System.getenv("LOCALAPPDATA"))).toString();
     } catch (InvalidPathException exc) {
-      // An unusable MWJ_HOME or LOCALAPPDATA must not stop the study from loading; the path stays editable.
+      // An unusable MWJ_HOME or LOCALAPPDATA must not stop the study from loading: the per-user folder is used.
       return bridge(home(null, os, user, null)).toString();
     }
   }

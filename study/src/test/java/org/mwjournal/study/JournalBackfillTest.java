@@ -1,11 +1,16 @@
 package org.mwjournal.study;
 
+import com.motivewave.platform.sdk.common.Instrument;
+import com.motivewave.platform.sdk.common.Tick;
+import com.motivewave.platform.sdk.common.TickOperation;
 import java.io.IOException;
+import java.lang.reflect.Proxy;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 import java.util.concurrent.ArrayBlockingQueue;
 import java.util.concurrent.CancellationException;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -46,22 +51,17 @@ public final class JournalBackfillTest {
 
   public static void main(String[] args) throws Exception {
     var folder = Files.createTempDirectory("mwj-backfill-fixture-");
-    // Which charts load history at all: switched on, in the mode of the fills (a live chart loads live
-    // trades, a replay chart replay trades), and showing the very contract of the fills.
-    assert JournalBackfill.applies("ESZ6", "ESZ6", false, false, false, 30) : "A live chart, live trades";
-    assert JournalBackfill.applies("ESZ6", "ESZ6", false, true, true, 30) : "A replay chart, replay trades";
-    assert !JournalBackfill.applies("ESZ6", "ESZ6", false, true, false, 30) : "A replay chart never loads live trades";
-    assert !JournalBackfill.applies("ESZ6", "ESZ6", false, false, true, 30) : "A live chart never loads replay trades";
+    // Which charts load history at all: in the mode of the fills (a live chart loads live trades, a replay
+    // chart replay trades), for the trades of the chart's active contract.
+    assert JournalBackfill.applies("ESZ6", false, false) : "A live chart, live trades";
+    assert JournalBackfill.applies("ESZ6", true, true) : "A replay chart, replay trades";
+    assert !JournalBackfill.applies("ESZ6", true, false) : "A replay chart never loads live trades";
+    assert !JournalBackfill.applies("ESZ6", false, true) : "A live chart never loads replay trades";
     for (boolean replay : new boolean[]{false, true}) {
-      assert !JournalBackfill.applies("ESZ6", "ESZ6", false, replay, replay, 0) : "0 days is off";
-      assert !JournalBackfill.applies("ESZ6", "ESZ6", false, null, replay, 30) : "Not before the chart has said live or replay";
-      // The same alias rules live and replay: the chart must show the contract the fills are in.
-      assert !JournalBackfill.applies("@ES", "ESZ6", true, replay, replay, 30) : "A continuous chart is not the contract";
-      assert !JournalBackfill.applies("ESZ6", "MESZ6", false, replay, replay, 30) : "Nor is a chart standing in for another symbol";
-      assert !JournalBackfill.applies("ESZ6", "ESZ6", true, replay, replay, 30) : "Nor one marked as proxy prices";
-      assert !JournalBackfill.applies(null, null, false, replay, replay, 30)
-          && !JournalBackfill.applies(" ", " ", false, replay, replay, 30);
+      assert !JournalBackfill.applies("ESZ6", null, replay) : "Not before the chart has said live or replay";
+      assert !JournalBackfill.applies(null, replay, replay) && !JournalBackfill.applies(" ", replay, replay);
     }
+    fillInstruments(folder);
     windows();
     afterExitWindows();
     spans();
@@ -78,13 +78,114 @@ public final class JournalBackfillTest {
     try (var left = Files.walk(folder)) {
       for (var path : left.sorted(java.util.Comparator.reverseOrder()).toList()) Files.delete(path);
     }
-    System.out.println("Journal backfill passed: windows from fills (scale-in, partial exits, back to back, a missing "
+    System.out.println("Journal backfill passed: a chart backfills its active contract's trades, continuous or not, "
+        + "from the fills' own instrument (never the chart's; none is no history), live and replay; "
+        + "windows from fills (scale-in, partial exits, back to back, a missing "
         + "entry, replay and other symbols left out), done once across restarts, an empty answer asked again only "
         + "by a later load, the tick cap and its gap event, waiting for the writer's queue, cancelling, two charts; "
         + "the minutes after each exit, whole once settled, after every holding window, once, under the same provider; "
         + "replay: windows per run and position, clamped to the replay clock, nothing past it written, the rest "
         + "loaded once the replay plays on, its own provider and sidecar, rewinds and restarts, no live leakage, and "
         + "the minutes after a replay exit loaded as the replay plays through them.");
+  }
+
+  /** Where the ticks come from: the instrument of the fills of the chart's active contract, from the account
+   * snapshot, never the chart's own instrument. A continuous NQ chart whose front contract is NQZ6 backfills
+   * NQZ6's trades and the minutes after their exits, as an NQZ6 chart does; ESZ6's trades are left to an ES
+   * chart; a contract the snapshot has no instrument for has no history, so its windows come back empty. */
+  private static void fillInstruments(Path folder) throws Exception {
+    var asked = new java.util.LinkedHashMap<String, List<Window>>();
+    Instrument chart = instrument("NQ", "NQZ6", asked); // what the chart shows: maybe back-adjusted
+    var instruments = Map.of(
+        JournalNativeAccess.contract(false, "NQZ6"), instrument("NQZ6", "NQZ6", asked),
+        JournalNativeAccess.contract(false, "ESZ6"), instrument("ESZ6", "ESZ6", asked),
+        JournalNativeAccess.contract(true, "NQZ6"), instrument("replay NQZ6", "NQZ6", asked));
+    String contract = JournalPriceEvents.contract(chart);
+    assert contract.equals("NQZ6") && JournalBackfill.applies(contract, false, false)
+        : "A continuous chart backfills its front contract";
+
+    var fills = List.of(fill("paper", "NQZ6", "nq", true, 1, 0, false), fill("paper", "NQZ6", "nq", false, 1, 60, false),
+        fill("paper", "ESZ6", "es", true, 1, 120, false), fill("paper", "ESZ6", "es", false, 1, 180, false));
+    var events = new ArrayList<String>();
+    var load = new JournalBackfill(new Ledger(folder.resolve("instruments.ndjson")));
+    var result = load.pass(contract, fills, NOW, 30, 30, JournalBackfill.history(instruments, false, contract),
+        events::add, NEVER);
+    assert result.done() == 2 && result.empty() == 0 : result;
+    assert asked.keySet().equals(java.util.Set.of("NQZ6")) : "Only the fills' own instrument is asked: " + asked;
+    assert asked.get("NQZ6").equals(List.of(new Window(T - PAD, T + 60_000 + PAD),
+        new Window(T + 60_000 + PAD, T + 60_000 + 30 * 60_000))) : "The holding window, then the 30 minutes after the exit";
+    assert events.size() == (60_000 + 30 * 60_000 + PAD) / 250 && events.stream().allMatch(e -> e.startsWith(
+        "{\"version\":1,\"type\":\"tick\",\"mode\":\"live\",\"provider\":\"motivewave-ticks:history\",\"symbol\":\"NQZ6\",")
+        && e.endsWith(",\"proxy\":false}")) : events.size();
+    assert new Ledger(folder.resolve("instruments.ndjson")).written("NQZ6", new Window(T - PAD, T + 1_860_000))
+        && !new Ledger(folder.resolve("instruments.ndjson")).written("ESZ6", new Window(T + 120_000, T + 180_000))
+        : "ESZ6's trade is left alone";
+
+    // Replay: the replay instrument of the contract, never the live one.
+    asked.clear();
+    var replayFills = List.of(replay("run-a", "NQZ6", "RPLY-1", true, 0), replay("run-a", "NQZ6", "RPLY-1", false, 60));
+    var replayLoad = new JournalBackfill(new Ledger(folder.resolve("instruments.replay.ndjson"), true));
+    result = replayLoad.replayPass(contract, replayFills, R + 120_000, NOW, 30, 0,
+        JournalBackfill.history(instruments, true, contract), events::add, NEVER);
+    assert result.done() == 1 && asked.keySet().equals(java.util.Set.of("replay NQZ6")) : asked;
+
+    // MNQZ6: no instrument in the snapshot, so no tick history. Empty, and asked again only by a later load.
+    var micro = List.of(fill("paper", "MNQZ6", "m", true, 1, 0, false), fill("paper", "MNQZ6", "m", false, 1, 60, false));
+    asked.clear();
+    events.clear();
+    var none = JournalBackfill.history(instruments, false, "MNQZ6");
+    result = load.pass("MNQZ6", micro, NOW, 30, 0, none, events::add, NEVER);
+    assert result.empty() == 1 && result.done() == 0 && result.failed() == 0 && events.isEmpty() && asked.isEmpty() : result;
+    assert load.pass("MNQZ6", micro, NOW, 30, 0, none, events::add, NEVER).attempted() == 0 : "Not again in this load";
+    assert new JournalBackfill(new Ledger(folder.resolve("instruments.ndjson")))
+        .pass("MNQZ6", micro, NOW, 30, 0, none, events::add, NEVER).empty() == 1 : "A later load asks again";
+    // Before the first snapshot there are no instruments at all.
+    assert new JournalBackfill(new Ledger(folder.resolve("no-snapshot.ndjson"))).pass(contract, fills, NOW, 30, 0,
+        JournalBackfill.history(Map.of(), false, contract), events::add, NEVER).empty() == 1 && asked.isEmpty();
+
+    // As the study wires it: the fills and their instruments both come from the account capture's last snapshot.
+    var capture = JournalAccountCapture.fixture(folder.resolve("snapshot.ndjson"), () -> new JournalNativeAccess.Snapshot(
+        "workspace", fills, List.of(), Map.of(), JournalNativeAccess.OrderCounts.of(List.of()), instruments));
+    assert capture.fills() == null && capture.instruments().isEmpty() : "Nothing before the first snapshot";
+    capture.poll();
+    assert capture.failure == null && capture.fills().equals(fills) && capture.instruments().equals(instruments)
+        : capture.failure;
+    asked.clear();
+    events.clear();
+    result = new JournalBackfill(new Ledger(folder.resolve("from-capture.ndjson"))).pass(contract, capture.fills(), NOW,
+        30, 30, JournalBackfill.history(capture.instruments(), false, contract), events::add, NEVER);
+    assert result.done() == 2 && asked.keySet().equals(java.util.Set.of("NQZ6")) : result + " " + asked;
+    capture.close();
+  }
+
+  /** An instrument whose tick history has a print every 250 ms; it notes each stretch asked under its symbol,
+   * and checks that no ticks are ever made from bars. */
+  private static Instrument instrument(String symbol, String active, java.util.Map<String, List<Window>> asked) {
+    return Instrument.class.cast(Proxy.newProxyInstance(Instrument.class.getClassLoader(),
+        new Class<?>[]{Instrument.class}, (proxy, method, arguments) -> switch (method.getName()) {
+          case "getSymbol" -> symbol;
+          case "getActiveSymbol" -> active;
+          case "forEachTick" -> {
+            if (arguments.length != 5 || (Boolean) arguments[2] || (Boolean) arguments[3])
+              throw new AssertionError("Only real ticks: forEachTick(start, end, false, false, each)");
+            long start = (Long) arguments[0], end = (Long) arguments[1];
+            asked.computeIfAbsent(symbol, key -> new ArrayList<>()).add(new Window(start, end));
+            for (long time = start - start % 250; time < end; time += 250) {
+              long at = time;
+              ((TickOperation) arguments[4]).onTick(Tick.class.cast(Proxy.newProxyInstance(Tick.class.getClassLoader(),
+                  new Class<?>[]{Tick.class}, (tick, getter, none) -> switch (getter.getName()) {
+                    case "getTime" -> at;
+                    case "getPrice" -> 21000f;
+                    case "getBidPrice" -> 20999.75f;
+                    case "getAskPrice" -> 21000.25f;
+                    case "getVolumeAsFloat" -> 1f;
+                    default -> null;
+                  })));
+            }
+            yield null;
+          }
+          default -> null;
+        }));
   }
 
   /** The minutes after each exit: the same positions as the holding windows, from the last fill on. */
@@ -111,14 +212,14 @@ public final class JournalBackfillTest {
         : "Asked for whole, once all of it is over";
     assert JournalBackfill.afterExit(fills, "ESZ6", NOW - 30 * DAY, NOW, 0).isEmpty() : "0 minutes: none";
     assert JournalBackfill.afterExit(fills, "ESZ6", T + 61_000 + PAD, NOW, 30).equals(List.of(second))
-        : "Positions that ended before the days setting reaches back are left out, as their holding windows are";
+        : "Positions that ended before the days asked for reach back are left out, as their holding windows are";
     assert JournalBackfill.afterExit(fills, "NQZ6", NOW - 30 * DAY, Long.MAX_VALUE, 120)
         .equals(List.of(new Window(T + 530_000, T + 530_000 + 120 * minute)));
     assert JournalBackfill.afterExit(fills, null, NOW - 30 * DAY, NOW, 30).isEmpty();
   }
 
   /** Loading the minutes after an exit: whole once they and the settling time have passed, after every
-   * holding window, never twice, under the same provider, and longer when the setting grows. */
+   * holding window, never twice, under the same provider, and longer when more minutes are asked for. */
   private static void afterExitPasses(Path folder) throws Exception {
     var file = folder.resolve("after-exit.ndjson");
     var fills = List.of(fill("paper", "ESZ6", "trade", true, 1, 0, false), fill("paper", "ESZ6", "trade", false, 1, 60, false));
@@ -144,7 +245,7 @@ public final class JournalBackfillTest {
     assert new Ledger(file).written("ESZ6", new Window(T - PAD, T + 1_860_000));
     var restarted = new JournalBackfill(new Ledger(file));
     assert restarted.pass("ESZ6", fills, due + DAY, 30, 30, history, events::add, NEVER).attempted() == 0 && history.asked.size() == 2;
-    // A longer setting loads only the minutes it adds.
+    // More minutes load only the minutes they add.
     result = restarted.pass("ESZ6", fills, due + DAY, 30, 60, history, events::add, NEVER);
     assert result.done() == 1 && history.asked.getLast().equals(new Window(T + 1_860_000, T + 3_660_000)) : history.asked;
     assert events.size() == events.stream().distinct().count() : "No print written twice";
@@ -245,7 +346,7 @@ public final class JournalBackfillTest {
     assert JournalBackfill.windows(fills, null, NOW - 30 * DAY, NOW).isEmpty();
     assert JournalBackfill.windows(fills, "CLZ6", NOW - 30 * DAY, NOW).isEmpty();
 
-    // Bounds: 24 hours, the days setting, and a position that traded moments ago.
+    // Bounds: 24 hours, the days asked for, and a position that traded moments ago.
     var bounds = new ArrayList<Fill>();
     bounds.add(fill("paper", "ESZ6", "too-long", true, 1, -3 * 86_400, false));
     bounds.add(fill("paper", "ESZ6", "too-long", false, 1, -2 * 86_400, false));
@@ -259,7 +360,7 @@ public final class JournalBackfillTest {
     assert JournalBackfill.windows(bounds, "ESZ6", NOW - 30 * DAY, settled)
         .equals(List.of(new Window(T - 5 * DAY - PAD, T - 4 * DAY - 60_000 + PAD)))
         : "Only the position just under 24 hours: " + JournalBackfill.windows(bounds, "ESZ6", NOW - 30 * DAY, settled);
-    assert JournalBackfill.windows(bounds, "ESZ6", NOW - 60 * DAY, settled).size() == 2 : "A longer setting reaches the old one";
+    assert JournalBackfill.windows(bounds, "ESZ6", NOW - 60 * DAY, settled).size() == 2 : "More days reach the old one";
     assert JournalBackfill.windows(bounds, "ESZ6", NOW - 30 * DAY, NOW).size() == 2 : "Later, the fresh one has settled";
 
     // Copied accounts hold the same position at the same times: one window, not one each. The same
@@ -478,7 +579,7 @@ public final class JournalBackfillTest {
   }
   private static final String LIVE_PRINT = "{\"type\":\"tick\",\"provider\":\"motivewave-ticks\",\"fixture\":true}";
 
-  /** Settings changed or the study was removed half way: the window is not done, and is loaded later. */
+  /** The chart changed mode or the study was removed half way: the window is not done, and is loaded later. */
   private static void cancelling(Path folder) throws Exception {
     var file = folder.resolve("cancel.ndjson");
     var fills = List.of(fill("paper", "ESZ6", "cut-short", true, 1, 0, false), fill("paper", "ESZ6", "cut-short", false, 1, 60, false));
@@ -676,7 +777,7 @@ public final class JournalBackfillTest {
       throw new AssertionError("A replay ledger must not be shared as a live one");
     } catch (IOException expected) { }
 
-    // A run nothing has been written for in longer than any setting reaches is forgotten; a live ledger
+    // A run nothing has been written for in longer than any pass reaches is forgotten; a live ledger
     // would instead drop these 2021 stretches at once, by their times.
     var ledger = new Ledger(replayFile, true);
     long much = NOW + JournalBackfill.KEEP_MILLIS + DAY;

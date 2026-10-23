@@ -99,19 +99,19 @@ slot, a tick by everything it says apart from its symbol. Live and replay stay a
 replay trade still uses only its own run's prices.
 
 `"proxy": true` on a tick or bar says the price may not be the traded instrument's own; a reader counts
-such prices as an estimate, never as observed ticks. The study marks as proxy:
-
-- everything a chart writes while the user has switched on **Proxy Prices** (Advanced);
-- otherwise only the history a continuous-contract chart (one whose active contract differs from its own
-  symbol) loads when it opens: the one-minute bars of **1m Bars (Days)** and the ticks of **Ticks
-  (Minutes)**, which MotiveWave may have back-adjusted across rolls.
+such prices as an estimate, never as observed ticks. The study marks as proxy only the history a
+continuous-contract chart (one whose active contract differs from its own symbol) loads when it opens: its
+one-minute bars, which MotiveWave may have back-adjusted across rolls. Studies up to 0.3.9 also marked
+everything a chart wrote while its **Proxy Prices** setting was on, and the ticks its **Ticks (Minutes)**
+setting loaded on a continuous chart.
 
 Prices recorded as they trade are never marked by the chart they come from: live prints
 (`motivewave-ticks`), the one-minute bars topped up as each minute closes, and replay prints are the
-product's own prices on a continuous chart as on the contract's. A bar slot written again replaces the
-earlier one, so on a continuous chart a topped-up minute is marked proxy again when a later history load
-covers it. History-backfill ticks (`motivewave-ticks:history`, `motivewave-replay:<run>:history`) are
-loaded only on a chart of the exact contract and are never proxy.
+product's own prices on a continuous chart as on the contract's, written under the chart's active contract.
+A bar slot written again replaces the earlier one, so on a continuous chart a topped-up minute is marked
+proxy again when a later history load covers it. History-backfill ticks (`motivewave-ticks:history`,
+`motivewave-replay:<run>:history`) are read from the instrument of the fills themselves, never the chart's,
+and are never proxy.
 
 ## Providers written by the study
 
@@ -119,11 +119,11 @@ loaded only on a chart of the exact contract and are never proxy.
 |---|---|
 | `motivewave-native:<workspace>:live` | Fills and linked orders from live and paper accounts |
 | `motivewave-native:<workspace>:replay:<run>` | Fills from one replay run |
-| `motivewave-ticks` | Live trade prints, recorded as they happened. With the default **Record Ticks** (study 0.3.8) only while a trade is open, from a few seconds before the entry to a few seconds after the exit |
+| `motivewave-ticks` | Live trade prints, recorded as they happened, only while a trade is open, from a few seconds before the entry to a few seconds after the exit (the default from study 0.3.8, the only way from 0.3.10) |
 | `motivewave-ticks:history` | Real trade prints loaded afterwards from the platform's tick history, for the holding window of a past position and (study 0.3.8) the minutes after its exit |
 | `motivewave-bars:1m` | One-minute candles |
-| `motivewave-replay:<run>:ticks` | Replay prints, as real tick data: the default (**Real Tick Data** on). Recorded as live prints are, by default only while a replay trade is open |
-| `motivewave-replay:<run>:simulated` | Replay prints with **Real Tick Data** switched off, for a replay generated from bars |
+| `motivewave-replay:<run>:ticks` | Replay prints, as real tick data. Recorded as live prints are, only while a replay trade is open |
+| `motivewave-replay:<run>:simulated` | Replay prints of studies up to 0.3.9 with their **Real Tick Data** setting switched off. Study 0.3.10 never writes it; files that hold it keep it |
 | `motivewave-replay:<run>:history` | Real trade prints loaded afterwards from the platform's tick history, for the holding window of a replay position of that run (study 0.3.3) and (study 0.3.8) the minutes after its exit |
 | `motivewave-replay:bars` | One-minute candles of the days a replay plays, from the platform's history: the days before the replay's time and the whole day after it, loaded once a replayed day and topped up each replay minute (study 0.3.7). They belong to no run: the same history draws the chart of every replay trade they cover, whichever run it was in. They never measure MAE / MFE, move no open trade's replay clock, and are not recording |
 
@@ -133,6 +133,19 @@ ticks measure the trades of `<run>` only, never a live trade or another run. A r
 observed ticks, not as simulated, whatever the replay itself played.
 
 ## Field notes for the MotiveWave study
+
+Study 0.3.10 has nothing to set, and changes no event's shape. Its dialog is one line, "Add the study to the
+chart you trade. There is nothing to set.", and the twelve settings of earlier studies are gone: the values
+they saved in a chart (MotiveWave keeps them) are never read, so none of them acts. What the study does is
+what their defaults did: it writes to the default bridge files above, under the chart's active contract;
+reads fills; records live and replay prints during trades only, replay prints as real ticks
+(`motivewave-replay:<run>:ticks`); loads three days of one-minute bars up to the end of the chart, and no
+ticks, when a chart loads; and backfills the trades of the last 30 days and the 30 minutes after each exit
+from MotiveWave's tick history. A chart that pointed at another bridge file now writes to the default one,
+and a chart that stood in for another contract through **Symbol** no longer does. New: a continuous chart
+backfills its front contract's trades too, the minutes after each exit included (see **History ticks**
+below), so the minutes after an exit no longer need **Always While Study Runs** on a continuous chart. The
+heartbeat's `detail` reads `Recording fills read-only; N fills read`.
 
 Study 0.3.8 changes no event's shape; it changes which prints are recorded. Its **Record Ticks** setting
 (Advanced) has three choices: **During Trades Only**, the default, records live and replay prints only while
@@ -147,7 +160,8 @@ recorded live (every print, or the **After Exit** minutes in the position-gated 
 from MotiveWave's tick history with the holding window, as the same history providers (see **History
 ticks** below). **After Exit (Minutes)** (Advanced, History; 30 by default, 0–120, the key
 `postExitMinutes` as before) says how many. Like the holding window, they are loaded only on a chart of the
-exact contract: on a continuous chart, only **Always While Study Runs** keeps them.
+exact contract: on a continuous chart, only **Always While Study Runs** keeps them (until study 0.3.10, which
+removes these settings and backfills on a continuous chart as well).
 
 Study 0.3.5 changes no event's shape. It writes stop orders only (no take-profit orders), links them by
 the [stop link rule](#stops-protection), adds the stop part of the heartbeat's `warnings`, builds a fill's
@@ -218,9 +232,9 @@ One sentence, parts joined by `; `, each part with its count. The parts, in this
 
 Example: `3 fills skipped: instrument unavailable; 2 fills with an assumed currency`. Counts are of what
 MotiveWave holds right now, not of new events, and a singular reads `1 fill …`. `detail` on a `connected`
-heartbeat reads `Experimental read-only account capture; N fills read`; on an `error` heartbeat it is the
-reason, and there is no `warnings`. A heartbeat is written every ten seconds, and at once when what it
-says changes.
+heartbeat reads `Recording fills read-only; N fills read` (studies up to 0.3.9: `Experimental read-only
+account capture; N fills read`); on an `error` heartbeat it is the reason, and there is no `warnings`. A
+heartbeat is written every ten seconds, and at once when what it says changes.
 
 While any fill is skipped the study cannot be sure which positions are open, so it records every live
 print instead of only those around a position.
@@ -261,16 +275,22 @@ order or position id to an entry fill, so a prop account's stops were never writ
 Ordinary `tick` events in the live file, `mode` `live`, `proxy` `false`, `symbol` the exact contract of
 the fills. They are real trades returned by the platform's tick history (never generated from bars) for
 two windows of a position: its holding window, its first fill to its last, five seconds either side, for
-MAE / MFE; and (study 0.3.8) the minutes after its exit, its last fill to `After Exit (Minutes)` later
-(default 30, 0 = none), for the runner analysis. A position is the fills that share `account` and
-`native_position_id`.
+MAE / MFE; and (study 0.3.8) the minutes after its exit, its last fill to 30 minutes later, for the runner
+analysis. A position is the fills that share `account` and `native_position_id`.
+
+A chart backfills the positions of its active contract: the contract a continuous chart names as active, or
+the chart's own symbol when it names none. These are the names live recording arms on too. So a chart of
+`NQZ6` and a continuous `NQ` chart whose front contract is `NQZ6` both backfill `NQZ6`'s positions, and
+charts of one contract load each window once between them. The ticks are read from the instrument of the
+position's fills, never from the chart's, whose history can be back-adjusted; when MotiveWave has no
+instrument for the contract, or its history returns nothing, the window is empty (study 0.3.10; earlier
+studies backfilled only on a chart of the exact contract, never on a continuous or stand-in chart).
 
 A position's windows are loaded when it is flat in the fills MotiveWave retains (so not while it is open,
-and not when its entry or exit is missing), was traded on the exact contract of the chart the study is
-on (never from a continuous or stand-in chart), is not replay, has a position id, lasted no longer than
-24 hours, and ended within the study's `Backfill Trade Ticks (Days)` setting (default 30, 0 = off, for
-both windows). The holding window is loaded once the position ended at least five minutes ago; the
-minutes after the exit once they are over and five more minutes have passed, whole. Every holding window
+and not when its entry or exit is missing), is not replay, has a position id, lasted no longer than
+24 hours, and ended within the last 30 days (both windows). The holding window is loaded once the position
+ended at least five minutes ago; the minutes after the exit once they are over and five more minutes have
+passed, whole. Every holding window
 that is due is loaded before any minutes after an exit, so MAE / MFE never wait for them. The part of a
 window that another window already covered is not loaded again, so positions that overlap or were copied
 across accounts, and exits a few minutes apart, share their prints.
@@ -294,12 +314,12 @@ generated from bars). `<run>` is the run of the position's fills, the one in the
 
 A replay position is the replay fills that share a run, `account` and `native_position_id`. Its window
 is loaded when it is flat, its last fill is no later than the replay's current time, it lasted no longer
-than 24 hours, and it ended within `Backfill Trade Ticks (Days)` of the replay's current time (0 = off),
-while the study is on a replay chart of the exact contract with **Record Prices** on. The window is the
-same as live (first fill to last, five seconds either side) except that it never ends later than the
-replay's current time: nothing after the replay's present is asked for or written. The rest of a window
+than 24 hours, and it ended within 30 days of the replay's current time, while the study is on a replay
+chart whose active contract is the position's, by the same rule and from the same fills' instrument as
+live. The window is the same as live (first fill to last, five seconds either side) except that it never
+ends later than the replay's current time: nothing after the replay's present is asked for or written. The rest of a window
 cut that way is loaded once the replay has played past it. The minutes after a replay exit (study 0.3.8)
-are the same as live, the last fill to `After Exit (Minutes)` later, and are cut the same way: they are
+are the same as live, the last fill to 30 minutes later, and are cut the same way: they are
 loaded as the replay plays through them, a little at a time, never ahead of it.
 
 Each stretch is loaded once per run: the study remembers it in `<replay bridge file>.tick-backfill`

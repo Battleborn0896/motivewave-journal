@@ -25,7 +25,7 @@ public final class JournalPausedTickTest {
     String source = "motivewave-replay:" + run + ":ticks";
     capture.poll(); // baseline: flat
 
-    JournalTicks.record(liveGate, live, held("MESZ6", "motivewave-ticks", 4999), "live", false);
+    JournalTicks.record(liveGate, live, held("ES", "motivewave-ticks", 4999), "live", false); // a continuous chart
     JournalTicks.record(replayGate, replay, held("ESZ6", source, 5003), "replay", false);
     JournalTicks.record(replayGate, replay, held("ESZ6", source, 4998), "replay", false);
     capture.poll(); // no fills: no flat pre-roll is written
@@ -39,7 +39,7 @@ public final class JournalPausedTickTest {
 
     fills.add(fill("l-in", true, false));
     capture.poll();
-    assert liveGate.size() == 0 : "A proxy override must still match the actual chart instrument";
+    assert liveGate.size() == 0 : "A continuous chart's print is released by a fill of its active contract";
     fills.add(fill("l-out", false, false));
     capture.poll(System.nanoTime() + JournalAccountCapture.TRADED_LINGER_NANOS + 1_000_000_000L);
     // Removing a chart unregisters its gates; the poller cannot retain or write its old buffer.
@@ -57,7 +57,8 @@ public final class JournalPausedTickTest {
     assert replayTicks.get(0).contains("\"price\":5003.0") && replayTicks.get(1).contains("\"price\":4998.0");
     assert replayTicks.stream().allMatch(line -> line.contains(source) && line.contains("\"mode\":\"replay\""));
     var liveTicks = Files.readAllLines(file).stream().filter(line -> line.contains("\"type\":\"tick\"")).toList();
-    assert liveTicks.size() == 1 && liveTicks.getFirst().contains("\"symbol\":\"MESZ6\"");
+    assert liveTicks.size() == 1 && liveTicks.getFirst().contains("\"symbol\":\"ESZ6\"")
+        && liveTicks.getFirst().contains("\"price\":4999.0");
     assert capture.failure == null : capture.failure;
     try (var files = Files.walk(folder)) {
       for (var path : files.sorted(java.util.Comparator.reverseOrder()).toList()) Files.delete(path);
@@ -65,9 +66,10 @@ public final class JournalPausedTickTest {
     System.out.println("Paused tick capture passed: immediate drain after fills, live/replay isolation, aliases, unregister.");
   }
 
-  private static Held held(String symbol, String source, float price) {
-    return new Held(symbol, !symbol.equals("ESZ6"), source,
-        new JournalPriceEvents.Print(TIME + 1000, price, price - .25f, price + .25f, 1), "ESZ6", "ESZ6");
+  /** A print of a chart whose own symbol is instrumentSymbol and whose active contract is ESZ6. */
+  private static Held held(String instrumentSymbol, String source, float price) {
+    return new Held("ESZ6", source, new JournalPriceEvents.Print(TIME + 1000, price, price - .25f, price + .25f, 1),
+        instrumentSymbol, "ESZ6");
   }
   private static JournalNativeAccess.Fill fill(String id, boolean buy, boolean replay) {
     return new JournalNativeAccess.Fill(id, replay ? "REPLAY-1" : "paper", "ESZ6", buy, 1, 5000,

@@ -1,5 +1,6 @@
 package org.mwjournal.study;
 
+import com.motivewave.platform.sdk.common.Instrument;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -26,6 +27,9 @@ import java.util.function.Consumer;
  * bridge as motivewave-replay:<run>:history, one copy per replay run, and never reach past the replay's
  * current time: a replay must not be shown what happens next.
  *
+ * A chart backfills the trades of its active contract (applies), on a continuous chart as on the contract's
+ * own, and the ticks come from the fills' own instrument (history), never from the chart's.
+ *
  * It lives outside the study class so it can be exercised without a MotiveWave session: the tick
  * history and the writer are handed in. It waits and writes files, so it never runs on the tick thread.
  * One instance per study load and bridge file: what it asked for and got nothing back is only remembered here. */
@@ -36,8 +40,9 @@ final class JournalBackfill {
   static final long MAX_WINDOW_MILLIS = 24 * 3_600_000L;
   /** A position that traded this recently may not be over, and its ticks may not be in the history yet. */
   static final long SETTLE_MILLIS = 300_000;
+  /** The furthest back a pass reaches, whatever it is asked. */
   static final int MAX_DAYS = 365;
-  /** Finished windows older than any setting can ask for are forgotten, so the sidecar stays small. */
+  /** Finished windows older than any pass can ask for are forgotten, so the sidecar stays small. */
   static final long KEEP_MILLIS = (MAX_DAYS + 35) * 86_400_000L;
   static final int MAX_TICKS = 2_000_000, WINDOWS_PER_PASS = 4;
   /** Half the writer's queue: history waits above this, so live prints always find room. */
@@ -96,14 +101,25 @@ final class JournalBackfill {
   Ledger ledger() { return ledger; }
 
   /** Whether a chart loads history for the fills of one environment: only while the chart is in that
-   * environment (a chart that has not said whether it is replay counts as neither), and only for the
-   * chart's own contract. A continuous chart, or one standing in for the traded contract under another
-   * symbol, shows the prices of another instrument than the one the fills are in; those are never written
-   * as that contract's ticks. The same rule holds live and in replay. */
-  static boolean applies(String instrumentSymbol, String journalSymbol, boolean proxy, Boolean replayMode,
-                         boolean replay, int days) {
-    return days > 0 && replayMode != null && replayMode == replay && !proxy && instrumentSymbol != null
-        && !instrumentSymbol.isBlank() && instrumentSymbol.equals(journalSymbol);
+   * environment (a chart that has not said whether it is replay counts as neither), and only for the fills of
+   * its active contract (JournalPriceEvents.contract), the names live recording arms on too. So a continuous
+   * chart backfills its front contract's trades, as a chart of that contract does. The same rule holds live
+   * and in replay. */
+  static boolean applies(String contract, Boolean replayMode, boolean replay) {
+    return replayMode != null && replayMode == replay && contract != null && !contract.isBlank();
+  }
+
+  /** The tick history of one contract: the instrument of its fills, as the account snapshot has it (keyed by
+   * JournalNativeAccess.contract), never the chart's. A continuous chart shows another instrument, whose
+   * history can be back-adjusted; the fills' own is the contract's. With no instrument for the contract there
+   * is no history: its windows come back empty, and only a later study load asks for them again. */
+  static TickSource history(Map<String, Instrument> instruments, boolean replay, String contract) {
+    Instrument instrument = instruments == null ? null : instruments.get(JournalNativeAccess.contract(replay, contract));
+    return (start, end, each) -> {
+      // false, false is essential: true would manufacture ticks from OHLC and overstate precision.
+      if (instrument != null)
+        instrument.forEachTick(start, end, false, false, tick -> each.accept(JournalPriceEvents.Print.of(tick)));
+    };
   }
 
   private static final Comparator<Window> OLDEST = Comparator.comparingLong(Window::start).thenComparingLong(Window::end);
@@ -220,8 +236,8 @@ final class JournalBackfill {
    * Holding windows come first, so MAE / MFE never wait behind the minutes after an exit; those are loaded
    * once they and the settling time have passed, under the same provider.
    *
-   * days is the 'Backfill Trade Ticks (Days)' setting; 0 does nothing. minutes is 'After Exit (Minutes)';
-   * 0 loads holding windows only. */
+   * days: how far back positions are loaded (the study's JournalSettings.BACKFILL_DAYS); 0 does nothing.
+   * minutes: how long after each exit (JournalSettings.AFTER_EXIT_MINUTES); 0 loads holding windows only. */
   synchronized Result pass(String symbol, List<JournalNativeAccess.Fill> fills, long now, int days, int minutes,
                            TickSource source, Sink sink, BooleanSupplier cancelled) throws IOException {
     if (days <= 0 || symbol == null || fills == null) return Result.NONE;
@@ -316,7 +332,7 @@ final class JournalBackfill {
           count[3] = Math.max(count[3], print.time());
           return;
         }
-        put(sink, JournalPriceEvents.tick(symbol, print, false, provider, mode), cancelled, waits);
+        put(sink, JournalPriceEvents.tick(symbol, print, provider, mode), cancelled, waits);
         count[0]++;
       } catch (RuntimeException exc) {
         stopped[0] = exc;
@@ -419,7 +435,7 @@ final class JournalBackfill {
    * chart writing to it, and kept in a small file beside it so that a restart does not load them again.
    * The file holds symbols, replay run ids and times only.
    *
-   * The live bridge's ledger files stretches by contract, and forgets those older than any setting can ask
+   * The live bridge's ledger files stretches by contract, and forgets those older than any pass can ask
    * for. The replay bridge's files them by replay run and contract (replayKey), since every run has its
    * own copy; their times are the replay's, often years ago, so a run is instead forgotten once it has not
    * been written to for as long. */

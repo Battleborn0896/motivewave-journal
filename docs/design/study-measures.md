@@ -326,6 +326,7 @@ Sizes:
 - All 12 go: File, Record Ticks, After Exit (Minutes), Symbol, Proxy Prices, Capture Fills, 1m Bars (Days), Ticks (Minutes), End (UTC), Backfill Trade Ticks (Days), Record Prices, Real Tick Data.
 - Saved values of the old keys are ignored.
 - The dialog shows one line: "Add the study to the chart you trade. Nothing to set."
+- Done in study 0.3.10: the settings are gone and their defaults are fixed constants in `JournalSettings` (`BAR_DAYS` 3, `BACKFILL_DAYS` 30, `AFTER_EXIT_MINUTES` 30); the phases below replace the 3-day bars constant with section 3.7's windows.
 
 ---
 
