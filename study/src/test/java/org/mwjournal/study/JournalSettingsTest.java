@@ -12,8 +12,10 @@ import org.mwjournal.study.JournalSettings.Setting;
 import org.mwjournal.study.JournalTicks.Held;
 
 /** The settings dialog: nothing to set on the first tab, every setting of 0.3.2 under Advanced with its
- * key unchanged and its default too, apart from Real Tick Data, now on. Those defaults alone capture fills,
- * record every live and replay print as real ticks, and backfill replay trades with real ticks. */
+ * key unchanged and its default too, apart from Real Tick Data, now on, and Record Ticks, now During Trades
+ * Only, each under a renamed key. Those defaults alone capture fills, record the prints of every trade live
+ * and in replay as real ticks, and backfill live and replay trades, and the minutes after each exit, with
+ * real ticks from MotiveWave's history. */
 public final class JournalSettingsTest {
   private JournalSettingsTest() {}
   private static final String FILE = "/fixture/bridge/motivewave.ndjson";
@@ -33,10 +35,12 @@ public final class JournalSettingsTest {
     assert first.getFirst().label().contains("Add the study to the chart you trade, contract or continuous");
 
     // Every key of study 0.3.2, once each and all under Advanced, so a saved chart keeps its choices, except
-    // realReplayTicks, renamed V2 with its default now on, so that saved charts take the new default too.
+    // realReplayTicks, renamed V2 with its default now on, and recordTicks, renamed V3 (study 0.3.8) with its
+    // default now During Trades Only, so that saved charts take the new defaults too. After Exit keeps its
+    // key and its 30 minutes: they are the same minutes, now loaded from history instead of recorded.
     var expected = new LinkedHashMap<String, Object>();
     expected.put("journalFile", FILE);
-    expected.put("recordTicksV2", "ALWAYS");
+    expected.put("recordTicksV3", "POSITION");
     expected.put("postExitMinutes", 30);
     expected.put("journalSymbol", "");
     expected.put("priceProxy", false);
@@ -52,8 +56,9 @@ public final class JournalSettingsTest {
     for (Setting input : inputs) assert stored.put(input.key(), input.fallback()) == null : "Twice: " + input.key();
     assert stored.equals(expected) : stored;
     assert settings(layout.get(1)).equals(inputs) : "Everything is under Advanced";
-    assert JournalSettings.FILE.equals("journalFile") && JournalSettings.RECORD.equals("recordTicksV2")
-        && JournalSettings.REAL_REPLAY.equals("realReplayTicksV2") && JournalSettings.BACKFILL.equals("backfillDays");
+    assert JournalSettings.FILE.equals("journalFile") && JournalSettings.RECORD.equals("recordTicksV3")
+        && JournalSettings.REAL_REPLAY.equals("realReplayTicksV2") && JournalSettings.BACKFILL.equals("backfillDays")
+        && JournalSettings.POST_EXIT.equals("postExitMinutes");
 
     var byKey = new LinkedHashMap<String, Setting>();
     inputs.forEach(input -> byKey.put(input.key(), input));
@@ -66,8 +71,18 @@ public final class JournalSettingsTest {
     }
     assert byKey.get(JournalSettings.REAL_REPLAY).label().equals("Real Tick Data");
     assert byKey.get(JournalSettings.RECORD).choices().stream().map(JournalSettings.Choice::value).toList()
-        .equals(List.of(JournalTicks.ALWAYS, JournalTicks.IN_POSITION, JournalTicks.NEVER));
-    assert byKey.get(JournalSettings.RECORD).choices().getFirst().label().equals("Always While Study Runs");
+        .equals(List.of(JournalTicks.IN_POSITION, JournalTicks.ALWAYS, JournalTicks.NEVER)) : "The default first";
+    assert byKey.get(JournalSettings.RECORD).choices().stream().map(JournalSettings.Choice::label).toList()
+        .equals(List.of("During Trades Only", "Always While Study Runs", "Never"));
+    // After Exit is part of the backfill now, so it sits beside it, and both tooltips say so.
+    assert inputs.indexOf(byKey.get(JournalSettings.POST_EXIT)) == inputs.indexOf(byKey.get(JournalSettings.BACKFILL)) + 1;
+    assert byKey.get(JournalSettings.POST_EXIT).label().equals("After Exit (Minutes)")
+        && byKey.get(JournalSettings.POST_EXIT).tip().contains("tick history, not recorded live")
+        && byKey.get(JournalSettings.BACKFILL).tip().contains("After Exit")
+        && byKey.get(JournalSettings.RECORD).tip().contains("The minutes after the exit come from MotiveWave's tick history");
+    // A continuous chart loads no tick history, so both say where those minutes come from there.
+    assert byKey.get(JournalSettings.POST_EXIT).tip().contains("on a chart of the exact contract only")
+        && byKey.get(JournalSettings.RECORD).tip().contains("on a continuous chart, choose Always While Study Runs");
     // Bounds unchanged.
     assert bounds(byKey, JournalSettings.DAYS).equals(List.of(0, 14)) && bounds(byKey, JournalSettings.TICKS).equals(List.of(0, 120));
     assert bounds(byKey, JournalSettings.BACKFILL).equals(List.of(0, JournalBackfill.MAX_DAYS))
@@ -76,18 +91,20 @@ public final class JournalSettingsTest {
     assert JournalSettings.DAYS_DEFAULT == 3 && JournalSettings.TICKS_DEFAULT == 0 && JournalSettings.BACKFILL_DEFAULT == 30
         && JournalSettings.POST_EXIT_DEFAULT == 30 && JournalSettings.ACCOUNTS_DEFAULT && JournalSettings.REPLAY_DEFAULT
         && JournalSettings.REAL_REPLAY_DEFAULT && !JournalSettings.PROXY_DEFAULT
-        && JournalSettings.RECORD_DEFAULT.equals(JournalTicks.ALWAYS);
+        && JournalSettings.RECORD_DEFAULT.equals(JournalTicks.IN_POSITION);
 
-    defaultsAloneRecordEverything(byKey);
+    defaultsRecordTrades(byKey);
     System.out.println("Journal settings passed: nothing to set on the first tab, every 0.3.2 key under Advanced, "
-        + "short Title Case labels with tooltips, and the defaults capture fills, record every live print and every "
-        + "replay print as real ticks (simulated only with Real Tick Data off), and backfill replay trades.");
+        + "short Title Case labels with tooltips, and the defaults capture fills, record live and replay prints "
+        + "during trades only, replay prints as real ticks (simulated only with Real Tick Data off), and backfill "
+        + "live and replay trades and the 30 minutes after each exit from MotiveWave's history.");
   }
 
-  /** A chart nobody has changed: fills are captured, every print is written live and in replay whether or
-   * not a position is open, replay prints as real ticks and neither marked proxy, on a continuous chart as
-   * on the contract's own, and replay trades are backfilled on a replay chart of the contract. */
-  private static void defaultsAloneRecordEverything(Map<String, Setting> byKey) throws Exception {
+  /** A chart nobody has changed: fills are captured; no print is written while flat, live or in replay, and
+   * once a trade is open its prints are, with the few seconds before the entry; replay prints as real ticks
+   * and neither marked proxy, on a continuous chart as on the contract's own; live and replay trades are
+   * backfilled on a chart of the contract, and so are the 30 minutes after each exit. */
+  private static void defaultsRecordTrades(Map<String, Setting> byKey) throws Exception {
     assert (Boolean) byKey.get(JournalSettings.ACCOUNTS).fallback() : "Fills captured";
     assert (Boolean) byKey.get(JournalSettings.REPLAY).fallback() : "Replay prices recorded";
     String record = (String) byKey.get(JournalSettings.RECORD).fallback();
@@ -97,6 +114,12 @@ public final class JournalSettingsTest {
     String journalSymbol = symbol.isBlank() ? "NQZ6" : symbol;
     assert JournalBackfill.applies("NQZ6", journalSymbol, proxy, true, true, days) : "Replay trades backfilled";
     assert JournalBackfill.applies("NQZ6", journalSymbol, proxy, false, false, days) : "Live trades backfilled";
+    // And the minutes after each exit with them, from the same tick history.
+    int minutes = (Integer) byKey.get(JournalSettings.POST_EXIT).fallback();
+    long time = 1_609_772_400_000L;
+    var trade = List.of(fill("in", true, time, false), fill("out", false, time + 60_000, false));
+    assert JournalBackfill.afterExit(trade, journalSymbol, 0, Long.MAX_VALUE, minutes)
+        .equals(List.of(new JournalBackfill.Window(time + 60_000, time + 60_000 + 30 * 60_000))) : "30 minutes after the exit";
 
     // Replay prints are real ticks unless the user says the replay is generated from bars.
     boolean realReplay = (Boolean) byKey.get(JournalSettings.REAL_REPLAY).fallback();
@@ -110,15 +133,22 @@ public final class JournalSettingsTest {
 
     var folder = Files.createTempDirectory("mwj-settings-fixture-");
     var file = folder.resolve("motivewave.ndjson");
+    var fills = new ArrayList<JournalNativeAccess.Fill>();
     var capture = JournalAccountCapture.fixture(file,
-        () -> new JournalNativeAccess.Snapshot("workspace", List.of(), List.of()));
-    capture.poll(); // the book is known to be flat: a position-gated setting would skip every print
+        () -> new JournalNativeAccess.Snapshot("workspace", List.copyOf(fills), List.of()));
+    capture.replayRun("NQZ6", time);
+    capture.poll(); // the book is known to be flat
     var writer = JournalEventWriter.acquire(file);
     var replayWriter = JournalEventWriter.acquire(JournalAccountCapture.replayFile(file));
     var gate = new TickGate<Held>();
     var replayGate = new TickGate<Held>();
-    long time = 1_609_772_400_000L;
-    for (int n = 0; n < 5; n++) {
+    for (int n = 0; n < 6; n++) {
+      if (n == 5) {
+        assert gate.size() == 5 && replayGate.size() == 5 : "Flat: held back as the pre-roll, not written";
+        fills.add(fill("live-in", true, time + 1_000, false)); // a trade opens, live and in replay
+        fills.add(fill("replay-in", true, time + 1_000, true));
+        capture.poll();
+      }
       var print = new JournalPriceEvents.Print(time + n * 250L, 13000 + n, 12999.75f + n, 13000.25f + n, 1);
       boolean marked = JournalPriceEvents.proxy(continuous, proxy, false);
       var live = new Held("NQZ6", marked, "motivewave-ticks", print, "NQ", "NQZ6");
@@ -131,7 +161,8 @@ public final class JournalSettingsTest {
     capture.close();
     var liveTicks = ticks(Files.readAllLines(file));
     var replayTicks = ticks(Files.readAllLines(JournalAccountCapture.replayFile(file)));
-    assert liveTicks.size() == 5 && replayTicks.size() == 5 : "Every print, flat or not: " + liveTicks.size() + " " + replayTicks.size();
+    assert liveTicks.size() == 6 && replayTicks.size() == 6 && gate.size() == 0 && replayGate.size() == 0
+        : "The trade's print and the pre-roll before it: " + liveTicks.size() + " " + replayTicks.size();
     assert replayTicks.stream().allMatch(t -> t.contains("\"provider\":\"motivewave-replay:run-1:ticks\"")) : replayTicks;
     assert liveTicks.stream().allMatch(t -> t.endsWith(",\"proxy\":false}"))
         && replayTicks.stream().allMatch(t -> t.endsWith(",\"proxy\":false}")) : "Never proxy by default";
@@ -142,6 +173,11 @@ public final class JournalSettingsTest {
 
   private static List<String> ticks(List<String> lines) {
     return lines.stream().filter(line -> line.contains("\"type\":\"tick\"")).toList();
+  }
+
+  private static JournalNativeAccess.Fill fill(String id, boolean buy, long time, boolean replay) {
+    return new JournalNativeAccess.Fill(id, replay ? "REPLAY-1" : "paper", "NQZ6", buy, 1, 13000, time, 2, 20, "USD",
+        "order-" + id, replay ? "replay-position" : "position", buy, replay);
   }
 
   private static List<Setting> settings(JournalSettings.Tab tab) {

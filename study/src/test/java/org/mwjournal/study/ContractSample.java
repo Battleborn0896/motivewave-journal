@@ -24,7 +24,8 @@ import static org.mwjournal.study.JournalTicks.IN_POSITION;
  *   the long's own side, so it is never linked and never written.
  * NQZ6, a past trade MotiveWave already held when the study started, an hour earlier: long 1 at 21000.25,
  *   out a minute later at 21010.5. No live prints; its five ticks come from the history backfill
- *   (motivewave-ticks:history), low 20995.5 and high 21014.
+ *   (motivewave-ticks:history), low 20995.5 and high 21014, and so does one more half a minute after the
+ *   exit, at 21030, from the minutes after it (After Exit).
  * MNQZ6, another past trade, half an hour earlier: MotiveWave stored no price for the entry (price 0,
  *   price_known false, the 'platform reported no fill price' label); the exit is at 21020.
  * Because of that one fill every heartbeat is 'connected' with warnings '1 fill with no fill price'.
@@ -110,25 +111,27 @@ public final class ContractSample {
     if (capture.failure != null) throw new IllegalStateException(capture.failure);
 
     // The past NQ trade was not recorded live: its ticks are asked from the tick history, as the study
-    // does on a chart of that contract. The history here answers with a little more than the window.
+    // does on a chart of that contract, and then the minutes after its exit. The history here answers each
+    // with every print it has; only those inside the window asked for are written.
     var backfill = new JournalBackfill(new JournalBackfill.Ledger(file));
-    var loaded = backfill.pass("NQZ6", capture.fills(), LIVE + 600_000, 30, (start, end, each) -> {
-      each.accept(print(past - 8_000, 20990));
-      each.accept(print(past - 3_000, 21000));
-      each.accept(print(past + 5_000, 20995.5f));
-      each.accept(print(past + 30_000, 21014));
-      each.accept(print(past + 59_000, 21010.75f));
-      each.accept(print(past + 63_000, 21011));
-      each.accept(print(past + 90_000, 21030));
-    }, event -> writer.offerBelow(event, JournalBackfill.HIGH_WATER), () -> false);
-    if (loaded.done() != 1 || loaded.ticks() != 5) throw new IllegalStateException("History backfill: " + loaded);
+    var loaded = backfill.pass("NQZ6", capture.fills(), LIVE + 600_000, 30, JournalSettings.POST_EXIT_DEFAULT,
+        (start, end, each) -> {
+          each.accept(print(past - 8_000, 20990));
+          each.accept(print(past - 3_000, 21000));
+          each.accept(print(past + 5_000, 20995.5f));
+          each.accept(print(past + 30_000, 21014));
+          each.accept(print(past + 59_000, 21010.75f));
+          each.accept(print(past + 63_000, 21011));
+          each.accept(print(past + 90_000, 21030)); // half a minute after the exit: After Exit
+        }, event -> writer.offerBelow(event, JournalBackfill.HIGH_WATER), () -> false);
+    if (loaded.done() != 2 || loaded.ticks() != 6) throw new IllegalStateException("History backfill: " + loaded);
 
     // The replay trade is flat: its real ticks are asked from the tick history for its own run, up to the
     // replay's present and no further. The history answers with more than that, before and after.
     long clock = REPLAY + 103_000;
     var replayBackfill = new JournalBackfill(new JournalBackfill.Ledger(replayFile, true));
     var replayed = replayBackfill.replayPass("ESZ6", capture.replayFills(), clock, System.currentTimeMillis(), 30,
-        (start, end, each) -> {
+        JournalSettings.POST_EXIT_DEFAULT, (start, end, each) -> {
           each.accept(print(REPLAY + 2_000, 4810));
           each.accept(print(REPLAY + 8_000, 4799));
           each.accept(print(REPLAY + 25_000, 4801.5f));

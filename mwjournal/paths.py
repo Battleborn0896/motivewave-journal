@@ -28,8 +28,10 @@ VERSION = '0.4.13'
 # user whose study reports an older version to install this one: studies before 0.3.3 receive no live or
 # replay ticks, before 0.3.4 a replay's prints are labelled simulated unless Real Tick Data is ticked, and
 # before 0.3.6 no stop order is ever recorded (each order's instrument was read as the wrong type), so trades
-# have no R unless the stop is typed. From 0.3.6 on a new study takes over from the old one without a restart.
-STUDY_VERSION = '0.3.7'
+# have no R unless the stop is typed, and before 0.3.8 a chart records every print all day by default (about
+# 540,000 an NQ day); 0.3.8 records each trade's and loads the minutes after its exit from MotiveWave's history.
+# From 0.3.6 on a new study takes over from the old one without a restart.
+STUDY_VERSION = '0.3.8'
 STUDY_CONNECTOR = 'motivewave-journal-study'
 ENV = 'MWJ_HOME'
 DATASETS = ('live', 'replay')

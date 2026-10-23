@@ -7,30 +7,25 @@ final class JournalTicks {
   /** The stored values of the 'Record Ticks' setting. */
   static final String IN_POSITION = "POSITION", ALWAYS = "ALWAYS", NEVER = "NEVER";
 
-  /** One print waiting at a gate, with everything it will be written under. */
+  /** One print waiting at a gate, with everything it will be written under, and the names a position in
+   * its instrument can be under (see armed). */
   record Held(String symbol, boolean proxy, String source, JournalPriceEvents.Print print,
-              String instrumentSymbol, String activeSymbol, int postExitMinutes) {
+              String instrumentSymbol, String activeSymbol) {
     Held(String symbol, boolean proxy, String source, JournalPriceEvents.Print print) {
-      this(symbol, proxy, source, print, symbol, symbol, 0);
-    }
-    Held(String symbol, boolean proxy, String source, JournalPriceEvents.Print print,
-         String instrumentSymbol, String activeSymbol) {
-      this(symbol, proxy, source, print, instrumentSymbol, activeSymbol, 0);
+      this(symbol, proxy, source, print, symbol, symbol);
     }
   }
 
   static boolean armed(JournalAccountCapture observer, String record, boolean replay, Held held) {
-    if (observer == null || !IN_POSITION.equals(record)) return true;
-    long now = System.nanoTime();
-    return observer.recording(held.instrumentSymbol(), replay, held.print().time(), held.postExitMinutes(), now)
-        || observer.recording(held.activeSymbol(), replay, held.print().time(), held.postExitMinutes(), now)
-        || observer.recording(held.symbol(), replay, held.print().time(), held.postExitMinutes(), now);
+    return armed(observer, record, replay, held.instrumentSymbol(), held.activeSymbol(), held.symbol());
   }
 
   private JournalTicks() {}
 
   /** Whether prints are written right now. Only a book known to be flat skips them: 'Always', a stored
-   * value this version does not know, and fill capture switched off or unable to start all record.
+   * value this version does not know, and fill capture switched off or unable to start all record. A book
+   * is flat a few seconds after the exit (JournalAccountCapture.active); the minutes after it are loaded
+   * from MotiveWave's tick history instead (JournalBackfill), never recorded here.
    *
    * Fills carry their instrument's own symbol. The chart can show that instrument under a continuous
    * alias, and a proxy chart names the traded contract in the symbol setting, so every name the fills
@@ -56,9 +51,8 @@ final class JournalTicks {
    * prices already observed. The same alias checks apply as in the chart callback. */
   static void flush(TickGate<Held> gate, JournalEventWriter target, JournalAccountCapture observer,
                     boolean replay, long nowNanos) {
-    for (Held due : gate.drainIf(held -> observer.recording(held.instrumentSymbol(), replay, held.print().time(), held.postExitMinutes(), nowNanos)
-        || observer.recording(held.activeSymbol(), replay, held.print().time(), held.postExitMinutes(), nowNanos)
-        || observer.recording(held.symbol(), replay, held.print().time(), held.postExitMinutes(), nowNanos)))
+    for (Held due : gate.drainIf(held -> observer.active(held.instrumentSymbol(), replay, nowNanos)
+        || observer.active(held.activeSymbol(), replay, nowNanos) || observer.active(held.symbol(), replay, nowNanos)))
       target.offer(JournalPriceEvents.tick(due.symbol(), due.print(), due.proxy(), due.source(),
           replay ? "replay" : "live"), due.source(), due.print().time());
   }

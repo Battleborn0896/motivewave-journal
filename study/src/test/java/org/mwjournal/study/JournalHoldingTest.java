@@ -151,14 +151,8 @@ public final class JournalHoldingTest {
     scalper.poll(clock += second);
     assert !scalper.holding("ESZ6", false, clock) && scalper.active("ESZ6", false, clock) : "The tail after an exit";
     scalper.poll(clock += JournalAccountCapture.TRADED_LINGER_NANOS + second);
-    assert !scalper.active("ESZ6", false, clock);
-    long exitTime = book.getLast().time();
-    assert scalper.recording("ESZ6", false, exitTime + 15 * 60000, 30, clock)
-        : "Post-exit recording uses market time after wall-clock linger has expired";
-    assert !scalper.recording("ESZ6", false, exitTime + 31 * 60000, 30, clock);
-    assert !scalper.recording("ESZ6", false, exitTime - 1, 30, clock);
-    assert !scalper.recording("ESZ6", true, exitTime + 1000, 30, clock);
-    assert !scalper.recording(null, false, exitTime + 1000, 30, clock);
+    assert !scalper.active("ESZ6", false, clock)
+        : "Quiet after the short tail: the minutes after an exit come from the tick history, not from here";
     // A fill that arrives while the reader is down is noticed by the first poll that works again.
     brokenToo.set(new NoSuchMethodException("Fixture: outage"));
     scalper.poll(clock += second);

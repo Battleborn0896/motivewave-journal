@@ -4,8 +4,8 @@ import java.util.List;
 
 /** The study's settings dialog, as data. A user adds the study to a chart and changes nothing: the first
  * tab only says so, and every setting is under Advanced. Each key is the one earlier versions stored, so a
- * chart saved by them keeps its choices, except where a key ends in V2: there the default changed, and a
- * chart saved with the old default would otherwise keep it.
+ * chart saved by them keeps its choices, except where a key ends in V2 or V3: there the default changed, and
+ * a chart saved with the old default would otherwise keep it.
  *
  * Pure: no MotiveWave types. The SDK's dialog classes need JavaFX, which a test JVM does not have, so the
  * layout is kept here where a test can read it, and MotiveWaveJournal.describe turns it into descriptors. */
@@ -13,18 +13,21 @@ final class JournalSettings {
   static final String FILE = "journalFile", SYMBOL = "journalSymbol", PROXY = "priceProxy";
   static final String DAYS = "historyDays", END = "historyEnd", TICKS = "historyTickMinutes", BACKFILL = "backfillDays";
   static final String ACCOUNTS = "nativeAccounts", REPLAY = "captureReplay";
-  // v2 intentionally resets the old position-gated preference: continuous chart capture is the product
-  // default, so 5/15/30-minute runner windows exist without another switch.
-  static final String RECORD = "recordTicksV2";
+  // v3 (study 0.3.8): prints are recorded during trades only by default, and the minutes after an exit are
+  // loaded from MotiveWave's tick history (After Exit). Under v2, recording every print while the study ran,
+  // a chart open all day wrote about 540,000 NQ prints a day; the new key gives every saved chart the new default.
+  static final String RECORD = "recordTicksV3";
   // v2 (study 0.3.4): replay prints count as real ticks by default. Under the old key, every chart that
   // had the study kept the old default, off, and its replay trades showed no MAE / MFE.
   static final String REAL_REPLAY = "realReplayTicksV2";
+  // The same key as before 0.3.8, when it was a live recording tail: the minutes are the same minutes, now
+  // loaded from history, and the default is unchanged.
   static final String POST_EXIT = "postExitMinutes";
 
   static final int DAYS_DEFAULT = 3, DAYS_MAX = 14, TICKS_DEFAULT = 0, TICKS_MAX = 120;
   static final int BACKFILL_DEFAULT = 30, POST_EXIT_DEFAULT = 30, POST_EXIT_MAX = 120;
   static final boolean ACCOUNTS_DEFAULT = true, REPLAY_DEFAULT = true, REAL_REPLAY_DEFAULT = true, PROXY_DEFAULT = false;
-  static final String RECORD_DEFAULT = JournalTicks.ALWAYS;
+  static final String RECORD_DEFAULT = JournalTicks.IN_POSITION;
 
   /** NOTE is a line of text with no value; the others are inputs stored under their key. */
   enum Kind { NOTE, TEXT, WHOLE, SWITCH, CHOICE }
@@ -48,19 +51,17 @@ final class JournalSettings {
             + "is where the app looks, so change it only when the app has been pointed somewhere else as well."))));
     var prices = new Group("Prices", List.of(
         List.of(choice(RECORD, "Record Ticks", RECORD_DEFAULT, List.of(
+                new Choice("During Trades Only", JournalTicks.IN_POSITION),
                 new Choice("Always While Study Runs", JournalTicks.ALWAYS),
-                new Choice("Trade + After Exit Only", JournalTicks.IN_POSITION),
                 new Choice("Never", JournalTicks.NEVER)),
-                "Always While Study Runs (default): every trade print delivered to this chart, live and replay, "
-                + "for complete post-exit runner windows; the file gets larger. Trade + After Exit Only: a few "
-                + "seconds before entry, the whole position, and the After Exit window. Never: no ticks, so in replay the "
-                + "journal has no replay time and an open replay trade's chart stops at its entry. One-minute "
-                + "bars are written in every mode. Trade + After Exit Only relies on Capture Fills: when fills cannot "
-                + "be read, every trade is recorded."),
-            whole(POST_EXIT, "After Exit (Minutes)", POST_EXIT_DEFAULT, 0, POST_EXIT_MAX,
-                "With Trade + After Exit Only: keep recording this instrument after exit for runner analysis. Uses "
-                + "market time in live and replay, so replay speed does not shorten the window. 0 = only the short "
-                + "fill-detection tail. No orders are kept open or changed; this records prices only.")),
+                "During Trades Only (default): every trade print from a few seconds before the entry to a few "
+                + "seconds after the exit, live and replay. The minutes after the exit come from MotiveWave's tick "
+                + "history instead (After Exit, under History), which needs a chart of the exact contract: on a "
+                + "continuous chart, choose Always While Study Runs to keep them. Always While Study Runs: every "
+                + "print delivered to this chart, all day; the file gets far larger. Never: no prints, so in replay "
+                + "the journal has no replay time and an open replay trade's chart stops at its entry. One-minute "
+                + "bars are written in every mode. During Trades Only relies on Capture Fills: when fills cannot be "
+                + "read, every print is recorded.")),
         List.of(text(SYMBOL, "Symbol", "", 110, "The symbol written with each price. Blank uses the chart's active "
                 + "contract. Set it only when this chart stands in for the contract that is traded, and name that "
                 + "contract. Trade tick backfill is then off for this chart."),
@@ -80,11 +81,16 @@ final class JournalSettings {
         List.of(text(END, "End (UTC)", "", 190, "Loads history up to this moment instead of the end of the chart, "
             + "for example 2026-01-05T21:00:00Z. Blank = the end of the loaded chart.")),
         List.of(whole(BACKFILL, "Backfill Trade Ticks (Days)", BACKFILL_DEFAULT, 0, JournalBackfill.MAX_DAYS,
-            "Loads the real trades of this chart's contract for the holding time of every closed position, so "
-            + "trades get tick-based MAE and MFE. Live: positions closed in the last N days, each loaded once, in "
-            + "the background. Replay: each replay trade once it is flat, closed in the N days before the replay's "
-            + "current time, and never past that time. "
-            + "0 = off. Needs Capture Fills, a chart of the exact contract, and tick history from the data service."))));
+                "Loads the real trades of this chart's contract for the holding time of every closed position, so "
+                + "trades get tick-based MAE and MFE, and for the After Exit minutes that follow. Live: positions "
+                + "closed in the last N days, each loaded once, in the background. Replay: each replay trade once it "
+                + "is flat, closed in the N days before the replay's current time, and never past that time. "
+                + "0 = off. Needs Capture Fills, a chart of the exact contract, and tick history from the data service."),
+            whole(POST_EXIT, "After Exit (Minutes)", POST_EXIT_DEFAULT, 0, POST_EXIT_MAX,
+                "Minutes of real trades after each exit, for the runner analysis, loaded from the same tick history, "
+                + "not recorded live, so on a chart of the exact contract only. A longer runner window in the app "
+                + "needs more. Live: once those minutes and five more have passed. Replay: as the replay plays "
+                + "through them, never past its current time. 0 = none. Prices only: no order is kept open or changed."))));
     var replay = new Group("Replay", List.of(List.of(
         toggle(REPLAY, "Record Prices", REPLAY_DEFAULT, "Records replay prices, and backfills replay trades with "
             + "real ticks, in a file of their own beside the live one."),
