@@ -253,8 +253,9 @@ def top_row(journal, every, open_rows, rows=None):
         session.menus(journal, every)
         if rows is None:
             return []
-        with st.popover('Filters', help='Narrow the list by market, date, account, tag, playbook or rating. The '
-                                        'saved filter here applies to every page.'):
+        with st.popover(preferences.filters_label(journal, rows), key=common.key(journal, 'filters-menu'),
+                        help='Narrow the list by market, date, account, tag, playbook or rating; the saved filter '
+                             'here applies to every page.'):
             shown = preferences.filter_menu(journal, rows)
         with st.popover('Options', help='Chart settings, and merging or splitting trades.'):
             options_menu(journal, rows)

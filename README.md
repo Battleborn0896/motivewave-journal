@@ -401,9 +401,10 @@ made available on days is offered there too. Every trade opened that day wears t
 the trade's chips, Stats → Compare and the filters; a choice made on the trade in the same one-choice category
 wins.
 
-**MAE / MFE Units** is on **Settings**: choose account currency, points, ticks or R. It changes only how
-MAE / MFE are shown. The preference is remembered independently for Live and Replay, and applies to the
-trade list, detail cards, excursion plots and runner views. Actual net P&L is unchanged.
+**MAE / MFE Units** is on **Settings**: choose account currency, points, ticks or R. It changes how MAE / MFE
+are shown, and the unit MAE and MFE filter limits are in. The preference is remembered independently for Live and
+Replay, and applies to the trade list, detail cards, excursion plots, runner views and filters. Actual net P&L is
+unchanged.
 
 MAE means the same in every unit: how far the position you held went against you, from its average entry
 (MFE: for you). The moment counted is the one where that price move times the contracts you held was
@@ -435,9 +436,19 @@ Stats uses in-place tabs: **Overview** for cumulative results, **Compare** for t
 Rating included), playbook, market and time comparisons, **MAE / MFE** for price/position excursions, **Runners** for the separate
 post-exit hypothesis, and **Dashboards**, always last. Tables lead with sample count and average net result per trade. Comparisons
 are descriptions of your recorded sample, not proof of an edge. **Customize** saves the
-visible tabs and their order per environment (Dashboards always stays). Filters support all/any selected tags, excluded
-tags, direction, Rating and playbook combinations. Required historical tag aliases still
-resolve after a rename; unknown required names match nothing, not everything.
+visible tabs and their order per environment (Dashboards always stays).
+
+**Filters**, on Trades and on Stats, is one menu with one set of filters: Markets and Entry Dates, then under
+**More Filters** Accounts, Exact Contracts, Tags with **Tag Match** (all or any selected), Exclude Tags, Playbook,
+Trade Status, Directions, Rating and **Number Ranges** (Net P&L, R, MAE, MFE, Contracts and Minutes held, and Tag
+Score once a tag has a score). MAE and MFE limits are in your MAE / MFE Units, so a limit of 2 means 2 points
+while you show points and $2 while you show dollars; a saved limit is read in the unit chosen now. Trades and
+Stats share these filters, and the button says how many are on: **Filters · 2**, or just **Filters** when none
+is. **Clear Filters** empties them and goes back to All trades. **Saved Filter on Every Page** chooses a saved
+filter for every page (it counts as one filter); while one is chosen, **Rename** and **Delete** sit beside it. A
+renamed filter stays in use; deleting it goes back to All trades. Type a name under the filters and press Enter
+or **Save Filter** to save what is shown, the saved filter in use together with the filters above. Required
+historical tag aliases still resolve after a rename; unknown required names match nothing, not everything.
 
 **Settings → Tags, Playbooks & Checklists** edits names, colors, group membership, order and availability on
 trades/days, and deletes a tag or category that nothing uses. Stable tag IDs and aliases preserve historical associations when renamed. Retirement
@@ -497,10 +508,12 @@ no rollover price gaps are silently adjusted, and one expiry's ticks never subst
 and reorders widgets. Summary, equity, drawdown, calendar, comparisons, distributions, MAE/MFE,
 tag score, Rating, radar, trades and custom-statistics widgets are independently configurable.
 The default uses two independently stacked columns so the calendar doesn't push the equity curve
-below an unnecessarily tall row. Global saved filters, page filters and widget filters intersect;
-they never modify captured trades. Saved tag rules use stable identities. Calendar buttons open
-the exact day's Report Card on Trades. **Settings** sets the Time Zone the calendar's days follow, and hides
-weekends under Advanced.
+below an unnecessarily tall row. **Page Filters** (on top of the Stats filters) and each widget's filters, under
+Customize Page, are the same editor as the Filters menu, with the same words, and save with their own button;
+**Page Filters · 3** says how many the page has. Saved filters, page filters and widget filters intersect;
+they never change recorded trades. Saved tag rules use stable identities and show a tag's name now. Calendar
+buttons open the exact day's Report Card on Trades. **Settings** sets the Time Zone the calendar's days follow,
+and hides weekends under Advanced.
 
 A **Rating** widget charts each trade's stars, 1 to 5. Tag scores are signed values configured on each tag; a
 trade's score is the sum of its selected tag scores, and a widget can restrict the contributing tags. The Tag

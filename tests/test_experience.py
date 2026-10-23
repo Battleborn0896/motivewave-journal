@@ -44,7 +44,7 @@ def test_only_recorded_ticks_measure_in_every_unit_and_raw_estimates_remain_in_b
     assert 'excursion_policy' not in journal.display_settings()           # there is no accuracy to choose
     rows = common.rows_for(journal)
     assert rows[0]['mfe'] is None and rows[0]['mae'] is None
-    assert common.display_excursion_rows(journal, rows)[0]['display_mfe'] is None
+    assert rows[0]['display_mfe'] is None and rows[0]['display_mae'] is None
     assert common.best_display_metric(journal, trade) == {}
     backup = home / 'snapshot.sqlite3'
     backup.write_bytes(journal.backup())

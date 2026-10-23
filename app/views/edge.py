@@ -116,9 +116,10 @@ def render(journal, rows) -> None:
     """`rows` have passed the saved filter."""
     all_closed = [r for r in rows if r['status'] == 'closed' and r['net'] is not None]
     heading, filter_col, custom_col = st.columns([5, 1, 1], vertical_alignment='center')
-    with filter_col.popover('Filters', width='stretch',
-                            help='Narrow the stats by market, date, account, tag, playbook or rating. The saved '
-                                 'filter here applies to every page.'):
+    with filter_col.popover(preferences.filters_label(journal, rows), width='stretch',
+                            key=common.key(journal, 'filters-menu'),
+                            help='Narrow the stats by market, date, account, tag, playbook or rating; the saved filter '
+                                 'here applies to every page.'):
         rows = preferences.filter_menu(journal, rows)
     with custom_col.popover('Customize', width='stretch', help='Choose which tabs Stats shows, and their order.'):
         customize(journal)
@@ -317,7 +318,7 @@ def excursion(journal, closed):
     unit = common.excursion_unit(journal)
     currency = closed[0]['currency']
     st.markdown('### How Far Did Trades Move?', help=units.description(unit))
-    shown = pd.DataFrame(common.display_excursion_rows(journal, closed))
+    shown = pd.DataFrame(closed)
     measured = shown[shown.display_mfe.notna() & shown.display_mae.notna()].copy()
     # A point of one market is not worth a point of another: said where it applies, on the page.
     markets = ' · points and ticks differ by market: filter to one' if unit in ('points', 'ticks') and len(

@@ -33,53 +33,6 @@ WIDGET_HELP = {'Radar': 'The share of this sample tagged in each category. Not a
 AXES = {'trade': 'Trade number', 'time': 'Date and time'}
 
 
-def filter_editor(journal, rows, prefix, old=None):
-    """A dashboard page's or widget's filter rule, the kind of rule a saved filter is."""
-    old = old or {}
-    library = journal.tag_library()
-    key = lambda name: common.key(journal, prefix + '-' + name)
-    result = {}
-    names = {r['account']: r['account_label'] for r in rows}         # accounts by the name given to them
-    for field, title, column in [('markets', 'Markets', 'market'), ('accounts', 'Accounts', 'account'),
-                                 ('symbols', 'Exact contracts', 'symbol')]:
-        options = sorted({r[column] for r in rows} | set(old.get(field, [])))
-        result[field] = st.multiselect(title, options, default=old.get(field, []), key=key(field),
-                                       format_func=(lambda a: names.get(a, a)) if field == 'accounts' else str)
-    result['directions'] = st.multiselect('Directions', ['long', 'short'], default=old.get('directions', []), key=key('directions'))
-    options = sorted(library['tags'], key=lambda id: library['tags'][id]['name'])
-    for field, title in [('tags_all', 'Require every tag'), ('tags_any', 'Require any tag'), ('tags_none', 'Exclude tags')]:
-        result[field] = st.multiselect(title, options, default=old.get(field, []),
-                                       format_func=lambda id: library['tags'][id]['name'], key=key(field))
-    result['status'] = st.multiselect('Trade status', ['closed', 'open', 'incomplete'], default=old.get('status', []), key=key('status'))
-    with st.expander('Dates and Number Ranges'):
-        date_filter = st.checkbox('Limit entry dates', value=bool(old.get('start') or old.get('end')), key=key('dates-on'),
-                                  help='Calendar days in your display time zone.')
-        if date_filter:
-            days = [dt.date.fromisoformat(r['entry_day']) if r.get('entry_day') else instant(r['opened']).date()
-                    for r in rows] or [dt.datetime.now(ZoneInfo(common.display_zone(journal))).date()]
-            period = st.date_input('Entry date range', (dt.date.fromisoformat(old['start']) if old.get('start') else min(days),
-                                                        dt.date.fromisoformat(old['end']) if old.get('end') else max(days)), key=key('dates'))
-            if isinstance(period, (tuple, list)) and len(period) == 2:
-                result.update(start=period[0].isoformat(), end=period[1].isoformat())
-        choices = {'score': 'Signed tag score', 'net': 'Net P&L', 'r': 'Result in R', 'mae': 'MAE · currency',
-                   'mfe': 'MFE · currency', 'quantity': 'Peak quantity', 'duration': 'Duration · minutes'}
-        if not tagging.scored(library) and old.get('score_min') is None and old.get('score_max') is None:
-            del choices['score']
-        ranges = st.multiselect('Numbers to limit', list(choices),
-                                default=[name for name in choices if old.get(name + '_min') is not None or old.get(name + '_max') is not None],
-                                format_func=choices.get, key=key('numeric-fields'),
-                                help='MAE / MFE limits use account currency, not the display unit. A trade without '
-                                     'a value never passes a limit. R needs a stop; '
-                                     'duration is in minutes.')
-        for name in ranges:
-            cols = st.columns(2)
-            for col, suffix, word in [(cols[0], '_min', 'Minimum'), (cols[1], '_max', 'Maximum')]:
-                enabled = col.checkbox(word + ' ' + choices[name], value=old.get(name + suffix) is not None, key=key(name + suffix + '-on'))
-                if enabled:
-                    result[name + suffix] = col.number_input(word + ' value', value=float(old.get(name + suffix) or 0), key=key(name + suffix))
-    return result
-
-
 def render(journal, rows):
     """One dashboard page, on the Dashboards tab of Stats. `rows` are what the Stats filters keep."""
     state = journal.workspace()
@@ -89,10 +42,13 @@ def render(journal, rows):
     page_id = selector.selectbox('Dashboard page', choices, format_func=lambda id: pages[id]['name'] if id in pages else 'Overview',
                             key=common.key(journal, 'dashboard-page'), label_visibility='collapsed')
     page = pages.get(page_id, DEFAULT)
-    with filter_col.popover('Page Filters', width='stretch',
-                            help='Filters for this dashboard page, on top of the Stats filters. Each widget can add its own.'):
+    count = common.active_filters(page.get('filters', {}))
+    with filter_col.popover(f'Page Filters · {count}' if count else 'Page Filters', width='stretch',
+                            key=common.key(journal, 'page-filters-menu-' + page_id),
+                            help='Filters for this dashboard page, on top of the Stats filters; each widget can '
+                                 'add its own.'):
         with st.form(common.key(journal, 'page-filters-' + page_id), border=False):
-            rule = filter_editor(journal, rows, 'page-filter-' + page_id, page.get('filters'))
+            rule = common.filter_rule(journal, rows, 'page-filter-' + page_id, page.get('filters'))
             if st.form_submit_button('Save Page Filters', type='primary'):
                 saved = journal.save_dashboard(page['name'], page['widgets'], id=page_id if page_id in pages else None,
                                                 columns=page['columns'], filters=rule)
@@ -151,7 +107,8 @@ def customize(journal, rows, page_id, page):
                                       default=included, format_func=lambda id: journal.tag_library()['tags'][id]['name'])
         code = st.text_area('Local script · Script widgets only', value=old.get('code', script_widget.STARTER),
                             height=110, max_chars=30000)
-        filters = filter_editor(journal, rows, f'widget-{page_id}-{selected}', old.get('filters'))
+        # Keyed by the widget, not its place: a widget moved up or down opens on its own filters.
+        filters = common.filter_rule(journal, rows, f"widget-{page_id}-{old.get('id', 'new')}", old.get('filters'))
         if st.form_submit_button('Save Widget', type='primary'):
             updated = {'kind': kind, 'title': title or kind, 'metric': metric, 'group': group, 'axis': axis,
                        'score_tags': included, 'filters': filters, 'code': code}
@@ -225,7 +182,7 @@ def draw(journal, rows, widget, page_id):
             st.info('No trades in this sample.')
         return
     if kind == 'MAE / MFE':
-        measured = [r for r in common.display_excursion_rows(journal, closed) if r['display_mae'] is not None and r['display_mfe'] is not None]
+        measured = [r for r in closed if r['display_mae'] is not None and r['display_mfe'] is not None]
         if not measured:
             st.info('No trade has MAE / MFE in your MAE / MFE Units yet.')
             return
