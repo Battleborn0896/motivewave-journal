@@ -34,7 +34,6 @@ from mwjournal.scope import LIVE_TICKS, PROVENANCE, provenance
 from mwjournal import humanize, risk, units
 from mwjournal import journals, merging
 
-ADHERENCE = ['Unreviewed', 'Yes', 'No']
 LIST_LIMIT = 150           # rows drawn at once; Show Earlier Trades draws the next ones
 REPORT = 'report-card-open'  # per environment: the Daily Report Card is shown in place of the trade
 # How often the page looks for trades the watcher has added or changed, and an open trade's numbers and chart
@@ -500,30 +499,14 @@ def empty(journal) -> None:
 
 
 def review_form(journal, trade, a: dict) -> None:
-    setup_key = common.key(journal, 'setup-' + trade.id)
-    setup_col, reuse_col = st.columns([1.5, 1])
-    setups = sorted({str(saved.get('setup') or '').strip() for saved in journal.annotations().values()
-                     if str(saved.get('setup') or '').strip()})
-    reuse_key = common.key(journal, 'reuse-setup-' + trade.id)
-    def reuse_setup():
-        chosen = st.session_state.get(reuse_key)
-        if chosen:
-            journal.update_annotation(trade.id, {'setup': chosen})
-            st.session_state[setup_key] = chosen
-            st.session_state[reuse_key] = None
-    if setups:
-        reuse_col.selectbox('Use saved setup', setups, index=None, placeholder='Choose an existing setup',
-                             key=reuse_key, on_change=reuse_setup)
-    setup_col.text_input('Setup / playbook', a.get('setup', ''), key=setup_key,
-                  placeholder='Name your setup', on_change=tag_controls.save_field,
-                  args=(journal, trade.id, 'setup', setup_key), help='Saves when you leave the box.')
+    """The trade's review: its note and its Stop. Its setup is a Setup tag, chosen on Chart & Tags."""
     notes_key = common.key(journal, 'notes-' + trade.id)
     st.text_area('Review notes', a.get('notes', ''), placeholder='What worked? What will I change next time?',
                  key=notes_key, height=160, on_change=tag_controls.save_field,
                  args=(journal, trade.id, 'notes', notes_key), help='Saves when you leave the box.')
     theme.section('Trade Plan')
     plan = risk.plan_for(journal, trade)
-    c1, c2 = st.columns(2)
+    c1 = st.columns(2)[0]
     if plan.source != 'merged':
         shown = stop_text(plan.stop)
         # The key carries what the box was filled with, so a stop saved here, or a stop order that arrives
@@ -537,10 +520,6 @@ def review_form(journal, trade, a: dict) -> None:
         if error := stop_error(typed, shown):
             c1.error(error)
     c1.caption(common.md(stop_caption(plan, trade.currency)))
-    adherence_key = common.key(journal, 'adherence-' + trade.id)
-    c2.selectbox('Followed my plan', ADHERENCE, index=ADHERENCE.index(a.get('adherence', 'Unreviewed')),
-                 key=adherence_key, on_change=tag_controls.save_field,
-                 args=(journal, trade.id, 'adherence', adherence_key))
 
 
 def typed_stop(typed):

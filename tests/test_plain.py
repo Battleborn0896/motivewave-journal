@@ -64,15 +64,14 @@ def test_the_plan_typed_on_a_trade_is_kept_when_next_is_clicked_straight_away(ho
     app = open_app()
     assert chosen(app) == newer.id and not any(b.label == 'Save Plan' for b in app.button)
     widget(app.text_input, 'Stop').set_value('19990')
-    widget(app.selectbox, 'Followed my plan').set_value('No')
     widget(app.text_area, 'Review notes').set_value('Waited for the retest.')
     press(app, 'Next →')                                  # no box was left first: the click carries what was typed
     assert chosen(app) == older.id
     review = journal.annotations()[newer.id]
-    assert (review['planned_stop'], review['adherence'], review['notes']) == (19990, 'No', 'Waited for the retest.')
-    widget(app.selectbox, 'Followed my plan').set_value('Yes')
+    assert (review['planned_stop'], review['notes']) == (19990, 'Waited for the retest.')
+    widget(app.text_area, 'Review notes').set_value('Entered early.')
     pick(app, newer.id)                                  # a row click keeps it too
-    assert journal.annotations()[older.id]['adherence'] == 'Yes'
+    assert journal.annotations()[older.id]['notes'] == 'Entered early.'
     assert journal.annotations()[older.id]['planned_stop'] == 4998         # its saved stop, untouched
     assert widget(app.text_input, 'Stop').value == '19990'                 # and the first trade shows what was kept
 
@@ -86,9 +85,9 @@ def test_an_untouched_stop_box_filled_from_the_order_is_never_saved_as_the_trade
                                                'working', 4996, entry_execution_id='b-in')])
     app = open_app()
     assert chosen(app) == second.id and widget(app.text_input, 'Stop').value == '4996'
-    widget(app.selectbox, 'Followed my plan').set_value('Yes')
+    widget(app.text_area, 'Review notes').set_value('Kept the order.')
     press(app, 'Next →')
-    assert journal.annotations()[second.id]['adherence'] == 'Yes'
+    assert journal.annotations()[second.id]['notes'] == 'Kept the order.'
     assert 'planned_stop' not in journal.annotations()[second.id]          # still the order's stop
     assert chosen(app) == first.id
 

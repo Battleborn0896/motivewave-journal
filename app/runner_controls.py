@@ -91,7 +91,7 @@ def trade_panel(journal, trade):
 def edge_panel(journal, rows):
     """Which tags leave room for a runner. It reads the prices after every exit, so it runs only when asked: the
     choices sit in a form, and the table is built when Compare Runners is pressed."""
-    labels = {'tags': 'Individual tags', 'tag_categories': 'Tag categories', 'setup': 'Setup / playbook'}
+    labels = {'tags': 'Individual tags', 'tag_categories': 'Tag categories'}
     # The choices last compared stay chosen while another Stats tab is open.
     remember = common.keep({common.key(journal, name): default for name, default in (
         ('runner-edge-horizon', 15), ('runner-edge-stop', 'original'), ('runner-winners', True),

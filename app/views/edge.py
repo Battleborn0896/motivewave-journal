@@ -5,7 +5,7 @@ come straight after it, then a tab each for Overview, Compare, MAE / MFE and Run
 own pages of widgets, always last. The equity curve counts trades along the bottom (1, 2, 3, ...) so nights
 and weekends take no room; a toggle puts it on the clock instead, in the display time zone.
 
-Compare finds an edge by tag, the way a trader drills down: chips for every tag category and the star ratings
+Compare finds an edge by tag, the way a trader drills down: chips for every tag category and the Rating stars
 keep or leave out trades, then Totals and a table for each category side by side, every tag listed even at 0
 trades, then the equity curve of the trades left and those trades, each opening on Trades. The tags kept can
 be saved as a playbook.
@@ -35,12 +35,12 @@ from mwjournal.analytics import cost_summary, grouped, summary
 from mwjournal.model import instrument_market
 from mwjournal import units
 
-SEGMENTS = ['Market', 'Exact contract', 'Entry hour', 'Weekday', 'Direction', 'Followed my plan', 'Process rating']
+SEGMENTS = ['Market', 'Exact contract', 'Entry hour', 'Weekday', 'Direction']
 SECTIONS = ['Overview', 'Compare', 'MAE / MFE', 'Runners']
 DASHBOARDS = 'Dashboards'          # always the last tab, so Customize can never hide it
 AXES = {'trade': 'By Trade', 'time': 'By Date'}
-LABELS = {'closed': 'Exit', 'net': 'Net P&L', 'mae': 'MAE', 'mfe': 'MFE', 'max_qty': 'Size',
-          'precision': 'Measured from', 'symbol': 'Instrument', 'setup': 'Setup'}
+LABELS = {'closed': 'Exit', 'net': 'Net P&L', 'mae': 'MAE', 'mfe': 'MFE', 'max_qty': 'Contracts',
+          'precision': 'Measured from', 'symbol': 'Instrument'}
 COMPARE_HELP = ('Start with Trades, the sample size, then Average Trade, the net result per trade after recorded '
                 'fees. A trade with several tags counts in each, so tag rows overlap; "No Setup tag" is the trades '
                 'with no tag in that category. Average R uses only trades with a stop. These describe your recorded '
@@ -48,7 +48,7 @@ COMPARE_HELP = ('Start with Trades, the sample size, then Average Trade, the net
 TABLE_WIDTH = 360          # pixels a tag table needs at least: three to a row on a laptop screen, more on a wider one
 SMALL_SAMPLE = 10          # fewer trades in a row than this is too few to judge (and 100 to 150 for the whole journal)
 LIST_LIMIT = 50            # trades listed at once under the Compare tables; Show More Trades lists the next ones
-RATING = 'Process rating'  # a trade's 1 to 5 stars (Trades, the tag panel): one more group of chips and a table
+RATING = 'Rating'          # a trade's 1 to 5 stars (Trades, the tag panel): one more group of chips and a table
 # The period above Stats: the month under review first, as a monthly review reads (docs/research, 'Sample size first').
 PERIODS = ('This Month', 'Last Month', 'Last 3 Months', 'All')
 RATINGS = (5, 4, 3, 2, 1)  # best first
@@ -335,8 +335,7 @@ def excursion(journal, closed):
     labels = {**LABELS, 'display_mae': f'Against me · MAE ({label})',
               'display_mfe': f'In my favour · MFE ({label})', 'display_precision': 'Measured from'}
     figure = px.scatter(measured, x='display_mae', y='display_mfe', color='display_precision', size='max_qty',
-                        labels=labels, hover_data={'symbol': True, 'Net P&L': True, 'setup': True,
-                                                   'max_qty': True},
+                        labels=labels, hover_data={'symbol': True, 'Net P&L': True, 'max_qty': True},
                         title='One dot per measured trade')
     if unit == 'currency':
         values = [*measured.display_mae, *measured.display_mfe]
@@ -352,20 +351,20 @@ def comparisons(journal, closed):
     library = journal.tag_library()
     groups = chip_groups(library, closed)
     narrowed = narrow(journal, closed, groups)
-    options = [*SEGMENTS, 'Tags', 'Setups', 'Playbooks']
+    options = [*SEGMENTS, 'Tags', 'Playbooks']
     segment = common.key(journal, 'edge-segment')
     remember = common.keep({segment: 'Tags'})          # still chosen after another tab has been open
     field = st.columns([1, 2])[0].selectbox('Compare by', options, key=segment, on_change=remember,
-                                            help='Tags shows a table for each tag category and for your star '
-                                                 'ratings. Times use your display time zone.')
+                                            help='Tags shows a table for each tag category and for your Rating. '
+                                                 'Times use your display time zone.')
     if not narrowed:
         st.info('No closed trade matches these chips. Click one again to change it, or Clear All.')
         return
     if field == 'Tags':
         tag_tables(narrowed, groups, currency)
     else:
-        if field in ('Setups', 'Playbooks'):
-            grouped_rows = grouped(narrowed, {'Setups': 'setup', 'Playbooks': 'playbooks'}[field])
+        if field == 'Playbooks':
+            grouped_rows = grouped(narrowed, 'playbooks')
         else:
             timezone = common.display_zone(journal)
             segmented = []
@@ -373,8 +372,7 @@ def comparisons(journal, closed):
                 opened = pd.Timestamp(row['opened']).tz_convert(timezone)
                 value = {'Entry hour': f'{opened.hour:02d}:00', 'Weekday': opened.day_name(),
                          'Market': instrument_market(row['symbol']), 'Exact contract': row['symbol'],
-                         'Direction': row['direction'], 'Followed my plan': row.get('adherence', 'Unreviewed'),
-                         'Process rating': str(row.get('rating', 'Unreviewed'))}[field]
+                         'Direction': row['direction']}[field]
                 segmented.append({**row, 'segment': value})
             grouped_rows = grouped(segmented, 'segment')
         # A playbook's name in its own colour, as a tag's is.
@@ -388,17 +386,17 @@ def comparisons(journal, closed):
 
 
 def marks(row) -> set:
-    """What a trade's chips can match: its tags' ids, and its process rating as 'rating-5' to 'rating-1'."""
+    """What a trade's chips can match: its tags' ids, and its Rating as 'rating-5' to 'rating-1'."""
     rating = row.get('rating')
     return {*row['tag_ids'], *([f'rating-{rating}'] if rating in RATINGS else [])}
 
 
 def chip_groups(library, closed) -> dict:
-    """What Compare narrows by and lists, in order: each tag category in the library's order, then Process
-    rating, as {group: [chip]}, a chip being {'id', 'name', 'label', 'color', 'retired'} (a rating's id is
+    """What Compare narrows by and lists, in order: each tag category in the library's order, then Rating, as
+    {group: [chip]}, a chip being {'id', 'name', 'label', 'color', 'retired'} (a rating's id is
     'rating-5' and so on, as marks() gives it). A category holds every active tag, and any retired one these
-    trades carry, in its order; it is left out when none of these trades has one of its tags, as Process
-    rating is when none of them is rated."""
+    trades carry, in its order; it is left out when none of these trades has one of its tags, as Rating is when
+    none of them is rated."""
     carried = set().union(*(marks(row) for row in closed))
     groups = {}
     for group in sorted(library['groups'], key=lambda g: library['groups'][g]['order']):
@@ -424,7 +422,7 @@ def listing(names) -> str:
 
 
 def narrow(journal, closed, groups) -> list[dict]:
-    """'Narrow the trades': a row of chips for each group, the active tags and ratings these trades carry. A
+    """'Narrow the trades': a row of chips for each group, the active tags and Ratings these trades carry. A
     click keeps only the trades with that chip (✓), the next leaves those trades out (×), the third stops using
     it. Returns the trades with every kept chip and no left-out one, for everything below on this tab; Filters
     have already narrowed the page. A sentence under the chips says what is applied."""
@@ -503,7 +501,7 @@ def playbook_saver(journal, tags) -> None:
     A playbook takes any one of its tags in a category, so it takes one kept tag per category here."""
     with st.popover('Save as Playbook', help='Saves the tags you keep (✓) as a playbook, to apply to a trade on '
                                              'Trades and to compare under Compare by Playbooks. Tags you leave out '
-                                             '(×) and star ratings are not part of a playbook.'):
+                                             '(×) and Rating chips are not part of a playbook.'):
         rules = {}
         for group, chip in tags:
             rules.setdefault(group, []).append(chip['id'])
@@ -532,7 +530,7 @@ def line(name, colour, trades) -> dict:
 
 def tag_tables(narrowed, groups, currency) -> None:
     """Totals (all, wins and losses), then a table for each group: every tag of a category in order, even at 0
-    trades, then the trades with none of them; Process rating from 5 stars to 1, then Not rated. A trade with
+    trades, then the trades with none of them; Rating from 5 stars to 1, then Not rated. A trade with
     two tags of a category counts in both. Side by side on a wide window, fewer to a row on a narrow one."""
     if not groups:
         st.info('None of these trades has a tag or a rating yet. Tag and rate trades on Trades, then compare them here.')
@@ -692,7 +690,7 @@ def period_rows(journal, rows) -> list[dict]:
 def compare_table(grouped_rows, field, currency):
     """The comparison as a table: money reads '+$810.02', Average R '+0.50R' or '—' without a stop,
     and every number still sorts as a number."""
-    columns = {'group': field.rstrip('s') if field in ('Tags', 'Setups', 'Playbooks') else field, 'count': 'Trades',
+    columns = {'group': field.rstrip('s') if field in ('Tags', 'Playbooks') else field, 'count': 'Trades',
                'net': 'Net P&L', 'win_rate': 'Win %', 'expectancy': 'Average Trade',
                'avg_win': 'Average Winner', 'avg_loss': 'Average Loser', 'expectancy_r': 'Average R',
                'risk_recorded': 'Trades With Risk'}

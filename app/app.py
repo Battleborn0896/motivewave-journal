@@ -3,8 +3,8 @@
 Only the frame lives here: page setup, and a sidebar that holds nothing but the logo, the Live /
 Replay switch, the three pages and the study's connection badge (a journal picker or a currency picker
 appears only when there is a choice to make). Trades holds the session tools and the Daily Report Card,
-Stats the dashboards, and both their Filters menus the saved filter; Settings holds the settings, tags,
-ratings and data pages. What views share is in common.py; each view is one module in views/.
+Stats the dashboards, and both their Filters menus the saved filter; Settings holds the settings, tags and
+data pages. What views share is in common.py; each view is one module in views/.
 """
 
 from __future__ import annotations
@@ -24,11 +24,11 @@ import common
 import runtime
 import theme
 from mwjournal import paths
-from views import data, edge, preferences, ratings, setup, tag_settings, trades
+from views import data, edge, preferences, setup, tag_settings, trades
 from mwjournal import journals, merging
 from mwjournal.workspace import filter_sample
 
-SETUP_PAGES = {'Tags': tag_settings, 'Ratings': ratings}         # Data is drawn with the capture journal too
+SETUP_PAGES = {'Tags': tag_settings}         # Data is drawn with the capture journal too
 ENVIRONMENTS = {'Live': 'live', 'Replay': 'replay'}
 SHOWN_KEY, SEEN_KEY = 'journal-view-shown', 'journal-seen'
 

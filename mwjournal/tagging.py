@@ -15,6 +15,8 @@ from zoneinfo import ZoneInfo
 from .model import instant
 from .tags import DAY, LEGACY_CATALOG, STARTER_VERSION, STARTERS
 
+COLOURS = {group: colour for group, colour, _ in STARTERS}     # the colour of each category the app offers
+
 
 def identity(name):
     return hashlib.sha256(name.encode()).hexdigest()[:24]
@@ -217,6 +219,31 @@ def ensure_names(state, values, group='Other tags'):
         # Only a category that now holds a new tag. Saving a note, or clicking a tag that already
         # exists, must not leave an empty 'Other tags' card in the tag panel.
         state['groups'].setdefault(group, {'exclusive': False, 'order': len(state['groups'])})
+
+
+def file_under(state, review, name, group):
+    """`review` with the tag `name` added to its tags, as update_annotation adds one, for an upgrade that turns an
+    old answer into a tag. The tag whose name or a former name is `name`, in any case, is used wherever it is, retired
+    or not; else it is made in `group`, in the colour the app gives that category (tags.STARTERS) when it has no tags
+    yet. Nothing is removed, even in a one-choice category: the tag panel shows the conflict, and a click resolves
+    it. `state` gains any new tag; the caller saves it."""
+    folded = name.casefold()
+    id = next(iter(ids(state, [name])), None) or next(
+        (id for id, tag in state['tags'].items() if folded in {alias.casefold() for alias in tag['aliases']}), None)
+    if id is None:
+        empty = not any(tag['group'] == group for tag in state['tags'].values())
+        ensure_names(state, [name], group)
+        id = next(iter(ids(state, [name])))
+        if empty and group in COLOURS:
+            state['tags'][id]['color'] = COLOURS[group]
+    chosen = selected(state, review) | {id}
+    return {**review, 'tags': names(state, chosen), 'tag_ids': sorted(chosen)}
+
+
+def scored(state) -> bool:
+    """Whether any tag has a score (Settings → Tags). Until one does, Tag score is not offered anywhere: not on a
+    trade, in Filters, as a dashboard widget or measure, nor to a script."""
+    return any(tag.get('score') for tag in state['tags'].values())
 
 
 def selected(state, annotation):

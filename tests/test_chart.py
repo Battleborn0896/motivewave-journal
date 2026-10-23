@@ -33,8 +33,7 @@ def seed_preview(path):
     """Reusable, clearly labeled visual-QA data. `path` is a test's own MWJ_HOME, never the user's."""
     journal = Journal(Path(path) / 'trades.sqlite3')
     trade = round_trip(journal)
-    journal.annotate(trade.id, {'tags': ['PAPER FIXTURE', 'breakout'], 'setup': 'VISUAL TEST ONLY',
-                               'planned_stop': 4998, 'planned_target': 5005, 'initial_risk': 200,
+    journal.annotate(trade.id, {'tags': ['PAPER FIXTURE', 'breakout'], 'planned_stop': 4998, 'planned_target': 5005, 'initial_risk': 200,
                                'notes': 'Synthetic fixture, not an actual account trade.'})
     start = instant('2026-10-07T13:45:00Z')
     samples = []

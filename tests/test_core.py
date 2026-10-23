@@ -501,7 +501,7 @@ def test_analytics_excludes_open_positions_and_missing_prices():
     trades = match([fill('a', 'buy', 1, 100), fill('b', 'sell', 1, 102, 1),
                     fill('c', 'buy', 1, 100, 2), fill('d', 'sell', 1, 99, 3),
                     fill('e', 'buy', 1, 100, 4)])
-    rows = [{**t.row(), 'tags': ['A+'], 'setup': 'test'} for t in trades]
+    rows = [{**t.row(), 'tags': ['A+']} for t in trades]
     stat = summary(rows)
     assert stat['count'] == 2 and stat['expectancy'] == 25
     assert stat['drawdown'] == 50 and stat['profit_factor'] == 2

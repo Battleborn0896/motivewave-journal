@@ -10,6 +10,7 @@ import shutil
 import sqlite3
 import tempfile
 import zlib
+from collections import Counter
 from contextlib import contextmanager
 from dataclasses import asdict
 from pathlib import Path
@@ -314,6 +315,70 @@ def _stops_from_risks(db) -> int:
     return converted
 
 
+# The Execution tag each answer to the 'Followed my plan' box of 0.4.16 and earlier became (_adherence_to_tags).
+ADHERENCE_TAGS = {'Yes': 'Followed Plan', 'No': 'Broke Plan'}
+
+
+def _reviews_to_tags(db, flag: str, group: str, tag_for) -> int:
+    """Once per journal, inside the caller's transaction: each review that `tag_for(review)` names a tag for (None
+    for no tag) gains that tag, made in `group` when no tag has that name (tagging.file_under). The old answer stays
+    stored beside it, no longer read, so this needs no backup. Returns how many reviews gained a tag, also stored
+    under `flag` in journal_meta, the record that this ran."""
+    found = {}
+    for row in db.execute('SELECT trade_id, payload FROM annotations ORDER BY rowid').fetchall():
+        review = json.loads(row['payload'])
+        if name := tag_for(review):
+            found[row['trade_id']] = review, name
+    if found:
+        state = tagging.library(db)
+        for trade_id, (review, name) in found.items():
+            db.execute('UPDATE annotations SET payload=? WHERE trade_id=?',
+                       (encode(tagging.file_under(state, review, name, group)), trade_id))
+        tagging.save(db, state)
+    db.execute('INSERT OR REPLACE INTO journal_meta VALUES(?,?)', (flag, str(len(found))))
+    return len(found)
+
+
+def _typed_setup(review) -> str | None:
+    """What was typed in the Setup box of 0.4.16 and earlier, as a tag name (at most 64 characters), or None."""
+    text = review.get('setup')
+    return text.strip()[:64].strip() if isinstance(text, str) and text.strip() else None
+
+
+def _setups_to_tags(db) -> int:
+    """Each typed setup becomes a Setup tag (_reviews_to_tags). Spellings that differ only in case or spaces are
+    one tag, named as it was typed most often."""
+    def spelling(text):
+        return ''.join(text.split()).casefold()
+    typed = {}
+    for (payload,) in db.execute('SELECT payload FROM annotations ORDER BY rowid').fetchall():
+        if text := _typed_setup(json.loads(payload)):
+            typed.setdefault(spelling(text), Counter())[text] += 1
+    return _reviews_to_tags(db, 'setups_to_tags', 'Setup',
+                            lambda review: (text := _typed_setup(review)) and typed[spelling(text)].most_common(1)[0][0])
+
+
+def _adherence_to_tags(db) -> int:
+    """Each 'Followed my plan' answer becomes an Execution tag, Yes Followed Plan and No Broke Plan
+    (_reviews_to_tags); Unreviewed becomes nothing."""
+    return _reviews_to_tags(db, 'adherence_to_tags', 'Execution',
+                            lambda review: ADHERENCE_TAGS.get(str(review.get('adherence'))))
+
+
+def _answers_to_tags(db) -> None:
+    """The typed setups, then the 'Followed my plan' answers, become tags, each once per journal, inside the caller's
+    transaction, and the upgrade note says how many under 'answers'."""
+    moved = {}
+    for flag, step in (('setups_to_tags', _setups_to_tags), ('adherence_to_tags', _adherence_to_tags)):
+        if not db.execute('SELECT 1 FROM journal_meta WHERE key=?', (flag,)).fetchone():
+            moved[flag] = step(db)
+    words = [f'{what} on {n} trade' + ('' if n == 1 else 's') for what, n in (
+        ('Typed setups became Setup tags', moved.get('setups_to_tags')),
+        ('Followed my plan answers became Execution tags', moved.get('adherence_to_tags'))) if n]
+    if words:
+        _add_note(db, 'answers', {**moved, 'note': '; '.join(words) + '.'})
+
+
 def _prints_away_from_trades(db) -> int:
     """Removes the prints the study recorded outside every trade's window (PRINTS_BEFORE, PRINTS_AFTER) and returns
     how many, inside the caller's transaction. Only the study's prints go: its candles, imported prices and every
@@ -352,6 +417,14 @@ def _prints_away_from_trades(db) -> int:
     db.execute('DROP TABLE kept_prices')
     db.execute('DROP TABLE kept_windows')
     return removed
+
+
+def _add_note(db, name: str, data: dict):
+    """Records what a one-time step did in the upgrade note (Journal.upgrade_note) under `name`, inside the caller's
+    transaction."""
+    row = db.execute("SELECT value FROM journal_meta WHERE key='schema_upgrade'").fetchone()
+    note = {**(json.loads(row[0]) if row else {}), name: {**data, 'at': dt.datetime.now(dt.timezone.utc).isoformat()}}
+    db.execute("INSERT OR REPLACE INTO journal_meta VALUES('schema_upgrade',?)", (encode(note),))
 
 
 class ImportConflict(ValueError):
@@ -412,6 +485,7 @@ class Journal(Workspace):
                 db.execute('PRAGMA user_version = %d' % SCHEMA_VERSION)
             if not db.execute("SELECT 1 FROM journal_meta WHERE key='stops_from_risks'").fetchone():
                 _stops_from_risks(db)
+            _answers_to_tags(db)
             trim = not db.execute("SELECT 1 FROM journal_meta WHERE key='prices_trimmed'").fetchone()
         if trim:
             self._trim_prices()
@@ -534,15 +608,13 @@ class Journal(Workspace):
         """Records what a one-time step did, in the upgrade note (upgrade_note) under `name`."""
         with self.connect() as db:
             db.execute('BEGIN IMMEDIATE')
-            row = db.execute("SELECT value FROM journal_meta WHERE key='schema_upgrade'").fetchone()
-            note = {**(json.loads(row[0]) if row else {}),
-                    name: {**data, 'at': dt.datetime.now(dt.timezone.utc).isoformat()}}
-            db.execute("INSERT OR REPLACE INTO journal_meta VALUES('schema_upgrade',?)", (encode(note),))
+            _add_note(db, name, data)
 
     def upgrade_note(self) -> dict | None:
         """What upgrading this journal did, or None: the last schema upgrade (from, to, its backup); under 'days',
         the move to one time zone (_schema_4); under 'prices', the prints recorded away from trades that were removed
-        once (_trim_prices); and under 'packed', the first packing of the recorded ticks (pack_prices). Each one-time
+        once (_trim_prices); under 'packed', the first packing of the recorded ticks (pack_prices); and under
+        'answers', the typed setups and 'Followed my plan' answers that became tags (_answers_to_tags). Each one-time
         step has a note in plain words."""
         with self.connect() as db:
             row = db.execute("SELECT value FROM journal_meta WHERE key='schema_upgrade'").fetchone()

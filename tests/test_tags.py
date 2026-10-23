@@ -11,12 +11,12 @@ from mwjournal.tags import tag_groups
 def test_tag_add_remove_and_notes_plan_updates_never_overwrite_unrelated_fields(tmp_path):
     journal = Journal(tmp_path / 'test.sqlite3')
     journal.annotate('a', {'tags': ['Original', 'Patient'], 'notes': 'Keep me', 'initial_risk': 100,
-                           'planned_stop': 4998, 'rating': 4, 'setup': 'VWAP'})
+                           'planned_stop': 4998, 'rating': 4})
     journal.update_annotation('a', {}, add_tags=['Breakout'], remove_tags=['Patient'])
     journal.update_annotation('a', {'notes': 'Updated'})
     journal.update_annotation('a', {'planned_target': 5005})
     assert journal.annotations()['a'] == {'tags': ['Breakout', 'Original'], 'notes': 'Updated',
-        'initial_risk': 100, 'planned_stop': 4998, 'planned_target': 5005, 'rating': 4, 'setup': 'VWAP'}
+        'initial_risk': 100, 'planned_stop': 4998, 'planned_target': 5005, 'rating': 4}
     with pytest.raises(ValueError):
         journal.update_annotation('a', {'initial_risk': -1}, add_tags=['Must not persist'])
     assert journal.annotations()['a']['initial_risk'] == 100
@@ -30,10 +30,10 @@ def test_two_simultaneous_autosaves_merge_instead_of_losing_a_field_or_tag(tmp_p
         barrier.wait()
         journal.update_annotation('a', {field: value}, add_tags=[tag])
     with ThreadPoolExecutor(max_workers=2) as pool:
-        futures = [pool.submit(save, 'notes', 'One', 'A'), pool.submit(save, 'setup', 'Two', 'B')]
+        futures = [pool.submit(save, 'notes', 'One', 'A'), pool.submit(save, 'rating', 2, 'B')]
         for future in futures:
             future.result()
-    assert journal.annotations()['a'] == {'notes': 'One', 'setup': 'Two', 'tags': ['A', 'B']}
+    assert journal.annotations()['a'] == {'notes': 'One', 'rating': 2, 'tags': ['A', 'B']}
 
 
 def test_reusable_tags_and_legacy_tags_remain_available_without_auto_tagging(tmp_path):
