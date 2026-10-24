@@ -1,7 +1,7 @@
 """MotiveWave Journal, the app. Start it from the repository root:  streamlit run app/app.py
 
 Only the frame lives here: page setup, and a sidebar that holds nothing but the logo, the Live /
-Replay switch, the three pages and the study's connection badge (a journal picker or a currency picker
+Replay switch, the three pages and the study's connection badge (the Journal menu of views or a currency picker
 appears only when there is a choice to make). Trades holds the session tools and the Daily Report Card,
 Stats the dashboards, and both their Filters menus the saved filter; Settings holds the settings, tags and
 data pages. What views share is in common.py; each view is one module in views/.
@@ -28,7 +28,7 @@ from views import data, edge, preferences, setup, tag_settings, trades
 from mwjournal import journals, merging
 from mwjournal.workspace import filter_sample
 
-SETUP_PAGES = {'Tags': tag_settings}         # Data is drawn with the capture journal too
+SETUP_PAGES = {'Tags': tag_settings, 'Data': data}
 ENVIRONMENTS = {'Live': 'live', 'Replay': 'replay'}
 SHOWN_KEY, SEEN_KEY = 'journal-view-shown', 'journal-seen'
 
@@ -38,7 +38,7 @@ theme.apply()
 
 
 @st.fragment(run_every='5s')
-def badge(dataset: str, selected_journal=None) -> None:
+def badge(dataset: str) -> None:
     """The study's state in a word or two, kept current, and a full rerun when new trades have arrived. The
     button laid over it (outside this fragment, so a click reruns the whole page) opens Settings."""
     journal = common.open_journal(dataset)
@@ -52,8 +52,7 @@ def badge(dataset: str, selected_journal=None) -> None:
         word, tone = common.NO_REPLAY_TRADES, 'neutral'     # no fills yet: nothing to say until a replay trade
     st.markdown(theme.chip(word, tone, state=word) + "<span class='mwj-go'>Settings ›</span>",
                 unsafe_allow_html=True)
-    seen_key = common.key(journal, SEEN_KEY) if not selected_journal else f'{SEEN_KEY}-{dataset}-{selected_journal}'
-    if seen != st.session_state.get(seen_key):
+    if seen != st.session_state.get(common.key(journal, SEEN_KEY)):
         st.rerun()                         # recorded trades appear without a manual refresh
 
 
@@ -82,40 +81,33 @@ with st.sidebar:
                            help='Live holds live and paper trades, Replay your replay trades, each with its own '
                                 'reviews and stats; both share your tags, filters and Time Zone.')
 dataset = ENVIRONMENTS[environment]
-capture = common.open_journal(dataset)
-journal, selected_journal, rows, currency = None, None, [], 'USD'
-if capture is not None:
-    state = journals.registry(capture)
-    active_journals = {id: d for id, d in state['journals'].items() if not d['archived']}
-    named_key = common.key(capture, 'named-journal')
-    pending_key = common.key(capture, 'named-journal-next')
-    if pending_key in st.session_state:
-        st.session_state[named_key] = st.session_state.pop(pending_key)
-    if st.session_state.get(named_key) not in [None, *active_journals]:
-        st.session_state[named_key] = None
-    if active_journals:                    # only someone who made a named journal has a journal to choose
-        with st.sidebar:
-            selected_journal = st.selectbox('Local journal', [None, *active_journals], key=named_key,
-                                            format_func=lambda id: active_journals[id]['name'] if id else 'All captures',
-                                            help='A named journal from Settings → Data → Journals & Accounts, with '
-                                                 'its own reviews and stats. All captures is everything the study '
-                                                 'recorded.')
-    journal = capture
-    if selected_journal:
-        try:
-            journal = journals.open_named(capture, selected_journal)
-        except (ValueError, OSError, sqlite3.Error) as exc:
-            st.error('The named journal could not be opened: ' + str(exc))
-            journal = None
+journal = common.open_journal(dataset)
+rows, currency = [], 'USD'
 if journal is not None:
+    views = journals.registry(journal)['views']
+    view_key, pending_key = common.key(journal, 'journal-choice'), common.key(journal, 'journal-choice-next')
+    if pending_key in st.session_state:    # a view just made on Settings → Data → Journals & Accounts
+        st.session_state[view_key] = st.session_state.pop(pending_key)
+    if st.session_state.get(view_key) not in [None, *views]:
+        st.session_state[view_key] = None
+    if views:                              # only someone who made a view has one to choose
+        with st.sidebar:
+            st.selectbox('Journal', [None, *views], key=view_key,
+                         format_func=lambda id: views[id]['name'] if id else journals.ALL,
+                         help='A view shows only its accounts, with the same reviews, tags and settings as All '
+                              'accounts.')
+    chosen = views.get(st.session_state.get(view_key))
     journal = merging.ReviewJournal(journal)
-    for name in paths.DATASETS:            # both are read all the time: replay trades are captured while Live is on screen
+    for name in paths.DATASETS:            # both are read all the time: replay trades are recorded while Live is on screen
         try:
             runtime.start(name)
         except (ValueError, OSError, sqlite3.Error):
             pass                           # the other journal cannot be opened; switching to it says why
-    st.session_state[common.key(journal, SEEN_KEY)] = common.stamp(capture)    # authoritative source counts trigger a mirror refresh
+    st.session_state[common.key(journal, SEEN_KEY)] = common.stamp(journal)
     rows = common.rows(journal)
+    if chosen:                             # before the saved filter, which then filters the view's trades
+        accounts = {tuple(account) for account in chosen['accounts']}
+        rows = [r for r in rows if (r['provider'], r['account']) in accounts]
     for warning in journal.merge_warnings:
         st.warning(warning)
     currencies = sorted({r['currency'] for r in rows})
@@ -137,9 +129,9 @@ with st.sidebar:
     if view not in common.PRIMARY_VIEWS:
         view = st.session_state.get(SHOWN_KEY, 'Trades')
     st.session_state[SHOWN_KEY] = view
-    if capture is not None:
+    if journal is not None:
         with st.container(key='connection-badge'):
-            badge(dataset, selected_journal)
+            badge(dataset)
             st.button('Open Settings', key='connection-badge-open', on_click=open_settings,
                       help='Whether the study is recording, the one step to take if it is not, and every setting.')
 if journal is None:
@@ -151,17 +143,13 @@ for pending, target in [('dashboard-next', 'dashboard-page'), ('checklist-next',
 saved_filters = journal.workspace()['filters']
 # Chosen in Filters on Trades or Stats, whose button counts it among the filters on.
 global_filter = preferences.chosen_filter(journal, saved_filters)
-every_row = rows                           # the session tools on Trades and the settings on Settings see every trade
+every_row = rows                           # the session tools on Trades and the settings on Settings: every trade of the view
 if global_filter:
     rows = filter_sample(rows, saved_filters[global_filter])
 
 if view == 'Settings':
-    def tool(page):
-        if page == 'Data':                 # its Connection tab belongs to the environment, not a named journal
-            data.render(journal, rows, capture=capture if selected_journal else None)
-        else:
-            SETUP_PAGES[page].render(journal, rows)
-    setup.render(journal, rows, tool=tool, display=lambda target, _: preferences.render(target, every_row))
+    setup.render(journal, rows, tool=lambda page: SETUP_PAGES[page].render(journal, rows),
+                 display=lambda target, _: preferences.render(target, every_row))
 elif view == 'Analytics':
     edge.render(journal, rows)
 else:

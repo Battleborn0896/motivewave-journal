@@ -1,4 +1,5 @@
-"""Named local journal and display-only account organization. Capture remains read-only."""
+"""Journals & Accounts, a Data tab: the views the Journal menu in the sidebar offers, each a name and the accounts it
+shows, and the names accounts are shown by. Nothing here changes a trade or its review."""
 import streamlit as st
 import common
 import theme
@@ -6,59 +7,53 @@ from mwjournal import journals
 
 
 def render(journal, rows):
-    capture = getattr(journal, 'capture_journal', journal)
-    state = journals.registry(capture)
-    theme.section('Journals & Accounts', help='The study always captures to the original Live or Replay journal. A '
-                  'named journal copies the trades of the accounts you choose into its own database, with its own '
-                  'notes, tags and stats. Choose it in the sidebar once it exists. Archived journals are hidden, '
-                  'never deleted.')
-    known_scopes = sorted({(fill.provider, fill.account) for fill in capture.executions()})
-    with st.form(common.key(capture, 'new-named-journal')):
-        name = st.text_input('New journal name', max_chars=80)
-        scopes = st.multiselect('Capture accounts · empty mirrors all', known_scopes,
-                                 format_func=lambda scope: journals.alias(capture, scope))
-        if st.form_submit_button('Create Journal', type='primary'):
-            try:
-                id = journals.create(capture, name, scopes)
-                st.session_state[common.key(capture, 'named-journal-next')] = id
-                st.rerun()
-            except (ValueError, OSError) as exc:
-                st.error(str(exc))
-    if state['journals']:
-        selected = st.selectbox('Manage journal', list(state['journals']),
-                                 format_func=lambda id: state['journals'][id]['name'] + (' · archived' if state['journals'][id]['archived'] else ''))
-        old = state['journals'][selected]
-        with st.form(common.key(capture, 'rename-named-' + selected)):
-            name = st.text_input('Journal name', old['name'], max_chars=80)
-            if st.form_submit_button('Rename Journal'):
+    views = journals.registry(journal)['views']
+    known = sorted({(fill.provider, fill.account) for fill in journal.executions()})
+    theme.section('Journals & Accounts', help='A view shows only the accounts you choose, with the same reviews, tags '
+                                              'and settings as All accounts.')
+    theme.subsection('New View')
+    if not known:
+        st.caption('A view needs an account with trades: record or import a trade first.')
+    else:
+        with st.form(common.key(journal, 'new-view')):
+            name = st.text_input('View name', max_chars=80, key=common.key(journal, 'new-view-name'))
+            accounts = st.multiselect('Accounts', known, format_func=lambda scope: journals.alias(journal, scope),
+                                      key=common.key(journal, 'new-view-accounts'))
+            if st.form_submit_button('Create View', type='primary'):
                 try:
-                    journals.rename(capture, selected, name)
+                    id = journals.create(journal, name, accounts)
+                    st.session_state[common.key(journal, 'journal-choice-next')] = id     # shown in the sidebar
                     st.rerun()
                 except ValueError as exc:
                     st.error(str(exc))
-        cols = st.columns(2)
-        if cols[0].button('Restore Journal' if old['archived'] else 'Archive Journal', key=common.key(capture, 'archive-named-' + selected)):
-            journals.archive(capture, selected, not old['archived'])
+    if views:
+        theme.subsection('Views')
+        selected = st.selectbox('View', list(views), format_func=lambda id: views[id]['name'],
+                                key=common.key(journal, 'manage-view'))
+        shown = ', '.join(journals.alias(journal, tuple(account)) for account in views[selected]['accounts'])
+        st.caption(f'Shows {shown}. Deleting a view removes only the view: its trades and reviews stay in All '
+                   'accounts.')
+        with st.form(common.key(journal, 'rename-view-' + selected)):
+            name = st.text_input('New name', views[selected]['name'], max_chars=80,
+                                 key=common.key(journal, 'rename-view-name-' + selected))
+            if st.form_submit_button('Rename View'):
+                try:
+                    journals.rename(journal, selected, name)
+                    st.rerun()
+                except ValueError as exc:
+                    st.error(str(exc))
+        if st.button('Delete View', key=common.key(journal, 'delete-view-' + selected)):
+            journals.delete(journal, selected)
             st.rerun()
-        with cols[1].popover('Clone Journal', width='stretch'):
-            with st.form(common.key(capture, 'clone-named-' + selected)):
-                name = st.text_input('Cloned journal name', old['name'] + ' copy', max_chars=80)
-                if st.form_submit_button('Clone Into a New Journal'):
-                    try:
-                        id = journals.create(capture, name, old['scopes'], clone=selected)
-                        st.session_state[common.key(capture, 'named-journal-next')] = id
-                        st.rerun()
-                    except (ValueError, OSError) as exc:
-                        st.error(str(exc))
-    if known_scopes:
+    if known:
         theme.section('Account Names')
-        scope = st.selectbox('Account to rename', known_scopes, format_func=lambda s: journals.alias(capture, s))
-        with st.form(common.key(capture, 'account-alias-form')):
-            name = st.text_input('Display name', journals.alias(capture, scope), max_chars=80,
+        scope = st.selectbox('Account to rename', known, format_func=lambda s: journals.alias(journal, s))
+        with st.form(common.key(journal, 'account-alias-form')):
+            name = st.text_input('Display name', journals.alias(journal, scope), max_chars=80,
                                  help='A label only. Provider and account IDs in fills and order links stay unchanged.')
             if st.form_submit_button('Save Display Name'):
                 try:
-                    journals.account_alias(capture, *scope, name)
+                    journals.account_alias(journal, *scope, name)
                     st.rerun()
                 except ValueError as exc:
                     st.error(str(exc))

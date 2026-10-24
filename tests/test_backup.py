@@ -1,7 +1,6 @@
 """Back Up Journal and Restore From Backup: one zip of every journal, checked in full before anything is put back."""
 import datetime as dt
 import json
-import shutil
 import sqlite3
 import zipfile
 from contextlib import closing
@@ -152,22 +151,27 @@ def test_a_backup_from_another_data_folder_reads_this_ones_study_file(home, monk
         assert str(home / 'this computer') in str(paths.bridge_file(dataset))
 
 
-def test_named_journals_archived_ones_too_are_backed_up_and_put_back(home):
-    capture = seed_preview(home)
-    kept = journals.create(capture, 'Practice', [('motivewave', 'paper')])
-    old = journals.create(capture, 'Old', [('motivewave', 'paper')])
-    journals.archive(capture, old)
-    named = journals.open_named(capture, kept)
-    named.annotate(named.trades()[0].id, {'notes': 'Practice review.'})
-    reviews = named.annotations()
-    saved = backup.write(home / 'backup.zip')
-    assert {f'journals/{kept}/trades.sqlite3', f'journals/{old}/trades.sqlite3'} <= set(members(saved))
-    named.annotate(named.trades()[0].id, {'notes': 'Changed.'})
-    shutil.rmtree(journals.journal_path(capture, old).parent)
+def test_a_backup_from_0_4_17_with_named_journals_is_restored_and_they_become_views_again(home):
+    from test_journals import old_named
+    env = seed_preview(home)
+    named, id = old_named(env, 'Practice', [('motivewave', 'paper')])
+    _, archived = old_named(env, 'Old', [('motivewave', 'paper')], archived=True)
+    trade, = named.trades()
+    named.annotate(trade.id, {'notes': 'Practice review.'})
+    saved = backup.write(home / 'backup.zip')                    # as 0.4.17 took it: with both named journals
+    assert {f'journals/{id}/trades.sqlite3', f'journals/{archived}/trades.sqlite3'} <= set(members(saved))
+    assert backup.read(saved)['trades'] == {'live': 1, 'replay': 0}
+    journal = Journal()                                           # opened by this version: folded, folders gone
+    assert set(journals.registry(journal)['views']) == {id} and not (home / 'journals').exists()
+    assert 'journals/' not in ' '.join(members(backup.write(home / 'after.zip')))
+    journal.update_annotation(trade.id, {'notes': 'Changed.'})
     backup.restore(saved)
-    assert journals.open_named(capture, kept).annotations() == reviews
-    assert journals.journal_path(capture, old).is_file()
-    assert journals.registry(capture)['journals'][old]['archived']
+    # Put back as it was taken, then opened: the named journals become views again, from the reviews of then.
+    restored = Journal()
+    assert set(journals.registry(restored)['views']) == {id} and not (home / 'journals').exists()
+    assert restored.annotations()[trade.id]['notes'] == ('Synthetic fixture, not an actual account trade.\n\n'
+                                                         'Practice review.')
+    assert len(list((home / 'backups').glob('before-journal-views-*.zip'))) == 2
 
 
 def test_an_environment_never_opened_is_backed_up_as_an_empty_journal(home):

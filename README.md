@@ -374,7 +374,7 @@ tags, categories and reviews are kept exactly as they are.
 The sidebar has three pages: **Trades**, **Stats** and **Settings**. Trades holds the **Session** menu (at the top,
 beside Filters), the Daily Report Card (click a day's header) and the checklists you answer, on each trade or on the
 Daily Report Card; Stats holds the dashboards (its last tab); Settings holds tags and checklists, and data
-(imports, backups, journals, the connection), each two clicks from the sidebar. Under the pages, the sidebar says
+(imports, backups, journal views, the connection), each two clicks from the sidebar. Under the pages, the sidebar says
 whether the study is **Recording**, **Not recording** or **Needs attention** (see *Build and connect the study*); click it
 to open Settings.
 
@@ -388,6 +388,24 @@ Replay tag whose name Live already uses, in any case, becomes Live's tag on Repl
 name Live uses for another filter is saved as *name (Replay)*; a starter tag deleted in Live stays deleted unless
 Replay uses it; and Replay's own tags, categories, dashboards, checklists and playbooks are added. Both are backed
 up first, to `backups/before-shared-settings-<time>.zip` in the data folder, and Settings says so once.
+
+**Journal**, in the sidebar once you have made a view, chooses the accounts every page shows: **All accounts**, or
+one of your views. Make a view under **Settings → Data → Journals & Accounts → New View**: a name and at least one
+account. A view only filters: its trades have the same reviews (tags, Rating, notes, Stop), Daily Report Cards and
+settings as in All accounts, so a review typed in a view is there in All accounts too. A saved filter then filters
+the view's trades. **Rename View** and **Delete View** are on the same tab; deleting a view loses nothing. Live
+and Replay each have their own views, as they hold different accounts.
+
+The named journals of 0.4.17 or earlier, each a copy with reviews of its own, become views of their accounts the
+first time this version opens Live or Replay. Fills entered only in a named journal are added to the journal, so
+they count under All accounts too. Its reviews and Daily Report Cards join All accounts': where All accounts has
+none, the named journal's is copied; where it has one, its Rating and Stop stay, the tags of both are kept (a
+one-choice category keeps All accounts' choice), and any part of the named journal's note that is not already there
+is added after a blank line. Its tags, playbooks, filters, dashboards and checklists join the shared ones, a filter
+whose name All accounts uses for another being saved as *name (journal name)*, and so do its merged trades,
+checklist answers, check-ins and Tag My Next Trade. An archived journal's reviews join too, without a view. The
+data folder is backed up first, named journals included, to `backups/before-journal-views-<time>.zip`, and their
+folders are removed only once that backup reads back. Settings says so once.
 
 The trade list stays on the left while the selected trade stays on the right, as one page that scrolls.
 Click a row, or use Prev / Next; no separate opening/back-navigation step is needed. The trade's page, top to
@@ -810,12 +828,13 @@ MotiveWave will not necessarily inherit your terminal environment: the study wri
 `MWJ_HOME` names only when MotiveWave itself is started with it.
 
 **Back up and restore.** Settings → Data → Export & Backup → **Back Up Journal** downloads one zip,
-`MotiveWave Journal backup YYYY-MM-DD.zip`, with Live, Replay and every journal you made (archived ones
-too), safe to take while trades are recording. **Restore From Backup** takes such a zip, shows its date
+`MotiveWave Journal backup YYYY-MM-DD.zip`, with Live and Replay, their views and account names included,
+safe to take while trades are recording. **Restore From Backup** takes such a zip, shows its date
 and how many live and replay trades it holds, and **Restore This Backup** puts the whole journal back as
 it was. Before it does, the journal as it is now is saved to `backups/before-restore-<time>.zip` in the
 data folder, so a restore can be undone by restoring that file. A backup from an older version is brought
-up to date as it is restored; one from a newer version is refused. This zip, not the bridge file, is how a
+up to date as it is restored, its named journals becoming views; one from a newer version is refused. This zip,
+not the bridge file, is how a
 journal is recovered: the bridge file only holds what the app has not read yet. **Export Trades CSV** is the trades of
 the environment on screen, one row each, for a spreadsheet.
 

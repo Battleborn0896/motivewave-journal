@@ -34,7 +34,7 @@ from mwjournal.model import WHY_INCOMPLETE, finite, instant
 from mwjournal.metrics import excursions
 from mwjournal.scope import LIVE_TICKS, provenance
 from mwjournal import humanize, risk, units
-from mwjournal import journals, merging
+from mwjournal import merging
 
 LIST_LIMIT = 150           # rows drawn at once; Show Earlier Trades draws the next ones
 REPORT = 'report-card-open'  # per environment: the Daily Report Card is shown in place of the trade
@@ -204,8 +204,7 @@ def render(journal, rows, *, every=None) -> None:
             empty(journal)
         return
     zone = common.display_zone(journal)
-    capture = getattr(journal, 'capture_journal', journal)
-    seen = common.changes(capture)
+    seen = common.changes(journal)
     selected = common.key(journal, 'selected-trade')
     shown = top_row(journal, every, rows)
     filter_state = {k: st.session_state[k] for k in common.filter_keys(journal)}
@@ -239,7 +238,7 @@ def render(journal, rows, *, every=None) -> None:
             if pinned:
                 st.caption('Kept open: this trade no longer matches your filters.')
             detail(journal, trade, ids, zone)
-    follow(capture, seen)
+    follow(journal, seen)
 
 
 def top_row(journal, every, rows):
@@ -272,10 +271,10 @@ def report_card(journal, rows) -> None:
 
 
 @st.fragment(run_every=LIVE)
-def follow(capture, seen) -> None:
+def follow(journal, seen) -> None:
     """Redraws the page when the background watcher has added or changed trades. Widgets keep their
     keys, so the selection, the Details fold and text being typed stay as they are."""
-    if common.changes(capture) != seen:
+    if common.changes(journal) != seen:
         st.rerun()
 
 
@@ -325,9 +324,8 @@ def trade_list(journal, shown, zone) -> None:
 
 def open_row(journal, row, zone, selected) -> None:
     """An open trade's row, showing the same Open P&L as the header: at the newest price measured, drawn again
-    every LIVE as the header is (a named journal's copy of the trade brought up to date first, as there)."""
+    every LIVE as the header is."""
     trade = common.row_trade(row)
-    journals.follow(journal, trade)
     open_net = common.open_pnl(trade, common.best_display_metric(journal, trade))
     st.markdown(row_html({**row, 'open_net': open_net}, zone, selected), unsafe_allow_html=True)
 
@@ -755,17 +753,10 @@ def chart_panel(journal, trade, zone) -> list[str]:
     return payload['notes']
 
 
-def following(journal, trade, annotation: dict, zone) -> None:
-    """An open trade's numbers, after bringing a named journal's copy of the trade up to date
-    (journals.follow); the watcher keeps the capture journal so."""
-    journals.follow(journal, trade)
-    numbers(journal, trade, annotation, zone)
-
-
 # An open trade's numbers, chart and MAE / MFE path are drawn again every LIVE from what has been stored by then, the
 # rest of the page staying as it is. A closed trade's are drawn once. On the page's own run each returns what the
 # function returns, so the chart's notes reach Details.
-live_numbers = st.fragment(run_every=LIVE)(following)
+live_numbers = st.fragment(run_every=LIVE)(numbers)
 live_chart = st.fragment(run_every=LIVE)(chart_panel)
 live_excursions = st.fragment(run_every=LIVE)(excursions_panel)
 live_row = st.fragment(run_every=LIVE)(open_row)

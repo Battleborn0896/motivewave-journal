@@ -7,7 +7,6 @@ import sqlite3
 import pytest
 
 from mwjournal import Execution, Journal, PriceSample
-from mwjournal import journals
 from mwjournal.analytics import grouped
 from mwjournal.chart import trade_chart
 from mwjournal.importers import apply_preview, preview_bridge
@@ -254,16 +253,6 @@ def test_a_replay_nqz6_trade_on_a_continuous_chart_is_measured_from_its_own_runs
     # Prices marked proxy are an estimate, which the default policy leaves out.
     marked = [dataclasses.replace(sample, proxy=True) for sample in journal.prices('NQZ6', own)]
     assert excursions(trade, marked, own)['precision'] == 'proxy-estimate'
-
-
-def test_a_named_journal_receives_the_prices_of_its_trades_products(tmp_path, monkeypatch):
-    monkeypatch.setenv('MWJ_HOME', str(tmp_path))
-    capture = Journal()
-    trade = round_trip(capture)
-    capture.ingest_prices([tick('NQ', 30, 20030), tick('MNQ', 30, 20090), tick('ES', 30, 5000)])
-    target = journals.open_named(capture, journals.create(capture, 'Paper', [('test', 'paper')]))
-    assert target.prices(trade.symbol, 'motivewave-ticks') == [tick('NQ', 30, 20030)]
-    assert target.price_sources('MNQZ6') == [] and target.price_sources('ESZ6') == []
 
 
 def as_before_the_product_rule(path):

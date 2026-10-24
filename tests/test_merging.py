@@ -5,7 +5,7 @@ import pytest
 import common
 import runtime
 from mwjournal import Execution, Journal, PriceSample
-from mwjournal import merging, journals
+from mwjournal import merging
 from mwjournal.model import instant
 from test_app import open_app, widget, press
 from test_chart import seed_preview
@@ -132,13 +132,3 @@ def test_merge_ui_compound_tagging_checklists_and_the_originals_stay_stored(home
     assert len(view.trades()) == 1 and len(journal.trades()) == 2      # the merge is a view: both originals stay
     press(app, 'Split Into Original Trades')
     assert len(merging.ReviewJournal(journal).trades()) == 2
-
-
-def test_named_journal_scoped_draft_reconciles_against_new_mirrored_fills(home):
-    capture = seed_preview(home)
-    id = journals.create(capture, 'Practice', [('motivewave', 'paper')])
-    target = journals.open_named(capture, id)
-    draft = target.save_draft(provider='motivewave', account='paper', symbol='ESZ6', tags=['Patient'])
-    second(capture)
-    target = journals.open_named(capture, id)
-    assert target.workspace()['drafts'][draft]['state'] == 'attached'
