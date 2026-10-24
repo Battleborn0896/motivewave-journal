@@ -115,6 +115,23 @@ def test_a_view_shows_its_accounts_trades_with_the_reviews_of_all_accounts(home)
     assert Journal().trades() == journal.trades() and set(Journal().annotations()) == set(before)
 
 
+def test_the_session_menu_names_a_trade_the_view_leaves_out(home):
+    journal = seed_preview(home)                          # paper · ESZ6
+    paper, = journal.trades()
+    trade_on(journal, 'SIM', 8)
+    journal.add_tag('Clear-headed', 'State')
+    journal.record_checkin('State', ['Clear-headed'], trade_id=paper.id)
+    id = journals.create(journal, 'SIM only', [('motivewave', 'SIM')])
+    app = open_app()
+    widget(app.sidebar.selectbox, 'Journal').set_value(id).run()
+    app.session_state['session-menu-live'] = True
+    app.run()
+    assert not app.exception
+    checkins = next(d.value for d in app.dataframe if 'Category' in d.value.columns)
+    named, = checkins['Trade']
+    assert named.startswith('Oct 7, ') and named.endswith(' · ESZ6 Long 2')       # not 'A trade no longer listed'
+
+
 def show_trades(app):
     app.segmented_control(key=common.VIEW_KEY).set_value('Trades').run()
     assert not app.exception
@@ -268,6 +285,22 @@ def test_fills_only_a_named_journal_held_are_added_and_counted(home):
     assert merged['active'] and merged['leg_ids'] == [a.id, b.id]
     assert '; 8 fills entered only in a named journal now count under All accounts too.' in (
         journal.unseen_notes()['journal_views'])
+
+
+def test_tags_waiting_in_both_journals_wait_for_the_next_trade_once(home):
+    env = seed_preview(home)
+    env.save_draft(provider='motivewave', account='paper', symbol='NQZ6', tags=['Patient'])
+    practice, _ = old_named(env, 'Practice', [('motivewave', 'paper')])
+    trade_on(practice, 'paper', 8, name='by-hand')        # traded before, and only the named journal held it
+    practice.save_draft(provider='motivewave', account='paper', symbol='NQZ6', tags=['Calm'])   # armed later
+    journal = Journal()
+    journal.reconcile_drafts()
+    # One contract keeps one waiting, the one armed last; the trade only the named journal held is not the next one.
+    assert sorted(d['state'] for d in journal.workspace()['drafts'].values()) == ['armed', 'cancelled']
+    following = trade_on(journal, 'paper', 21)
+    journal.reconcile_drafts()
+    used, = [d for d in journal.workspace()['drafts'].values() if d['state'] == 'attached']
+    assert used['trade_id'] == following.id and journal.annotations()[following.id]['tags'] == ['Calm']
 
 
 def test_an_archived_journal_is_not_a_view_and_its_reviews_stay(home):

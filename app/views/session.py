@@ -153,11 +153,17 @@ def menu(journal, rows) -> None:
                          help='The check-in timer, your latest check-ins, and tags for your next trade.')
     if session.open:
         with session:
-            check_ins(journal, rows)
+            check_ins(journal)
             next_trade(journal, rows)
 
 
-def check_ins(journal, rows) -> None:
+def trade_names(journal, zone) -> dict:
+    """Every trade of this environment by its id, as a trader recognises it: what a check-in or Tag My Next Trade went
+    on is named whichever view of accounts the list shows."""
+    return {r['id']: common.trade_name(r, zone) for r in common.rows(journal)}
+
+
+def check_ins(journal) -> None:
     """Start Check-In Timer, with how long it counts down and the categories that ask, then the latest check-ins."""
     theme.subsection('Check-In Timer')
     # Both boxes open on what is saved, one choice for Live and Replay, on every run.
@@ -183,7 +189,7 @@ def check_ins(journal, rows) -> None:
         st.caption('No check-ins yet.')
         return
     zone = common.display_zone(journal)
-    names = {r['id']: common.trade_name(r, zone) for r in rows}
+    names = trade_names(journal, zone)
     st.dataframe([{'Time': common.moment(e['at'], zone), 'Category': e['group'],
                    'Tags': ', '.join(tagging.names(journal.tag_library(), e['tag_ids'])),
                    'Trade': names.get(e['trade_id'], 'A trade no longer listed') if e['trade_id'] else 'Session'}
@@ -230,7 +236,7 @@ def next_trade(journal, rows) -> None:
     if not drafts:
         return
     zone = common.display_zone(journal)
-    names = {r['id']: common.trade_name(r, zone) for r in rows}
+    names = trade_names(journal, zone)
 
     def contract(draft):
         return f"{common.account_name(journal, draft['provider'], draft['account'])} · {draft['symbol']}"

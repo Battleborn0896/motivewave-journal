@@ -507,9 +507,13 @@ def recalculate(journal) -> None:
 
 
 def show_result(result: dict) -> None:
-    st.success(f"Imported {result['executions']} new executions, {result['prices']} prices, "
-               f"{result.get('protection', 0)} protective-order events. "
-               f"Skipped {result['duplicates']} existing fills.")
+    """What an import added: its new fills, and the prices and stop order updates a bridge file brings."""
+    def count(n, word):
+        return f'{n:,} {word}' + ('' if n == 1 else 's')
+    added = [count(result['executions'], 'new fill'), *([count(result['prices'], 'price')] if result['prices'] else []),
+             *([count(result['protection'], 'stop order update')] if result.get('protection') else [])]
+    st.success(f"Imported {', '.join(added)}." + (f" Skipped {count(result['duplicates'], 'existing fill')}."
+                                                   if result['duplicates'] else ''))
     if result['gaps']:
         st.warning('The file reports dropped ticks: the trades they fall in show no MAE / MFE, and say why.')
 

@@ -20,7 +20,7 @@ from pathlib import Path
 
 from . import merging, tagging
 from .model import Execution
-from .store import Journal, _add_note, encode, merge_settings
+from .store import Journal, _add_note, encode, merge_settings, one_waiting
 from .workspace import OWN, label, read as read_workspace
 
 KEY = 'journal_registry'
@@ -238,7 +238,8 @@ def _fold_one(journal, other, id, name) -> None:
     d. a trade's review is copied where All accounts has none, and joined where it has one (_joined);
     e. so is a day's review and its day tags;
     f. a merged trade of its, when no merged trade of All accounts holds any of its trades;
-    g. its checklist runs, check-ins and Tag My Next Trade.
+    g. its checklist runs, check-ins and Tag My Next Trade, which still waits for a trade neither journal held, one
+       on each account and contract (store.one_waiting).
 
     Each step is harmless to run again. The record that `other` is done is set with the last."""
     with journal.connect() as db:
@@ -286,6 +287,12 @@ def _fold_one(journal, other, id, name) -> None:
         for part in OWN:
             for item_id, item in given[part].items():
                 state[part].setdefault(item_id, tagging.refold(item, folds))
+        # Tag My Next Trade waits for a trade the journal did not hold when it was armed. Every trade it holds now was
+        # traded before, the ones only `other` held included, so none is the next one; and a contract keeps one.
+        for draft in state['drafts'].values():
+            if draft['state'] == 'armed':
+                draft['existing_trades'] = sorted({*draft.get('existing_trades', []), *(trade.id for trade in trades)})
+        one_waiting(state['drafts'])
         if encode(state) != before:
             journal._write_own(db, state)
         _progress(db, folded=id)

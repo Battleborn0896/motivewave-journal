@@ -412,7 +412,7 @@ def _prints_away_from_trades(db) -> int:
 
 
 def _one_connection(db) -> None:
-    """Once per journal, inside the caller's transaction. In 0.4.16 and earlier a journal could also watch CSV files
+    """Once per journal, inside the caller's transaction. In 0.4.17 and earlier a journal could also watch CSV files
     and other bridge files. Now it reads one file, the study's (sync.ensure_default_connection, which also points it
     at the file study 0.3.10 always writes): every other connection goes, with its last status and read position.
     Fills and prices already read stay. Nothing stored is rewritten, so this needs no backup; the upgrade note says
@@ -504,6 +504,19 @@ def _checklists_as_lists(db) -> None:
         _add_note(db, 'checklists', {'converted': converted, 'note': '; '.join(words) + '.'})
 
 
+def one_waiting(drafts: dict) -> int:
+    """Leaves one Tag My Next Trade waiting on each account and contract, the one armed last, as arming one replaces
+    the one waiting there (Workspace.save_draft): the others in `drafts` are cancelled. Returns how many."""
+    waiting, cancelled = {}, 0
+    for draft in sorted((d for d in drafts.values() if d['state'] == 'armed'), key=lambda d: instant(d['at'])):
+        scope = (draft['provider'], draft['account'], draft['symbol'])
+        if scope in waiting:
+            waiting[scope]['state'] = 'cancelled'
+            cancelled += 1
+        waiting[scope] = draft
+    return cancelled
+
+
 def _drafts_without_windows(db) -> None:
     """Once per journal, inside the caller's transaction. Until 0.4.17 a pre-trade draft had a name and waited for a
     trade inside a time window, and one that more than one trade or draft could match was 'ambiguous'; now Tag My
@@ -524,14 +537,7 @@ def _drafts_without_windows(db) -> None:
             cancelled += 1
         elif draft['state'] == 'ambiguous':
             draft['state'] = 'armed'
-    waiting = {}
-    armed = [draft for draft in state['drafts'].values() if draft['state'] == 'armed']
-    for draft in sorted(armed, key=lambda d: instant(d['at'])):
-        scope = (draft['provider'], draft['account'], draft['symbol'])
-        if scope in waiting:
-            waiting[scope]['state'] = 'cancelled'
-            cancelled += 1
-        waiting[scope] = draft
+    cancelled += one_waiting(state['drafts'])
     if encode(state['drafts']) != before:
         write_workspace(db, state)
         ended = (f'; {cancelled} that had not found their trade were cancelled' if cancelled > 1 else
@@ -1067,8 +1073,8 @@ class Journal(Workspace):
         if previous['payload'] != payload:
             held = json.loads(previous['payload'])
             if {k: v for k, v in held.items() if k not in LABELS} != {k: v for k, v in data.items() if k not in LABELS}:
-                raise ImportConflict('An execution ID already exists with different values. '
-                                     'Reconcile the source export before importing a correction.')
+                raise ImportConflict('A fill with this Fill ID is already in the journal with other values. Correct '
+                                     'the file before importing it again.')
             # The same fill, described again: the newer wording replaces the old, and a position id
             # the journal already holds is not lost to a line that does not carry one.
             merged = encode({**data, **{k: held[k] for k in NATIVE if k in held and k not in data}})
@@ -1092,7 +1098,7 @@ class Journal(Workspace):
         for fill, raw in fills:
             if ('mode' in raw or fill.provider.startswith('motivewave-native:')) and event_mode(
                     {**raw, 'provider': fill.provider}) != self.dataset:
-                raise ValueError('Execution belongs to the other trading environment.')
+                raise ValueError('This fill belongs to the other trading environment.')
         with self._write(db) as db:
             return sum(self._insert(db, fill, raw) for fill, raw in fills)
 

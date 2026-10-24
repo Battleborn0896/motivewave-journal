@@ -61,7 +61,8 @@ none establish strategy profitability or verified MotiveWave capability.
 - Persistent trade list on the left, focused chart/tag review on the right; compact tag-first panel.
 - Grouped click-to-toggle tags, local autosave and reusable custom names/groups.
 - Additive copy-tags without replacing notes or risk fields.
-- Process rating; notes, plan, recordings, excursions, executions and runner analysis in tabs.
+- The Rating stars; one page per trade: numbers, chart and tags, note and Stop, checklist, then a Details fold with
+  the fills, the MAE / MFE path and After Exit.
 - Charcoal panels, yellow navigation/emphasis, green/red results and customizable per-tag colors.
 - Legacy flat tags remain available. Catalogue and annotations are local, backed up and separated
   by live/replay environment. Concurrent partial edits preserve unrelated fields.
@@ -69,10 +70,10 @@ none establish strategy profitability or verified MotiveWave capability.
   exclusive groups and calendar-day inheritance with explicit timezone and per-trade overrides.
 - Playbook OR/AND rules, explicit one-click application, automatic recognition, filtering and
   comparisons; hypothetical combination checks exclude trades not closed before the selected entry.
-- Global tick-only policy, independent from units, propagated to review/analytics/gallery/export
-  summaries and runner selection. Raw measurement alternatives remain intact in JSON/SQLite.
+- MAE / MFE from recorded ticks only, one moment in every unit, the same on the trade, in Stats, After Exit and
+  the export.
 - Paged local Book of Charts, sorting, media/type filters, direct tag editing and trade navigation.
-- Persistent dashboard section visibility/order, plus all/any/excluded tag filters.
+- One filter editor for Trades, Stats, dashboard pages and widgets, with all/any/excluded tag filters.
 
 ## 0.3 feature and workflow audit — 2026-10-11
 
@@ -107,7 +108,7 @@ are explicitly defined, not asserted to be the vendor's exact calculations.
 | Session video | Explicit existing local/YouTube link; account/contract/clock/duration/speed alignment; execution jumps/pre-roll | Native playback acceptance, variable-speed/paused replay segmentation UI and Book-of-Charts session-video integration |
 | Custom scripts | Opt-in, two-second Web Worker; filtered display values; text/line/bar result | Deliberately not arbitrary DOM/CDN execution or vendor script compatibility |
 | Trade legs | Raw matching handles scale-ins and partial exits, exact fill roles/time/SL/TP, chart paths | Manual merge/explode of separately imported round trips with reversible provenance-aware excursions |
-| Multiple journals/accounts | Separate Live/Replay databases; views of chosen accounts in the Journal menu, sharing one set of reviews and settings; currency/account filters, account names and named dashboard/filter views | Named isolated journals, rename/clone/export/import across journal workspaces; account aliases |
+| Multiple journals/accounts | Separate Live/Replay databases; views of chosen accounts in the Journal menu, sharing one set of reviews and settings; currency/account filters, account names and named dashboard/filter views | Named isolated journals, rename/clone/export/import across journal workspaces |
 | Imports / sync | Manual fills, mapped CSV of fills, experimental MotiveWave bridge | Dedicated parsers/connectors for every vendor-supported platform; direct R-Trader/Sierra/other integrations |
 | Backups | One zip of both journals (Live and Replay, with their views and account names) with tag library + workspace definitions/runs/check-ins/drafts/videos; restore from it after a copy of the current journal is saved; trades CSV | Media files in the backup and cloud synchronization (not required for the free local target) |
 
@@ -134,8 +135,8 @@ not a substitute for actual live/replay platform acceptance.
 excursions from historical SCID reconstruction, retains measurement provenance, and describes
 optional buffered video, automatic fill screenshots and forward-only post-exit tracking.
 
-Our bridge already retains local fills/prices and distinct measurement sources; our runner
-analysis uses an explicit horizon/stop. Verify MotiveWave's available tick history and actual
+Our bridge already retains local fills/prices and distinct measurement sources; After Exit
+holds the 15 minutes after each exit to the trade's stop. Verify MotiveWave's available tick history and actual
 manual/replay capture before claiming comparable coverage. Media remains opt-in and runtime-
 unverified. Prioritize clearer capture diagnostics and review workflow; do not add order blocking
 to the read-only journal. These are design references, not vendor code or feature-parity claims.

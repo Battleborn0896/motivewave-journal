@@ -300,8 +300,8 @@ order or position id to an entry fill, so a prop account's stops were never writ
 Ordinary `tick` events in the live file, `mode` `live`, `proxy` `false`, `symbol` the exact contract of
 the fills. They are real trades returned by the platform's tick history (never generated from bars) for
 two windows of a position: its holding window, its first fill to its last, five seconds either side, for
-MAE / MFE; and (study 0.3.8) the minutes after its exit, its last fill to 30 minutes later, for the runner
-analysis. A position is the fills that share `account` and `native_position_id`.
+MAE / MFE; and (study 0.3.8) the minutes after its exit, its last fill to 30 minutes later, for After
+Exit. A position is the fills that share `account` and `native_position_id`.
 
 A chart backfills the positions of its active contract: the contract a continuous chart names as active, or
 the chart's own symbol when it names none. These are the names live recording arms on too. So a chart of
