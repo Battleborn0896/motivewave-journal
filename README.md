@@ -439,7 +439,7 @@ Long 2 NQ at 100, price dips to 97, you sell 1 at 102, then the runner dips to 9
 contracts held at the dip, $120, 12 ticks. The runner's 4-point dip on 1 contract is $80, less, so it is not
 the MAE. The MAE / MFE path under a trade's **Details**, drawn in points or ticks, still reaches that 4-point
 dip, so the chart says which moment MAE counts: "MAE counts the moment the most money was at risk: 3.00 pts with
-2 contracts." In dollars and R the path and the numbers always agree.
+2 contracts." In dollars and R the path never reaches past MAE and MFE, so it says nothing there.
 
 Only recorded ticks measure MAE and MFE: there is no accuracy to choose and no price source to pick.
 Candles, proxies, simulated replay prints and ticks with a reported gap do not measure a trade, and a trade
@@ -542,7 +542,7 @@ and counter nodes; selection, duplication, color/text/tag edits, alignment, star
 undo/redo, and explicit save. Questions may branch only to answers. Answer loops must reach a
 manual question; automatic endless loops are rejected. Definitions have JSON export/import and
 non-destructive local versions. Runs retain their definition
-snapshot, answers, counters and collected tags: a trade's run in its Checklist tab, a session run from the
+snapshot, answers, counters and collected tags: a trade's run in its Checklist section, a session run from the
 Checklist menu above the trade list. Applying those tags is explicit; no checklist can
 place, modify or block an order. This editor is not pixel/shortcut/format compatible with CheckMate.
 

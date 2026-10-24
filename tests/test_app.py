@@ -487,6 +487,27 @@ def test_r_shows_a_dash_and_why_without_a_stop(home):
     assert r.value == '+1.21R' and r.help == 'Net P&L divided by the risk to your stop, $200.00.'
 
 
+def test_a_path_short_of_mae_because_of_a_fill_says_nothing_about_a_moment(home):
+    """One contract stopped out at 4997.75, below every recorded print: MAE counts that fill, 2.25 pts, which the
+    path does not draw, so the path stops at 4998.25. That is no moment of more contracts to explain, in any unit."""
+    journal = Journal()
+    journal.ingest([(Execution('motivewave', 'paper', 'ESZ6', side, 1, price, ts, execution_id=id), {})
+                    for id, side, price, ts in (('in', 'buy', 5000, '2026-10-07T14:00:00Z'),
+                                                ('out', 'sell', 4997.75, '2026-10-07T14:02:00Z'))])
+    trade = journal.trades()[0]
+    prints = [PriceSample('ESZ6', f'2026-10-07T14:{at}Z', 'motivewave-ticks', price, price)
+              for at, price in (('00:30', 4999.5), ('01:00', 5001), ('01:30', 4998.25))]
+    journal.ingest_prices(prints)
+    journal.record_metric(trade, excursions(trade, prints, 'motivewave-ticks'))
+    app = open_app()
+    for unit, mae, low in (('points', '2.25 pts', -1.75), ('currency', '$112.50', -87.5)):
+        display_setting(app, 'MAE / MFE Units', unit)
+        open_details(app)
+        path = next(json.loads(x.proto.spec) for x in app.get('plotly_chart') if 'Move from your average entry' in x.proto.spec)
+        assert widget(app.metric, 'MAE').value == mae and min(path['data'][1]['y']) == low
+        assert not said(details(app).caption, 'counts the moment')
+
+
 def test_details_stays_open_while_an_open_trade_redraws(home):
     """A browser sends the Details fold's state with every run, under the id it was drawn with (conftest sends it as
     a browser does): the fold stays open while that id is the same, through an open trade's new prices, the redraw a
@@ -609,7 +630,7 @@ def test_trade_rows_are_built_again_only_when_something_they_show_changed(home, 
     # reuses them; a closed trade's (prices that came in late) builds them once, with its new MAE.
     journal.record_metric(later, {'source': 'motivewave-bars:1m', 'precision': 'pending', 'path': [], 'notes': ['again']})
     assert clicks(app.run) == 0
-    deeper =[dataclasses.replace(s, high=s.high - 3, low=s.low - 3) for s in journal.prices(trade.symbol, 'motivewave-ticks')]
+    deeper = [dataclasses.replace(s, high=s.high - 3, low=s.low - 3) for s in journal.prices(trade.symbol, 'motivewave-ticks')]
     journal.record_metric(trade, excursions(trade, deeper, 'motivewave-ticks'))
     assert shown(trade.id)['mae'] != common.best_display_metric(journal, trade)['mae']
     assert clicks(app.run) == 1 and shown(trade.id)['mae'] == common.best_display_metric(journal, trade)['mae']

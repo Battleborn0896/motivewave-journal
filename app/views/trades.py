@@ -15,7 +15,6 @@ import hashlib
 import html
 import itertools
 import json
-import math
 import time
 
 import pandas as pd
@@ -643,10 +642,12 @@ def excursions_panel(journal, trade, zone) -> None:
 
 
 def moment_notes(trade, metric, path, unit, tick) -> list[str]:
-    """One sentence for MAE, and one for MFE, when the path drawn in points or ticks reaches another distance than
-    the one shown. MAE and MFE are the moment the move times the contracts held was largest (metrics.extremes), so
-    a runner can dip further with fewer contracts: the path reaches -4 pts while MAE is 3.00 pts on the 2 contracts
-    held at the first dip. In dollars and R the path and the numbers are the same amounts."""
+    """One sentence for MAE, and one for MFE, when the path drawn in points or ticks reaches further than the one
+    shown. MAE and MFE are the moment the move times the contracts held was largest (metrics.extremes), so a runner
+    can dip further with fewer contracts: the path reaches -4 pts while MAE is 3.00 pts on the 2 contracts held at
+    the first dip. In dollars and R the path never reaches past the numbers, which count the most money. A path
+    that stops short of them (a fill beyond every recorded price: fills are not on the path) has no moment to
+    explain, in any unit."""
     if unit not in ('points', 'ticks'):
         return []
     said = []
@@ -655,7 +656,7 @@ def moment_notes(trade, metric, path, unit, tick) -> list[str]:
         moved = metric.get(name + '_points')
         reach = max((sign * p['point_' + side] for p in path if p.get('point_' + side) is not None), default=None)
         amount = units.value(metric, name, unit, tick=tick)
-        if moved is None or reach is None or amount is None or math.isclose(max(0., reach), moved, abs_tol=1e-9):
+        if moved is None or reach is None or amount is None or reach <= moved + 1e-9:
             continue
         dollars = metric.get(name)
         held = round(dollars / (moved * trade.point_value), 6) if dollars and moved and trade.point_value else None

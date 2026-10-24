@@ -167,7 +167,7 @@ def test_unknown_results_and_multipliers_have_no_risk():
     custom = trade(journal, ('c-in', 'buy', 1, 100, 0), ('c-out', 'sell', 1, 101, 60), symbol='CUSTOM')
     assert custom.point_value is None
     result = plan(custom, {'planned_stop': 99}, [])
-    assert result.risk is None and 'multiplier' in result.why
+    assert result.risk is None and result.why == "R needs this contract's dollars per point."
     assert initial_risk(custom, 99) is None and stop_for_risk(custom, 100) is None
 
 

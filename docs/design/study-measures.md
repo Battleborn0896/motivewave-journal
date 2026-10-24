@@ -443,7 +443,7 @@ PRIMARY KEY (trade_id, fills_key)
 - **`common.py`:**
   - `policy_selector`, `display_metric`, `best_display_metric`'s ranking, `metric_options`, `recalculate`;
   - `replay_ticks_pending`, `REPLAY_TICKS_LATER`, `PRECISION`;
-  - the tick-size popover in `excursion_help`.
+  - the tick-size popover, `tick_size_menu`.
 - **`views/trades.py`:**
   - `window_prices` and `KEPT`;
   - the Chart price source and Measurement selectboxes;

@@ -109,7 +109,7 @@ def plan(trade, annotation: dict, events) -> Plan:
         if trade.incomplete:
             why = ''                      # the line under the trade's numbers says why its result is unknown
         elif trade.point_value is None:
-            why = 'R needs this contract\'s multiplier.'
+            why = 'R needs this contract\'s dollars per point.'
         elif stop is None and len(prices) > 1:
             why = (f'Your stop orders had different prices {STOP_SETTLES} seconds after entry. '
                    'Type the stop R should use.')
