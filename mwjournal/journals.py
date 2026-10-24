@@ -38,8 +38,12 @@ def _stored(db) -> dict:
 
 
 def registry(journal) -> dict:
+    """The registry (_stored), its views in the order of their names, as the Journal menu lists them: stored by id,
+    they would come in no order a trader could follow."""
     with journal.connect() as db:
-        return _stored(db)
+        state = _stored(db)
+    state['views'] = dict(sorted(state['views'].items(), key=lambda item: (item[1]['name'].casefold(), item[0])))
+    return state
 
 
 def edit(journal, operation):
@@ -166,13 +170,19 @@ def fold(journal) -> None:
         with journal.connect() as db:
             db.execute('BEGIN IMMEDIATE')
             pending = _pending(db)
-            if pending.get('backup') and Path(pending['backup']).is_file():
+            if db.execute('SELECT 1 FROM journal_meta WHERE key=?', (FLAG,)).fetchone():
+                made.unlink()
+                return                             # another window folded them while this one backed up
+            if pending.get('backup') not in (None, str(made)) and Path(pending['backup']).is_file():
                 made.unlink()                      # another window backed up first
             else:
-                pending = {'backup': str(made), 'fills': 0, 'folded': []}
+                # A record whose backup was deleted keeps what it says is done: that is in the journal already.
+                pending = {'fills': 0, 'folded': [], **pending, 'backup': str(made)}
                 db.execute('INSERT OR REPLACE INTO journal_meta VALUES(?,?)', (PENDING, encode(pending)))
     accounts = {}
     for id, path in found:
+        if not path.is_file():
+            continue                               # another window folded it and removed its folder meanwhile
         try:
             each = Journal(path, dataset=journal.dataset)
             accounts[id] = {(fill.provider, fill.account) for fill in each.executions()}
@@ -187,17 +197,23 @@ def fold(journal) -> None:
         if db.execute('SELECT 1 FROM journal_meta WHERE key=?', (FLAG,)).fetchone():
             return                                 # another window finished it
         state, pending = _stored(db), _pending(db)
-        views = state['views']
+        views, listed = state['views'], False
         for id, definition in state.pop('journals', {}).items():
             chosen = sorted({*(tuple(scope) for scope in definition.get('scopes', [])), *accounts.get(id, ())})
             if chosen and not definition.get('archived'):
-                views[id] = {'id': id, 'name': definition['name'], 'accounts': [list(each) for each in chosen]}
+                name = definition['name']
+                if name.casefold() == ALL.casefold():
+                    name += ' (view)'              # a name 0.4.17 allowed, which the Journal menu's first choice has
+                views[id] = {'id': id, 'name': name, 'accounts': [list(each) for each in chosen]}
+                listed = True
         db.execute('INSERT OR REPLACE INTO journal_meta VALUES(?,?)', (KEY, encode(state)))
         db.execute('DELETE FROM journal_meta WHERE key=?', (PENDING,))
         db.execute('INSERT INTO journal_meta VALUES(?,?)', (FLAG, str(len(found))))
         fills = pending.get('fills', 0)
-        note = ('Named journals are now views, chosen under Journal in the sidebar, that show their accounts with the '
-                'same reviews, tags and settings as All accounts'
+        # Archived journals, and those without an account, are no view: then there is no Journal menu to point to.
+        note = (('Named journals are now views, chosen under Journal in the sidebar, that show their accounts with '
+                 'the same reviews, tags and settings as All accounts' if listed else
+                 "Your named journals' reviews, tags and settings joined All accounts")
                 + (f'; {fills} fill{"" if fills == 1 else "s"} entered only in a named journal now count under All '
                    'accounts too' if fills else '') + '.')
         _add_note(db, FLAG, {'backup': pending.get('backup'), 'fills': fills, 'note': note})
@@ -279,9 +295,13 @@ def _joined(kept: dict, given: dict, library: dict, field: str) -> dict:
     """The review of a trade or a day in All accounts, `kept`, with a named journal's of the same one, `given`, joined
     in. Kept's Rating, Stop and every other answer stay; one kept left empty is taken from given. The tags of both are
     kept (`field`: tag_ids on a trade, day_tag_ids on a day), except given's in a one-choice category kept already
-    chose in. Each paragraph of given's note that kept's does not already contain is added after a blank line: clones
-    of one journal hold copies of each other's notes, which are never said twice."""
-    joined = {**kept, **{name: value for name, value in given.items() if kept.get(name) in (None, '', [])}}
+    chose in. Each paragraph of given's note that is not one of kept's (spaces and line breaks aside) is added after a
+    blank line: clones of one journal hold copies of each other's notes, which are never said twice. A paragraph is
+    matched whole, never inside another one: 'FOMO' is not already said by 'No FOMO today'. A note kept left empty is
+    given's, as it was typed."""
+    def empty(value):
+        return value is None or value == [] or (isinstance(value, str) and not value.strip())
+    joined = {**kept, **{name: value for name, value in given.items() if empty(kept.get(name))}}
     chosen = tagging.selected if field == 'tag_ids' else tagging.inherited
     mine = chosen(library, kept)
     taken = {library['tags'][id]['group'] for id in mine}
@@ -291,12 +311,15 @@ def _joined(kept: dict, given: dict, library: dict, field: str) -> dict:
         joined[field] = sorted(tags)
         if field == 'tag_ids':
             joined['tags'] = tagging.names(library, tags)
-    notes = before = str(kept.get('notes') or '').strip()
-    for part in re.split(r'\n\s*\n', str(given.get('notes') or '')):
-        if part.strip() and part.strip() not in notes:
-            notes = (notes + '\n\n' if notes else '') + part.strip()
-    if notes != before:
-        joined['notes'] = notes
+    notes = str(kept.get('notes') or '')
+    if notes.strip():
+        said, added = {' '.join(part.split()) for part in re.split(r'\n\s*\n', notes)}, []
+        for part in re.split(r'\n\s*\n', str(given.get('notes') or '')):
+            if part.strip() and ' '.join(part.split()) not in said:
+                said.add(' '.join(part.split()))
+                added.append(part.strip())
+        if added:
+            joined['notes'] = '\n\n'.join([notes.rstrip(), *added])
     return joined
 
 

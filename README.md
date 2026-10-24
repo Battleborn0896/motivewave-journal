@@ -400,12 +400,13 @@ The named journals of 0.4.17 or earlier, each a copy with reviews of its own, be
 first time this version opens Live or Replay. Fills entered only in a named journal are added to the journal, so
 they count under All accounts too. Its reviews and Daily Report Cards join All accounts': where All accounts has
 none, the named journal's is copied; where it has one, its Rating and Stop stay, the tags of both are kept (a
-one-choice category keeps All accounts' choice), and any part of the named journal's note that is not already there
-is added after a blank line. Its tags, playbooks, filters, dashboards and checklists join the shared ones, a filter
-whose name All accounts uses for another being saved as *name (journal name)*, and so do its merged trades,
-checklist answers, check-ins and Tag My Next Trade. An archived journal's reviews join too, without a view. The
-data folder is backed up first, named journals included, to `backups/before-journal-views-<time>.zip`, and their
-folders are removed only once that backup reads back. Settings says so once.
+one-choice category keeps All accounts' choice), and each paragraph of the named journal's note that All accounts'
+note does not already have is added after a blank line. Its tags, playbooks, filters, dashboards and checklists join
+the shared ones, a filter whose name All accounts uses for another being saved as *name (journal name)*, and so do
+its merged trades, checklist answers, check-ins and Tag My Next Trade. An archived journal's reviews join too,
+without a view, and a journal named All accounts becomes the view *All accounts (view)*. The data folder is backed
+up first, named journals included, to `backups/before-journal-views-<time>.zip`, and their folders are removed only
+once that backup reads back. Settings says so once.
 
 The trade list stays on the left while the selected trade stays on the right, as one page that scrolls.
 Click a row, or use Prev / Next; no separate opening/back-navigation step is needed. The trade's page, top to

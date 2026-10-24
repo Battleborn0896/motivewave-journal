@@ -281,6 +281,37 @@ def test_an_archived_journal_is_not_a_view_and_its_reviews_stay(home):
     assert journal.annotations()[trade.id]['notes'].endswith('\n\nFrom the archived journal')
     with zipfile.ZipFile(zips(home)[0]) as archive:
         assert f'journals/{id}/trades.sqlite3' in archive.namelist()
+    # No view, so no Journal menu: the note does not send the trader looking for one.
+    assert journal.unseen_notes()['journal_views'] == ("Your named journals' reviews, tags and settings joined All "
+                                                       'accounts.')
+
+
+def test_a_paragraph_is_matched_whole_and_a_note_all_accounts_lacks_is_copied_as_typed(home):
+    env = seed_preview(home)                              # its review's note: one paragraph
+    trade, = env.trades()
+    other = trade_on(env, 'paper', 8)
+    env.update_annotation(other.id, {'notes': '   ', 'rating': 3})
+    named, _ = old_named(env, 'Practice', [('motivewave', 'paper')])
+    named.update_annotation(trade.id, {'notes': 'fixture\n\nSynthetic   fixture, not an actual\naccount trade.'})
+    typed = 'Late entry\n  chased it\n\n\nNext time wait'
+    named.update_annotation(other.id, {'notes': typed})
+    journal = Journal()
+    # 'fixture' is a word of All accounts' note, not one of its paragraphs: it is added. The other paragraph is All
+    # accounts' own, wrapped differently, and is not said twice.
+    assert journal.annotations()[trade.id]['notes'] == 'Synthetic fixture, not an actual account trade.\n\nfixture'
+    assert journal.annotations()[other.id]['notes'] == typed and journal.annotations()[other.id]['rating'] == 3
+
+
+def test_views_are_listed_by_name_and_a_journal_named_all_accounts_keeps_its_own_place(home):
+    env = seed_preview(home)
+    old_named(env, 'Zulu', [('motivewave', 'paper')])
+    old_named(env, 'all accounts', [('motivewave', 'paper')])
+    journal = Journal()
+    journals.create(journal, 'Mike', [('motivewave', 'paper')])
+    names = [view['name'] for view in journals.registry(journal)['views'].values()]
+    assert names == ['all accounts (view)', 'Mike', 'Zulu']
+    app = open_app()
+    assert widget(app.sidebar.selectbox, 'Journal').options == ['All accounts', *names]
 
 
 def test_a_named_replay_journal_becomes_a_view_of_replay_and_its_tags_join_the_shared_ones(home):
@@ -328,6 +359,27 @@ def test_a_fold_that_fails_carries_on_at_the_next_open_from_the_same_backup(home
     assert journal.annotations()[trade.id]['notes'].endswith('Second review')
     assert '2 fills entered only' in journal.unseen_notes()['journal_views']       # counted once
     assert meta(journal.path, journals.PENDING) is None
+
+
+def test_a_fold_whose_backup_was_deleted_meanwhile_backs_up_again_and_keeps_its_count(home, monkeypatch):
+    env = seed_preview(home)
+    first, a = old_named(env, 'First', [])
+    trade_on(first, 'paper', 8, name='by-hand')
+    second, b = old_named(env, 'Second', [])
+    folded = journals._fold_one
+
+    def failing(journal, other, id, name):
+        if id == b:
+            raise sqlite3.OperationalError('disk I/O error')
+        folded(journal, other, id, name)
+    monkeypatch.setattr(journals, '_fold_one', failing)
+    with pytest.raises(ValueError, match='The named journal Second could not become a view'):
+        Journal()
+    zips(home)[0].unlink()                                # the trader cleared the backups folder
+    monkeypatch.setattr(journals, '_fold_one', folded)
+    journal = Journal()
+    assert len(zips(home)) == 1 and not first.path.exists() and not second.path.exists()
+    assert '2 fills entered only' in journal.unseen_notes()['journal_views']       # First's, added before
 
 
 def test_a_backup_that_does_not_read_back_is_removed_and_nothing_changes(home, monkeypatch):
