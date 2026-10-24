@@ -41,6 +41,12 @@ def starter_library():
     return state
 
 
+# Each tag a library is given rather than made, by its id: (its name, its category). The starters, Day's among them,
+# and the hidden suggestions of 0.4.0 and earlier (LEGACY_CATALOG).
+GIVEN = {**{identity(name): (name, group) for name, group in LEGACY_CATALOG.items()},
+         **{identity(name): (name, group) for group, _, names in STARTERS for name in names}}
+
+
 def upgrade_library(db, *, needed: bool) -> tuple[dict, dict]:
     """The schema 4 upgrade of a journal's tag library, inside the caller's transaction (store._schema_4): the library
     loses the time zone it kept for day tags, gains the Day category and its tags (tags.DAY), and is stored. A tag
@@ -430,16 +436,17 @@ def matched_playbooks(state, chosen):
     return [p['name'] for p in state['playbooks'].values() if not p.get('retired') and matches(state, chosen, p)]
 
 
-def merge(ours, theirs) -> tuple[dict, dict]:
+def merge(ours, theirs, unused=()) -> tuple[dict, dict]:
     """`theirs`, another journal's library (held), joined into `ours`, which wins. Returns (the joined library, {id: the
     id it became} for each tag and playbook of theirs that went into one of ours); neither library is changed.
 
     A tag both hold under one id keeps our name, category, colour, score and retired state, and gains their names and
     their levels (trades, days). A tag of theirs whose name or a former name is one of ours, exactly or else in any
-    case, goes into ours the same way. Any other tag is added with its id, after ours, and so is a category only they
-    have, unless all its tags went into ours. A name never ends up on two tags. A playbook both hold under one id
-    keeps ours; one named as one of ours goes into it; any other is added, its tags as they are now, each under its
-    category."""
+    case, goes into ours the same way. A starter or old suggestion of theirs still under the name and category it was
+    given (GIVEN) that nothing of theirs uses (`unused`, ids) stays out: ours deleted it or never had it. Any other
+    tag is added with its id, after ours, and so is a category only they have that is empty or had a tag added. A
+    name never ends up on two tags. A playbook both hold under one id keeps ours; one named as one of ours goes into
+    it; any other is added, its tags as they are now, each under its category."""
     merged, folds = copy.deepcopy(ours), {}
 
     def taken(name, by):
@@ -457,6 +464,8 @@ def merge(ours, theirs) -> tuple[dict, dict]:
     order = max((tag['order'] for tag in merged['tags'].values()), default=-1)
     for id, tag in sorted(theirs['tags'].items(), key=lambda item: item[1]['order']):
         target = id if id in merged['tags'] else owner([tag['name'], *tag['aliases']])
+        if target is None and id in unused and GIVEN.get(id) == (tag['name'], tag['group']):
+            continue
         if target is None:
             order += 1
             merged['tags'][id] = {**copy.deepcopy(tag), 'id': id, 'order': order,

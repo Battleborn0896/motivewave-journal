@@ -601,7 +601,7 @@ def merge_settings(db, other, word: str = 'Replay') -> tuple[dict, dict]:
     inside both callers' transactions; `other` is only read. What `db` keeps wins:
 
     - tags, categories and playbooks as tagging.merge joins them, with every tag name on either journal's reviews
-      kept in the library (tagging.held);
+      kept in the library (tagging.held), and without the starters `db` deleted that nothing in `other` uses;
     - dashboards and checklists, whose ids are their own, are added after `db`'s, each tag and playbook id in them
       as it became;
     - a saved filter goes under its own name, or under '<name> (<word>)' when `db` has another filter of that name;
@@ -617,7 +617,9 @@ def merge_settings(db, other, word: str = 'Replay') -> tuple[dict, dict]:
         if ours is None:
             ours = theirs
         else:
-            ours, folds = tagging.merge(ours, theirs)
+            # A starter `db` deleted stays deleted, unless `other` uses it.
+            unused = {id for id in theirs['tags'] if id in tagging.GIVEN and not tagging.tag_uses(other, theirs, id)}
+            ours, folds = tagging.merge(ours, theirs, unused)
     if ours is not None:
         row = db.execute("SELECT value FROM journal_meta WHERE key='tag_library'").fetchone()
         if not row or json.loads(row[0]) != ours:

@@ -241,6 +241,22 @@ def test_replays_settings_join_lives_once_with_a_backup_first(home):
     assert opened.unseen_notes() == {}
 
 
+def test_a_starter_deleted_in_live_stays_deleted_unless_a_replay_trade_uses_it(home):
+    live = Journal(home / 'trades.sqlite3')
+    replay = Journal(home / 'replay' / 'trades.sqlite3', dataset='replay')
+    live.tag_library(), replay.tag_library()                   # each was shown once: each was given the starters
+    for name in ('Range', 'Tilted', 'Moved Stop', 'Calm', 'Patient', 'FOMO', 'Hesitant'):
+        live.delete_tag(tag_id(live, name))
+    live.delete_tag_group('Mindset')
+    replay.edit_tag(tag_id(replay, 'Moved Stop'), name='Trailed Stop')        # one Replay changed and never used
+    replay.set_trade_tag_group(round_trip(replay), 'Mindset', ['Tilted'])
+    library = Journal(dataset='replay').tag_library()
+    names = {tag['name']: tag['group'] for tag in library['tags'].values()}
+    assert 'Range' not in names and 'Calm' not in names and 'Patient' not in names
+    assert names['Tilted'] == 'Mindset' and names['Trailed Stop'] == 'Execution'
+    assert 'Mindset' in library['groups']
+
+
 def test_the_move_is_harmless_twice_and_one_cut_short_finishes_at_the_next_open(home):
     separate(home)
     replay_file = paths.database('replay')

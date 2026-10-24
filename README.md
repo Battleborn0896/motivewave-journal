@@ -382,12 +382,12 @@ to open Settings.
 checklist answers, check-ins and Tag My Next Trade. They share one set of tags, categories, playbooks, saved
 filters, dashboards and checklists, and one **Time Zone**, **MAE / MFE Units**, tick sizes and check-in timer: a
 change made in one shows in the other, and a tag on a trade or a day in either cannot be deleted. The Live
-journal keeps them, so the app makes it when only Replay is used. The first time 0.4.17's separate journals open,
-Replay's settings join Live's: Live's names, categories, colours, preferences and Units win; a Replay tag whose
-name Live already uses, in any case, becomes Live's tag on Replay's trades; a Replay filter with a name Live uses
-for another filter is saved as *name (Replay)*; and Replay's own tags, categories, dashboards, checklists and
-playbooks are added. Both are backed up first, to `backups/before-shared-settings-<time>.zip` in the data folder,
-and Settings says so once.
+journal keeps them, so the app makes it when only Replay is used. Opening the separate journals of 0.4.17 or
+earlier once joins Replay's settings to Live's: Live's names, categories, colours, preferences and Units win; a
+Replay tag whose name Live already uses, in any case, becomes Live's tag on Replay's trades; a Replay filter with a
+name Live uses for another filter is saved as *name (Replay)*; a starter tag deleted in Live stays deleted unless
+Replay uses it; and Replay's own tags, categories, dashboards, checklists and playbooks are added. Both are backed
+up first, to `backups/before-shared-settings-<time>.zip` in the data folder, and Settings says so once.
 
 The trade list stays on the left while the selected trade stays on the right, as one page that scrolls.
 Click a row, or use Prev / Next; no separate opening/back-navigation step is needed. The trade's page, top to
