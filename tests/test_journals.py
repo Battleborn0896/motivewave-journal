@@ -115,6 +115,23 @@ def test_a_view_shows_its_accounts_trades_with_the_reviews_of_all_accounts(home)
     assert Journal().trades() == journal.trades() and set(Journal().annotations()) == set(before)
 
 
+def test_the_session_menu_names_a_trade_the_view_leaves_out(home):
+    journal = seed_preview(home)                          # paper · ESZ6
+    paper, = journal.trades()
+    trade_on(journal, 'SIM', 8)
+    journal.add_tag('Clear-headed', 'State')
+    journal.record_checkin('State', ['Clear-headed'], trade_id=paper.id)
+    id = journals.create(journal, 'SIM only', [('motivewave', 'SIM')])
+    app = open_app()
+    widget(app.sidebar.selectbox, 'Journal').set_value(id).run()
+    app.session_state['session-menu-live'] = True
+    app.run()
+    assert not app.exception
+    checkins = next(d.value for d in app.dataframe if 'Category' in d.value.columns)
+    named, = checkins['Trade']
+    assert named.startswith('Oct 7, ') and named.endswith(' · ESZ6 Long 2')       # not 'A trade no longer listed'
+
+
 def show_trades(app):
     app.segmented_control(key=common.VIEW_KEY).set_value('Trades').run()
     assert not app.exception
