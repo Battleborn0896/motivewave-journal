@@ -840,7 +840,7 @@ def test_what_an_upgrade_did_is_said_once_at_the_top_of_settings_until_ok():
     journal = Journal()
     journal._note('packed', {'prints': 3, 'note': 'Packed the recorded ticks, and every tick is kept.'})
     journal.put('profiles', 'Broker export', {'path': '/nowhere/fills.csv', 'mode': 'executions', 'enabled': True})
-    with journal.connect() as db:                         # as 0.4.16 left it: one more step to take at the next open
+    with journal.connect() as db:                         # as 0.4.17 left it: one more step to take at the next open
         db.execute("DELETE FROM journal_meta WHERE key='one_connection'")
     app = open_app('Settings')
     said_once = ('Packed the recorded ticks, and every tick is kept. The journal now reads only the study\'s own file; '

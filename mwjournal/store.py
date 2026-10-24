@@ -412,7 +412,7 @@ def _prints_away_from_trades(db) -> int:
 
 
 def _one_connection(db) -> None:
-    """Once per journal, inside the caller's transaction. In 0.4.16 and earlier a journal could also watch CSV files
+    """Once per journal, inside the caller's transaction. In 0.4.17 and earlier a journal could also watch CSV files
     and other bridge files. Now it reads one file, the study's (sync.ensure_default_connection, which also points it
     at the file study 0.3.10 always writes): every other connection goes, with its last status and read position.
     Fills and prices already read stay. Nothing stored is rewritten, so this needs no backup; the upgrade note says

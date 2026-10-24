@@ -530,7 +530,7 @@ once in one line at the top of Settings:
   inside its window waits for its next trade.
 - **MAE / MFE are measured again** from your recorded ticks, so on a scaled trade dollars, points, ticks and R show
   the same moment.
-- **Watched CSVs** (0.4.16 or earlier) stop being read; the trades they brought in stay, and reading the study's
+- **Watched CSVs** (0.4.17 or earlier) stop being read; the trades they brought in stay, and reading the study's
   file is always on.
 
 The look follows Tradecraft's charcoal workspace and coloured tag cards, and its
@@ -763,7 +763,7 @@ again after an app update, use **Settings → Data → Connection → Install Mo
 **Settings → Data → Connection** shows the same state, when the study last reported in and how many fills the
 journal holds, and installs the study again. Under it, a closed **Troubleshooting** holds the file being read, the
 journal's database, the study's own messages and any ticks it reported dropped. The app reads one file, the study's:
-there is no other file to watch and no path to type. A journal that watched other files in 0.4.16 or earlier stops
+there is no other file to watch and no path to type. A journal that watched other files in 0.4.17 or earlier stops
 reading them the first time it opens, keeps the trades they brought in, and Settings says so once.
 See [MotiveWave's import instructions](https://docs.motivewave.com/knowledge-base/study/add-a-custom-study).
 

@@ -673,7 +673,7 @@ def test_each_move_runs_once_and_a_new_journal_has_nothing_to_move(tmp_path):
 # ---------------------------------------------------------------- one connection: the study's file alone
 
 def as_0_4_16_connections(journal):
-    """Put a journal back as 0.4.16 left it: free to watch other files, its study connection pointed anywhere."""
+    """Put a journal back as 0.4.17 left it: free to watch other files, its study connection pointed anywhere."""
     with journal.connect() as db:
         db.execute("DELETE FROM journal_meta WHERE key='one_connection'")
 
