@@ -603,7 +603,7 @@ def excursions_panel(journal, trade, zone) -> None:
                            key=common.key(journal, 'path-export-' + trade.id))
     path = pd.DataFrame(m['path'])
     if path.empty:
-        st.info('No matching recorded path observations remain for this source.')
+        st.info('No recorded prices are left for this path.')
         return
     if full and len(path) > 20000:
         st.caption('The CSV has every price; the plot uses fewer so it stays responsive.')
@@ -701,8 +701,7 @@ def chart_panel(journal, trade, zone) -> list[str]:
     chart's notes on its candles, which Details shows."""
     sources = journal.price_sources(trade.symbol, trade)
     if not sources:
-        st.info('No candles yet for this contract. Add the study to its chart in MotiveWave, or import '
-                '1-minute bars or ticks in Import.')
+        st.info('No candles yet for this contract. Add the study to its chart in MotiveWave.')
         return []
     source = default_source(sources)
     clock = journal.trade_clock(trade)
@@ -737,8 +736,8 @@ def chart_panel(journal, trade, zone) -> list[str]:
                    help='Arrows are your fills, dashed lines join each entry to its exit, and the solid line is '
                         'your stop.')
     else:
-        st.info('No usable 1-minute candles in the trade window. Full OHLC or recorded ticks are needed; '
-                'high/low-only and 5-minute history cannot be turned into real 1-minute candles.')
+        st.info('No 1-minute candles were recorded for the minutes of this trade. Keep the study on a chart of '
+                'this contract while you trade.')
     if trade.closed and instant(trade.closed) > end:
         st.warning('The chart is capped at 10,000 minutes from entry. This position was held beyond that window.')
     if journal.capture_gaps(source, start=start.isoformat(), end=end.isoformat(), symbol=trade.symbol):

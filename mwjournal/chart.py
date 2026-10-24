@@ -65,7 +65,7 @@ def minute_candles(samples: list[PriceSample], symbol: str, source: str) -> tupl
             point['volume'] = volume
         data.append(point)
     if unusable:
-        notes.append('Some prices cannot draw 1m candles: provide minute-aligned OHLC, smaller OHLC bars, or ticks.')
+        notes.append('Some prices are not 1-minute bars or ticks, so they cannot draw 1-minute candles.')
     if ticks and is_history(source):
         notes.append("Candles aggregate real prints loaded from the platform's history afterwards (history "
                      'backfill); the data service decides how much of each minute it returns.')

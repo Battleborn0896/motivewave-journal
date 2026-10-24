@@ -803,7 +803,7 @@ def test_csv_fills_are_mapped_previewed_and_imported_once():
     assert not any(t.label.startswith('Source identity') for t in app.text_input)
     assert said(app.markdown, '2 records ready')
     press(app, 'Import Into My Journal')
-    assert said(app.success, 'Imported 2 new executions')
+    assert said(app.success, 'Imported 2 new fills.')
     journal = Journal()
     trade = journal.trades()[0]
     assert trade.closed and trade.net == 96 and trade.provider == 'csv'
@@ -843,12 +843,12 @@ def test_a_bridge_file_and_a_fills_csv_dropped_in_the_same_box_are_each_recognis
     assert not app.exception and said(app.markdown, '2 records ready')
     assert not any(e.label == 'Column Mapping' for e in app.expander)          # nothing to map in a bridge file
     press(app, 'Import Into My Journal')
-    assert said(app.success, 'Imported 2 new executions')
+    assert said(app.success, 'Imported 2 new fills.')
     assert {e.provider for e in Journal().executions()} == {'motivewave-native:workspace:live'}
     widget(app.file_uploader, IMPORT_BOX).upload('fills.csv', FILLS_CSV.encode(), 'text/csv').run()
     assert not app.exception and any(e.label == 'Column Mapping' for e in app.expander)
     press(app, 'Import Into My Journal')
-    assert said(app.success, 'Imported 2 new executions')
+    assert said(app.success, 'Imported 2 new fills.')
     assert sorted(e.provider for e in Journal().executions()) == ['csv', 'csv', 'motivewave-native:workspace:live',
                                                                   'motivewave-native:workspace:live']
 
