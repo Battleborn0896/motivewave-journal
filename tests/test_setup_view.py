@@ -86,9 +86,9 @@ def test_the_first_page_has_no_paths_raw_errors_or_paragraphs_of_jargon():
     app = open_app('Settings')
     visible = ' '.join(e.value for kind in ('markdown', 'info', 'code') for e in getattr(app.main, kind))
     assert str(paths.bridge_file('live')) not in visible and 'motivewave.ndjson' not in visible
-    assert 'Scale-ins and partial exits' not in visible                    # how trades are made is in the ?
-    assert helped(app.main.markdown, 'flat to flat') and helped(app.main.markdown, 'Scale-ins and partial exits')
-    assert helped(app.main.markdown, "real ticks of its holding time from MotiveWave's history")
+    # The status line's ? is one sentence on what its state means; how trades are made is in the README.
+    assert helped(app.main.markdown, setup.STATUS_COPY[common.NOT_RECORDING])
+    assert not helped(app.main.markdown, 'flat to flat') and not helped(app.main.markdown, 'Scale-ins')
 
 
 def test_when_the_study_records_settings_is_one_green_line_naming_the_contracts_and_nothing_else():
@@ -105,7 +105,7 @@ def test_when_the_study_records_settings_is_one_green_line_naming_the_contracts_
     assert "data-state='Recording'" in line and f'color:{setup.theme.UP}' in line            # green
     assert 'mwj-status-note' not in line and steps_shown(app) == []                          # one line, no step
     assert not any(b.label == setup.INSTALL for b in app.button)
-    assert helped(app.main.markdown, 'prices or fills for in the last hour')
+    assert helped(app.main.markdown, setup.STATUS_COPY[common.RECORDING])
 
 
 def test_a_study_that_has_reported_no_prices_yet_leaves_the_contracts_out():
@@ -482,7 +482,7 @@ def test_the_saved_filter_is_chosen_in_the_filters_menu_and_applies_to_every_pag
     for other in ('Settings', 'Edge', 'Trades'):       # the selectbox is drawn on two pages; the choice holds on all
         show(app, other)
     show(app, 'Edge')
-    assert said(app.info, 'Statistics need') and widget(app.selectbox, 'Saved Filter on Every Page').value == 'Shorts only'
+    assert said(app.info, 'Stats need') and widget(app.selectbox, 'Saved Filter on Every Page').value == 'Shorts only'
     assert menu_label(app) == 'Filters · 1'
     show(app, 'Trades')
     assert said(app.info, 'No trades match these filters')         # the menu stays, so the filter can be undone
@@ -827,7 +827,7 @@ def test_the_study_can_be_installed_again_from_connection_after_it_has_reported_
     if not connection.JAR.is_file():
         pytest.skip('No built study jar in this checkout.')
     install = app.button(key='connection-study-install')
-    assert install.label == setup.INSTALL and 'kept beside it as a backup' in install.help
+    assert install.label == setup.INSTALL and 'keeping the copy already there as a backup' in install.help
     install.click().run()
     assert not app.exception and said(app.success, 'Installed. If Settings still names an older study')
     assert (extensions / 'motivewave-journal.jar').read_bytes() == connection.JAR.read_bytes()

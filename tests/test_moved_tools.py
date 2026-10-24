@@ -314,7 +314,7 @@ def test_the_stats_filters_narrow_the_dashboards_too(home):
 
 def test_dashboards_open_with_no_closed_trade_yet():
     app = open_app('Edge')
-    assert said(app.info, 'Statistics need') and [t.label for t in app.tabs] == ['Dashboards']
+    assert said(app.info, 'Stats need') and [t.label for t in app.tabs] == ['Dashboards']
     open_tab(app, 'Dashboards')
     assert any(s.label == 'Dashboard page' for s in app.selectbox)
 

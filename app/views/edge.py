@@ -42,11 +42,9 @@ SECTIONS = ['Overview', 'Compare', 'MAE / MFE', 'After Exit']
 DASHBOARDS = 'Dashboards'          # always the last tab, and the only one before the first closed trade
 AXES = {'trade': 'By Trade', 'time': 'By Date'}
 LABELS = {'closed': 'Exit', 'net': 'Net P&L', 'mae': 'MAE', 'mfe': 'MFE', 'max_qty': 'Contracts',
-          'symbol': 'Instrument'}
-COMPARE_HELP = ('Start with Trades, the sample size, then Average Trade, the net result per trade after recorded '
-                'fees. A trade with several tags counts in each, so tag rows overlap; "No Setup tag" is the trades '
-                'with no tag in that category. Average R uses only trades with a stop. These describe your recorded '
-                'trades, not proof of an edge: small samples mislead.')
+          'symbol': 'Contract'}
+COMPARE_HELP = ('Compares your closed trades by tag, playbook, market, direction or time; a trade with several tags '
+                'counts under each.')
 TABLE_WIDTH = 360          # pixels a tag table needs at least: three to a row on a laptop screen, more on a wider one
 SMALL_SAMPLE = 10          # fewer trades in a row than this is too few to judge (and 100 to 150 for the whole journal)
 LIST_LIMIT = 50            # trades listed at once under the Compare tables; Show More Trades lists the next ones
@@ -120,7 +118,7 @@ def render(journal, rows) -> None:
     heading, filter_col = st.columns([6, 1], vertical_alignment='center')
     with filter_col.popover(preferences.filters_label(journal, rows), width='stretch',
                             key=common.key(journal, 'filters-menu'),
-                            help='Narrow the stats by market, date, account, tag, playbook or rating; the saved filter '
+                            help='Narrow the stats by market, date, account, tag, playbook or Rating; the saved filter '
                                  'here applies to every page.'):
         rows = preferences.filter_menu(journal, rows)
     rows = period_rows(journal, rows)
@@ -132,7 +130,7 @@ def render(journal, rows) -> None:
         stat = summary(closed)
         tiles(stat, closed[0]['currency'])
     else:
-        st.info('Statistics need at least one closed round trip with a known multiplier.')
+        st.info('Stats need at least one closed trade whose contract has its dollars per point.')
     # Without a closed trade there is nothing to count, but the dashboards still open.
     labels = [*SECTIONS, DASHBOARDS] if closed else [DASHBOARDS]
     panels = dict(zip(labels, common.tabs(labels, common.key(journal, 'analytics-tabs'))))
@@ -177,10 +175,11 @@ def tiles(stat, currency) -> None:
             st.metric('Average Trade', money(stat['expectancy'], currency), border=True,
                       help='Net P&L divided by the number of closed trades, often called expectancy.')
         cols[3].metric('Profit Factor', f"{stat['profit_factor']:.2f}" if stat['profit_factor'] is not None else '—',
-                       border=True, help='Everything won divided by everything lost. Shows — until there is a losing trade.')
+                       border=True, help='Everything won divided by everything lost; it shows — until there is a losing '
+                                         'trade.')
         cols[4].metric('Largest Drawdown', money(stat['drawdown'], currency, signed=False), border=True,
-                       help='The largest drop from a peak in the running total of closed trades. Not the drawdown '
-                            'of an open position or of the account.')
+                       help='The largest drop from a peak in the running total of closed trades, not of an open '
+                            'position or the account.')
 
 
 # ---------------------------------------------------------------- the equity curve
@@ -243,8 +242,8 @@ def axis_toggle(key: str, *, label_visibility='collapsed') -> str:
 
     choice = st.segmented_control('Equity curve axis', list(AXES), format_func=AXES.get, required=True, key=key,
                                   on_change=remember, label_visibility=label_visibility,
-                                  help='By Trade puts trades side by side, so nights and weekends take no room. '
-                                       'By Date places each trade at its exit time in your display time zone.')
+                                  help='By Trade puts trades side by side so nights and weekends take no room; By Date '
+                                       'places each at its exit time.')
     return choice or 'trade'
 
 
@@ -252,8 +251,8 @@ def overview(journal, closed, stat, frame):
     zone = common.display_zone(journal)
     currency = closed[0]['currency']
     title, toggle = st.columns([3, 1.4], vertical_alignment='center')
-    title.markdown('### Equity Curve', help='The running total of your closed trades: net after recorded fees, '
-                                            'and gross before them. A rising line means profits are adding up.')
+    title.markdown('### Equity Curve', help='The running total of your closed trades, net after recorded fees and '
+                                            'gross before them.')
     with toggle:
         axis = axis_toggle(common.key(journal, 'equity-axis'))
     ordered = sorted(closed, key=lambda r: r['closed'])
@@ -282,22 +281,22 @@ def show_costs(closed, stat):
         cols[0].metric('Gross P&L', money(costs['gross'], currency),
                        help='The result before recorded commissions and fees.')
         cols[1].metric('Fees', money(costs['fees'], currency, signed=False),
-                       help='Recorded commissions and fees: gross minus net. This is not an estimate of slippage. '
-                            'Missing fees are not proven zero, and platform fees can be estimates.')
+                       help='Recorded commissions and fees, gross minus net.')
         cols[2].metric('Fees Per Trade', money(costs['fee_per_trade'], currency, signed=False),
                        help='Recorded fees divided by the number of closed trades.')
-        r_help = (f"Across {stat['risk_recorded']} trades with a stop." if stat['expectancy_r'] is not None
+        with_stop = stat['risk_recorded']
+        fees_r = f"; recorded fees average {costs['fee_per_r']:.3f}R a trade" if costs['fee_per_r'] is not None else ''
+        r_help = (f"Across {with_stop} trade{'' if with_stop == 1 else 's'} with a stop{fees_r}."
+                  if stat['expectancy_r'] is not None
                   else 'Needs a stop: the stop order you place with a trade counts, or type it in the trade\'s Stop box.')
-        if costs['fee_per_r'] is not None:
-            r_help += f" Recorded fees average {costs['fee_per_r']:.3f}R across {costs['risk_recorded']} trades."
         cols[3].metric('Average R', f"{stat['expectancy_r']:+.2f}R" if stat['expectancy_r'] is not None else '—',
                        help=r_help)
     if costs['unverified_fees']:
         count = costs['unverified_fees']
         # A Material warning icon: IBM Plex Sans has no '⚠', so the browser drew it in another font.
         st.caption(f":orange[:material/warning: Fees not confirmed on {count} trade{'' if count == 1 else 's'}]",
-                   help='The platform did not confirm the commission on these trades, or reported only an estimate. '
-                        'Net P&L and fees may be off by the difference.')
+                   help='The platform did not confirm the commission on these trades, or gave an estimate, so their '
+                        'Net P&L and fees may be off.')
 
 
 # ---------------------------------------------------------------- the other tabs
@@ -441,11 +440,8 @@ def narrow(journal, closed, groups) -> list[dict]:
                         None: f'<style>{selector}:hover {{border-color:{colour} !important;}}</style>'}[chosen.get(chip['id'])])
     # One stylesheet: only an element holding a lone <style> takes no room on the page (theme.CSS).
     st.markdown(''.join(css).replace('</style><style>', ''), unsafe_allow_html=True)
-    theme.subsection('Narrow the trades', help='Click a chip once to keep only the trades with it (✓), again to '
-                                               'leave those trades out (×), and a third time to stop using it. Every '
-                                               'table, the equity curve and the trade list below then use the trades '
-                                               'left. Leaving out is how to drop, say, your 1-star trades: a trade '
-                                               'has one rating. Filters still apply first.')
+    theme.subsection('Narrow the trades', help='Click a chip once to keep only its trades (✓), again to leave them '
+                                               'out (×), and a third time to stop using it.')
     with st.container(key='edge-tag-chips', horizontal=True, gap='medium'):
         for group, chips in offered.items():
             with st.container(key=theme.tag_group_key(group), width='content', gap='small'):
@@ -479,8 +475,8 @@ def chips_in(groups) -> list[dict]:
 def playbook_saver(journal, tags) -> None:
     """Save as Playbook: the tags kept (✓), as (category, chip), become a playbook with a name and a colour.
     A playbook takes any one of its tags in a category, so it takes one kept tag per category here."""
-    with st.popover('Save as Playbook', help='Saves the kept tags (✓) as a playbook for Trades and Compare by '
-                                             'Playbooks; left-out tags (×) and Rating chips are not part of a playbook.'):
+    with st.popover('Save as Playbook', help='Saves the tags kept (✓) as a playbook; tags left out (×) and Rating '
+                                             'chips are not part of a playbook.'):
         rules = {}
         for group, chip in tags:
             rules.setdefault(group, []).append(chip['id'])
@@ -540,7 +536,7 @@ def tag_tables(narrowed, groups, currency) -> None:
 
 def table_html(title, colour, rows, currency) -> str:
     """One compact table, the way a trader reads it down a page: the title over the names, then Trades, Net
-    P&L, Win % and Average Trade in whole amounts. Each name in its colour, faded when no trade has it; a
+    P&L, Win Rate and Average Trade in whole amounts. Each name in its colour, faded when no trade has it; a
     result green or red; the numbers of a row with fewer than SMALL_SAMPLE trades grey."""
     def amount(value):
         if value is None:
@@ -560,7 +556,7 @@ def table_html(title, colour, rows, currency) -> str:
                     f"<td class='n'>{'—' if row['win_rate'] is None else format(row['win_rate'], '.1f') + '%'}</td>"
                     f"{amount(row['expectancy'])}</tr>")
     return (f"<table class='mwj-edge-table'><thead><tr><th class='t' style='color:{colour}'>{html.escape(title)}</th>"
-            "<th>Trades</th><th>Net P&amp;L</th><th>Win %</th><th>Average Trade</th></tr></thead>"
+            "<th>Trades</th><th>Net P&amp;L</th><th>Win Rate</th><th>Average Trade</th></tr></thead>"
             f"<tbody>{''.join(body)}</tbody></table>")
 
 
@@ -581,9 +577,8 @@ def painted(rows, field, currency):
 
 def small_sample_note() -> None:
     st.caption(f'Grey numbers: fewer than {SMALL_SAMPLE} trades, too few to judge.',
-               help=f'A row needs about {SMALL_SAMPLE} trades before its numbers mean much, and your journal 100 to '
-                    '150 trades in all before you judge what works. A faded tag has none of these trades: every tag '
-                    'stays listed, so you see what narrowing leaves out.')
+               help=f'Judge a row from about {SMALL_SAMPLE} trades and the whole journal from 100 to 150; a faded tag '
+                    'has none of these trades.')
 
 
 def these_trades(journal, narrowed, groups) -> None:
@@ -593,15 +588,14 @@ def these_trades(journal, narrowed, groups) -> None:
     currency = narrowed[0]['currency']
     ordered = sorted(narrowed, key=lambda r: r['closed'])
     st.markdown('### Equity Curve of These Trades',
-                help='The running total of the trades the chips leave, after recorded fees, in exit order. As you '
-                     'take away what does not work, it should rise more steadily.')
+                help='The running total of the trades the chips leave, after recorded fees, in exit order.')
     chart(journal, progress_chart(ordered, [('Net total', list(itertools.accumulate(r['net'] for r in ordered)),
                                              theme.SERIES[0])], zone, currency=currency, height=260),
           'compare-equity', keep_layout=True)
     limit_key = common.key(journal, 'edge-list-limit')
     limit = st.session_state.get(limit_key, LIST_LIMIT)
     newest = ordered[::-1]
-    st.markdown('### These Trades', help='Newest first. Click a trade to open it on Trades.')
+    st.markdown('### These Trades', help='Newest first; click a trade to open it on Trades.')
     chips = {c['id']: c for c in chips_in(groups) if not c['id'].startswith('rating-')}
     st.markdown(LIST_CSS, unsafe_allow_html=True)
     with st.container(key='edge-list', gap=None):
@@ -649,7 +643,7 @@ def period_rows(journal, rows) -> list[dict]:
     remember = common.keep({key: 'All'})            # still chosen after Trades or Settings was open
     choice = st.segmented_control('Period', PERIODS, key=key, on_change=remember, required=True,
                                   label_visibility='collapsed',
-                                  help='Which trades Stats counts, by the day each was entered. A monthly review '
+                                  help='Which trades Stats counts, by the day each was entered; a monthly review '
                                        'starts with Last Month.')
     if choice in (None, 'All'):
         return rows
@@ -670,14 +664,14 @@ def compare_table(grouped_rows, field, currency):
     """The comparison as a table: money reads '+$810.02', Average R '+0.50R' or '—' without a stop,
     and every number still sorts as a number."""
     columns = {'group': field.rstrip('s') if field in ('Tags', 'Playbooks') else field, 'count': 'Trades',
-               'net': 'Net P&L', 'win_rate': 'Win %', 'expectancy': 'Average Trade',
+               'net': 'Net P&L', 'win_rate': 'Win Rate', 'expectancy': 'Average Trade',
                'avg_win': 'Average Winner', 'avg_loss': 'Average Loser', 'expectancy_r': 'Average R',
                'risk_recorded': 'Trades With Risk'}
     table = pd.DataFrame(grouped_rows, columns=list(columns)).rename(columns=columns)
     table['Average R'] = pd.to_numeric(table['Average R'], errors='coerce')
     styled = common.money_table(table, currency, results=('Net P&L', 'Average Trade', 'Average Winner', 'Average Loser'))
     return (styled.format(lambda v: '—' if v is None or v != v else f'{v:+.2f}R', subset=['Average R'])
-            .format(lambda v: '—' if v is None or v != v else f'{v:.1f}%', subset=['Win %']))   # as the Win Rate card
+            .format(lambda v: '—' if v is None or v != v else f'{v:.1f}%', subset=['Win Rate']))   # as its card
 
 
 def chart(journal, figure, name: str, *, height=320, keep_layout=False) -> None:

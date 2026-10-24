@@ -1,7 +1,7 @@
 """The look of MotiveWave Journal: one set of tokens, one chart template and the few page components.
 
 A Tradecraft-inspired workspace: charcoal planes, yellow navigation, green/red outcomes and
-colour-coded tag groups. Signs, labels and selected outlines carry meaning alongside colour.
+colour-coded tag categories. Signs, labels and selected outlines carry meaning alongside colour.
 .streamlit/config.toml carries the same colours for Streamlit's own widgets.
 
 One typeface everywhere: IBM Plex Sans, from the bundled files (mwjournal/fonts.py). Numbers that sit in

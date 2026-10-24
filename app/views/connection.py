@@ -85,8 +85,8 @@ def study_section() -> None:
         st.caption('In MotiveWave choose Study → All Studies → Import and pick motivewave-journal.jar.')
         return
     if st.button('Install MotiveWave Study', key='connection-study-install',
-                 help='Copies the study that came with this app into your MotiveWave Extensions folder. The copy '
-                      'already there is kept beside it as a backup.'):
+                 help='Copies the study that came with this app into your MotiveWave Extensions folder, keeping the '
+                      'copy already there as a backup.'):
         try:
             _, backup = install_study()
             st.success('Installed. If Settings still names an older study in a few seconds, quit MotiveWave completely '
@@ -120,7 +120,7 @@ def troubleshooting(journal) -> None:
     theme.notes(study_messages(status))
     gaps = journal.capture_gaps()
     if gaps:
-        st.warning('The study reported dropped ticks. Excursions for the affected windows carry a warning.')
+        st.warning('The study reported dropped ticks: the trades they fall in show no MAE / MFE, and say why.')
         st.dataframe(gap_table(gaps[-20:], common.display_zone(journal)), hide_index=True, width='stretch')
 
 

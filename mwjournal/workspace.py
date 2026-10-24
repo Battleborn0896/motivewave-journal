@@ -554,9 +554,9 @@ class Workspace:
         def save(state, library):
             ids = tagging.ids(library, choices)
             if not ids or len(ids) != len(set(choices)) or any(library['tags'][id]['group'] != group for id in ids):
-                raise ValueError('Choose tags in this check-in group.')
+                raise ValueError('Choose tags in this check-in category.')
             if library['groups'][group]['exclusive'] and len(ids) > 1:
-                raise ValueError('Choose one tag in this exclusive group.')
+                raise ValueError('Choose one tag in this one-choice category.')
             key = identifier()
             state['checkins'][key] = {'id': key, 'group': group, 'tag_ids': sorted(ids), 'trade_id': trade_id,
                                       'at': timestamp(at or dt.datetime.now(dt.timezone.utc).isoformat())}
@@ -574,10 +574,10 @@ class Workspace:
             try:
                 ZoneInfo(changes['display_timezone'])
             except (ValueError, KeyError, TypeError) as exc:
-                raise ValueError('Choose a valid display timezone.') from exc
+                raise ValueError('Choose a valid Time Zone.') from exc
         def save(state, library):
             if 'timer_groups' in changes and not set(changes['timer_groups']) <= set(library['groups']):
-                raise ValueError('Choose known timer groups.')
+                raise ValueError('Choose known check-in categories.')
             state['preferences'].update(changes)
         return self._settings_edit(save)
 

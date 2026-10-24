@@ -19,7 +19,7 @@ from mwjournal.workspace import WIDGETS, METRICS, GROUPS, filter_sample, group_l
 # The page shown while you have none: empty, and stored only once you save it.
 DEFAULT = {'name': 'My Dashboard', 'columns': 2, 'filters': {}, 'widgets': []}
 LINES = ('Equity', 'Tag score', 'Rating', 'Drawdown')
-WIDGET_HELP = {'Radar': 'The share of this sample tagged in each category. Not an edge or a performance score.',
+WIDGET_HELP = {'Radar': 'The share of these trades with a tag in each category.',
                'Calendar': edge.CALENDAR_HELP,
                'Drawdown': 'How far the running total sits below its highest point so far.'}       # drawn along the trades, one point each
 AXES = {'trade': 'Trade number', 'time': 'Date and time'}
@@ -47,7 +47,8 @@ def render(journal, rows):
                                                 columns=page['columns'], filters=rule)
                 st.session_state[common.key(journal, 'dashboard-next')] = saved
                 st.rerun()
-    with actions.popover('Customize Page', width='stretch', help='Name, columns and widgets of this page; clone it.'):
+    with actions.popover('Customize Page', width='stretch',
+                         help="Changes this page's name, columns and widgets, or clones it."):
         customize(journal, rows, page_id, page)
     rows = filter_sample(rows, page.get('filters', {}))
     closed = [r for r in rows if r['status'] == 'closed' and r['net'] is not None]
@@ -95,8 +96,8 @@ def customize(journal, rows, page_id, page):
         group = st.selectbox('Compare by', GROUPS, index=GROUPS.index(old.get('group', 'Market')))
         axis = st.selectbox('Along the bottom', list(AXES), format_func=AXES.get,
                             index=list(AXES).index(old.get('axis', 'trade')) if old.get('axis', 'trade') in AXES else 0,
-                            help='For line widgets. Trade number puts trades side by side, so nights and weekends '
-                                 'take no room; date and time uses your display time zone.')
+                            help='For line widgets: Trade number puts trades side by side, so nights and weekends '
+                                 'take no room.')
         included = old.get('score_tags', [])
         if scored:
             included = st.multiselect('Score only these tags · empty means all', list(journal.tag_library()['tags']),

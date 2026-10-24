@@ -371,274 +371,223 @@ tags, categories and reviews are kept exactly as they are.
 
 ## Using the journal
 
-The sidebar has three pages: **Trades**, **Stats** and **Settings**. Trades holds the **Session** menu (at the top,
-beside Filters), the Daily Report Card (click a day's header) and the checklists you answer, on each trade or on the
-Daily Report Card; Stats holds the dashboards (its last tab); Settings holds tags and checklists, and data
-(imports, backups, journal views, the connection), each two clicks from the sidebar. Under the pages, the sidebar says
-whether the study is **Recording**, **Not recording** or **Needs attention** (see *Build and connect the study*); click it
-to open Settings.
+The sidebar holds the **Live / Replay** switch, the three pages, **Trades**, **Stats** and **Settings**, and one
+word for the study: **Recording**, **Not recording** or **Needs attention** (see *Build and connect the study*).
+Click that word to open Settings.
 
-**Live** and **Replay**, at the top of the sidebar, each keep their own trades, trade reviews, Daily Report Cards,
+### Trades: the list and one trade page
+
+The trades are listed on the left by day, newest first. The trade you click opens on the right as one page that
+scrolls; **Prev / Next** steps through the list, which stays in view. Top to bottom:
+
+- **Net P&L** (**Open P&L** while the trade is open), **MAE**, **MFE**, **R** (the result divided by the risk to
+  your stop; — without a stop, and its ? says why) and **Contracts**, the most held at once;
+- the 1-minute chart, from 30 minutes before the entry to 30 minutes after the exit, beside the tags. Arrows are
+  your fills, dashed lines join each entry to its exit, and the solid line is your stop;
+- the **Tags**, a card for each category, and the **Rating**, 1 to 5 stars for how well you traded your plan. A
+  click applies or removes a tag and saves it. **+ Tag** makes a tag and applies it, **+ Category** makes a
+  category, and a trade's setup is a **Setup** tag. **More Tagging Tools** copies the tags of another trade,
+  applies a playbook, or checks a combination of tags against your earlier trades;
+- **Review notes** and **Stop**, the price R is measured from. A blank Stop uses your stop order as it stood 10
+  seconds after entry, and the line under the box says which stop R uses. Every box saves when you leave it, and
+  clicking another trade keeps what was typed: there is no Save button;
+- the **Checklist**, when a checklist runs on each trade;
+- **Details**, closed until you open it: the fills, how your stop order moved, the MAE / MFE path and its CSV, the
+  **After Exit** sentence and the contract's dollars per point. It stays open from trade to trade.
+
+A trade runs flat to flat on one account and exact contract. The first fill that moves the position away from zero
+opens it, scale-ins and partial exits stay inside it, and the fill that brings the position back to zero closes it.
+A reversal closes the old trade at the crossing fill and opens a new one. A contract without dollars per point asks
+for them at the top of its trade, and every trade of that contract follows a change.
+
+Click a day's header in the list for its **Daily Report Card**: the day's result, its **Day Tags**, its **Rating**,
+your note and each checklist that runs **Before the session**. The **Day** category comes with **Had a Plan**,
+**Kept Risk Limits** and **Respected My Stop**, and any tag made available on days is offered there too. Every
+trade opened that day wears the day's tags, in Stats and Filters as well; a choice made on the trade in the same
+one-choice category wins.
+
+One row above the list holds three menus:
+
+- **Session**: the check-in timer, the latest check-ins and **Tag My Next Trade** (see *Dashboards, checklists and
+  the Session menu*).
+- **Filters**, one menu shared with Stats: Markets and Entry Dates, then under **More Filters** Accounts, Exact
+  Contracts, Tags with **Tag Match** (all or any), Exclude Tags, Playbook, Trade Status, Directions, Rating and
+  **Number Ranges**: Net P&L, R, MAE, MFE, Contracts, Minutes held, and Tag score once a tag has a score. MAE and MFE
+  limits are in your MAE / MFE Units. The button counts the filters on (**Filters · 2**), and **Clear Filters**
+  empties them. **Saved Filter on Every Page** keeps one saved filter on for every page, with **Rename** and
+  **Delete** beside it; type a name under the filters and press Enter to save what is shown.
+- **Merge Trades**: reviews trades of one account, contract and direction within 24 hours as one trade, their own
+  fills and notes kept; **Split** gives them back.
+
+**Markets** groups the expiries of a future (NQZ6 and NQM7 are NQ; micros stay apart from full-size contracts), and
+**Exact Contracts** narrows to one. Fills, charts and MAE / MFE always keep the exact contract traded, and one
+expiry's ticks never stand in for another's.
+
+### Stats
+
+**Filters** and the period sit above the numbers: **This Month**, **Last Month**, **Last 3 Months** or **All**, by
+the day each trade was entered. Then five numbers, **Net P&L**, **Win Rate**, **Average Trade**, **Profit Factor**
+and **Largest Drawdown**, and the same tabs every time:
+
+- **Overview**: the equity curve, by trade or by date, net and gross; Gross P&L, Fees, Fees Per Trade and Average R;
+  the trading calendar, whose days open their Daily Report Card on Trades (Saturday and Sunday show in a month with
+  a trade on one); and the spread of results.
+- **Compare**: a chip for each tag and Rating your trades carry keeps its trades (✓) or leaves them out (×), a
+  third click stopping it. Under the chips,
+  **Compare by** Tags shows Totals and a table for each category (Trades, Net P&L, Win Rate, Average Trade), every
+  tag listed even at 0 trades; Playbooks, Market, Exact contract, Direction, Entry hour and Weekday list the worst
+  Net P&L first. Grey numbers have fewer than 10 trades. Then the equity curve of the trades left, and those trades,
+  each opening on Trades. **Save as Playbook** saves the tags kept.
+- **MAE / MFE**: one dot per measured trade, against you and in your favour.
+- **After Exit**: **Compare Runners** averages how much further the price went your way in the 15 minutes after
+  each exit, before it reached your stop (see *After Exit* below).
+- **Dashboards**: your own pages of widgets (see *Dashboards, checklists and the Session menu*).
+
+### Settings
+
+- **Time Zone**: every time is shown in it, and every trading day runs midnight to midnight in it, in Live and
+  Replay: the trade list, the Daily Report Card, Day tags, the calendar and Stats all give a trade the same date. A
+  new journal starts on this computer's zone and keeps it, so taking the computer elsewhere moves no trade.
+- **MAE / MFE Units**: dollars, points, ticks or R, for MAE and MFE everywhere and for their filter limits.
+- **Tags, Playbooks & Checklists**: rename, colour, order and retire tags and categories, make a category one
+  choice at a time, offer a tag on trades or on days, give a tag a score, and delete one nothing uses; playbooks,
+  which match a trade with one of their tags in each category they use; and checklists.
+- **Data**: **Import Trades**, **Export & Backup**, **Journals & Accounts** (views and account names) and
+  **Connection**.
+
+The line at the bottom names the app, the study and the data folder: quote it in a bug report.
+
+### Live, Replay and views
+
+**Live** (live and paper accounts) and **Replay** each keep their own trades, reviews, Daily Report Cards,
 checklist answers, check-ins and Tag My Next Trade. They share one set of tags, categories, playbooks, saved
-filters, dashboards and checklists, and one **Time Zone**, **MAE / MFE Units**, tick sizes and check-in timer: a
-change made in one shows in the other, and a tag on a trade or a day in either cannot be deleted. The Live
-journal keeps them, so the app makes it when only Replay is used. Opening the separate journals of 0.4.17 or
-earlier once joins Replay's settings to Live's: Live's names, categories, colours, preferences and Units win; a
-Replay tag whose name Live already uses, in any case, becomes Live's tag on Replay's trades; a Replay filter with a
-name Live uses for another filter is saved as *name (Replay)*; a starter tag deleted in Live stays deleted unless
-Replay uses it; and Replay's own tags, categories, dashboards, checklists and playbooks are added. Both are backed
-up first, to `backups/before-shared-settings-<time>.zip` in the data folder, and Settings says so once.
+filters, dashboards and checklists, and one Time Zone, MAE / MFE Units, tick sizes and check-in timer: a change
+made in one shows in the other, and a tag used on a trade or a day in either cannot be deleted.
 
-**Journal**, in the sidebar once you have made a view, chooses the accounts every page shows: **All accounts**, or
-one of your views. Make a view under **Settings → Data → Journals & Accounts → New View**: a name and at least one
-account. A view only filters: its trades have the same reviews (tags, Rating, notes, Stop), Daily Report Cards and
-settings as in All accounts, so a review typed in a view is there in All accounts too. A saved filter then filters
-the view's trades. **Rename View** and **Delete View** are on the same tab; deleting a view loses nothing. Live
-and Replay each have their own views, as they hold different accounts.
+A **view** shows only the accounts you choose. Make one under **Settings → Data → Journals & Accounts → New View**,
+then choose it under **Journal** in the sidebar; **All accounts** shows every trade. A view only filters: its trades
+have the same reviews and settings as in All accounts, and deleting a view loses nothing. Live and Replay each have
+their own views. An account's name, given on the same tab, shows everywhere in place of the platform's.
 
-The named journals of 0.4.17 or earlier, each a copy with reviews of its own, become views of their accounts the
-first time this version opens Live or Replay. Fills entered only in a named journal are added to the journal, so
-they count under All accounts too. Its reviews and Daily Report Cards join All accounts': where All accounts has
-none, the named journal's is copied; where it has one, its Rating and Stop stay, the tags of both are kept (a
-one-choice category keeps All accounts' choice), and each paragraph of the named journal's note that All accounts'
-note does not already have is added after a blank line. Its tags, playbooks, filters, dashboards and checklists join
-the shared ones, a filter whose name All accounts uses for another being saved as *name (journal name)*, and so do
-its merged trades, checklist answers, check-ins and Tag My Next Trade. An archived journal's reviews join too,
-without a view, and a journal named All accounts becomes the view *All accounts (view)*. The data folder is backed
-up first, named journals included, to `backups/before-journal-views-<time>.zip`, and their folders are removed only
-once that backup reads back. Settings says so once.
+### Back up
 
-The trade list stays on the left while the selected trade stays on the right, as one page that scrolls.
-Click a row, or use Prev / Next; no separate opening/back-navigation step is needed. The trade's page, top to
-bottom:
+**Settings → Data → Export & Backup → Back Up Journal** downloads one zip of Live and Replay with every trade,
+review and setting, safe to take while trades are recording. **Restore From Backup**, on the same tab, puts one back
+(see *Build and connect the study*). The bridge file is not a backup.
 
-- its numbers: **Net P&L** (Open P&L while it is open), **MAE**, **MFE**, **R** (the result divided by the
-  risk to your stop; — without a stop, and the ? says why) and **Contracts**, the most held at once;
-- the chart, 30 minutes before entry to 30 minutes after exit with your stop always drawn, beside the tags and
-  the Rating stars;
-- the note and the **Stop**;
-- the **Checklist**, once a checklist runs on each trade: its questions in order, each answered with a Yes or No
-  click;
-- **Details**, closed until you open it: the fills, how your stop order moved, notes on the chart's candles,
-  the MAE / MFE path and its CSV, the After Exit sentence, and the contract's dollars per point, which you can
-  correct there. It stays open as you step through trades and while an open trade updates.
+### MAE and MFE
 
-**Merge Trades**, beside **Filters** above the list, reviews several trades as one (same account, contract,
-currency and direction, within 24 hours) and splits a merged trade into its original trades again.
+MAE is how far the position you held went against you, from its average entry; MFE is how far it went for you. The
+moment counted is the one where that move times the contracts held was largest, and profit banked by a partial exit
+never counts. **MAE / MFE Units** only rescales that one moment:
 
-The chart and the grouped, clickable tagging panel sit side by side. Click a tag to
-toggle it; changes save automatically. **+ Tag** creates a reusable tag and applies it to the current
-trade; **+ Category** creates a category. **More Tagging Tools → Copy Tags From Another Trade** adds
-another trade's tags without replacing existing tags or notes. Day tags you explicitly select are
-inherited by trades opened on that date in your Time Zone; otherwise no trade is automatically tagged.
-A trade's setup is a **Setup** tag: click it, or make a new one with **+ Tag**. Under the tags, **Rating** is
-1 to 5 stars for how well you traded your plan, the one grade a trade has; Stats compares and filters by it.
-**Tag score**, the sum of scores you give tags in Settings → Tags, Playbooks & Checklists, shows only once a
-tag has a score.
-A trade whose contract has no dollars per point asks for it at the top of the trade; a wrong one is changed
-under **Details**, and every trade of that contract follows it.
+- **Points**: the price move at that moment, from the average entry of the contracts held then.
+- **Dollars**: those points times the contracts held and the dollars per point, before fees.
+- **Ticks**: those points divided by the contract's tick size. ES, MES, NQ and MNQ are known (CME's
+  [Micro equity](https://www.cmegroup.com/education/courses/micro-e-mini-futures/micro-e-mini-futures-products-overview),
+  [NQ](https://www.cmegroup.com/markets/equities/nasdaq/e-mini-nasdaq-100.contractSpecs.html) and
+  [MNQ](https://www.cmegroup.com/markets/equities/nasdaq/micro-e-mini-nasdaq-100.contractSpecs.html)
+  specifications); set any other contract's tick size once, on one of its trades.
+- **R**: the dollars divided by the risk to the trade's stop; without a stop there is no R, never zero.
 
-**Time Zone** is on **Settings**. Every time is shown in it, and every trading day runs from midnight to
-midnight there, in Live and Replay: the trade list's days, the calendar, Stats' dates, the Daily Report Card
-and day tags all use the same date for a trade. A new journal starts on this computer's zone and keeps it, so
-taking the computer elsewhere moves no trade to another day; change it here when you want another.
+Long 2 NQ at 100, price dips to 97, you sell 1 at 102, then the runner dips to 96: MAE is 3 points on the 2 contracts
+held at the dip, $120, 12 ticks. The runner's 4-point dip on 1 contract is $80, less, so it is not the MAE. The MAE /
+MFE path under **Details**, drawn in points or ticks, still reaches that 4-point dip, so it says which moment MAE
+counts: "MAE counts the moment the most money was at risk: 3.00 pts with 2 contracts."
 
-The **Daily Report Card** opens from a day's header in the trade list, or a day in the calendar on Stats. Beside
-that day's result it holds the day's **Day Tags**, its **Rating** (1 to 5 stars, as a trade has), a note, and
-each checklist that runs **Before the session**, answered for that day.
-The **Day** category comes with **Had a Plan**, **Kept Risk Limits** and **Respected My Stop**; any other tag
-made available on days is offered there too. Every trade opened that day wears the day's tags, so they show in
-the trade's chips, Stats → Compare and the filters; a choice made on the trade in the same one-choice category
-wins.
+Only ticks recorded during the trade measure MAE and MFE: there is nothing to choose. A trade without them, or with
+a gap the study reported, says why under its numbers and shows none, never zero. Under a trade's time, **From
+MotiveWave's tick history** marks ticks loaded from MotiveWave's history after the trade, and **From your imported
+prices** prices an earlier version imported. The chart draws MotiveWave's 1-minute candles, with recorded ticks
+filling any minute that has none. Points work without dollars per point; dollars and R do not.
 
-**MAE / MFE Units** is on **Settings**: choose account currency, points, ticks or R. It changes how MAE / MFE
-are shown, and the unit MAE and MFE filter limits are in. It is one choice for Live and Replay, and applies to the
-trade list, detail cards, excursion plots, After Exit and filters. Actual net P&L is unchanged.
+### Coming from an older version
 
-MAE means the same in every unit: how far the position you held went against you, from its average entry
-(MFE: for you). The moment counted is the one where that price move times the contracts you held was
-largest. Profit banked by a partial exit never counts. Switching units only rescales that one moment:
+The first time a new version opens an older journal it saves a copy first, changes the journal once, and says so
+once in one line at the top of Settings:
 
-- Points: the price move at that moment, from the average entry of the contracts held then. Scale-ins
-  update that average.
-- Currency: those points times the contracts held then and the point value, before fees.
-- Ticks: those points divided by the contract's minimum price increment. Outright ES/MES/NQ/MNQ are
-  detected automatically; other symbols need their tick size set once, on a trade of that contract. Unknown
-  sizes stay unavailable, not guessed. Average entries can produce fractional ticks.
-- R: the currency amount divided by the **risk to the trade's stop**. R comes from the stop alone; no stop
-  means unavailable, not zero.
+- **Days follow your Time Zone** (0.4.16 or earlier): day reviews move to their dates; ticked day checkboxes become
+  Day tags, typed setups Setup tags, and "Followed my plan" answers Execution tags (Yes is Followed Plan, No is
+  Broke Plan).
+- **Live and Replay share tags and settings** (0.4.17 or earlier). Live's names, categories, colours, preferences
+  and Units win; a Replay tag whose name Live already uses becomes Live's tag on Replay's trades; a Replay filter
+  with a name Live uses for another is saved as *name (Replay)*; a starter tag deleted in Live stays deleted unless
+  Replay uses it; Replay's own tags, categories, dashboards, checklists and playbooks are added. Both are backed up
+  first, to `backups/before-shared-settings-<time>.zip` in the data folder.
+- **Named journals become views** (0.4.17 or earlier) of their accounts. Fills entered only in a named journal are
+  added, so they count under All accounts too. Its reviews and Daily Report Cards join All accounts': where All
+  accounts has none, the named journal's is copied; where it has one, its Rating and Stop stay, the tags of both are
+  kept (a one-choice category keeps All accounts' choice), and each paragraph of the named journal's note that is
+  not there yet is added after a blank line. Its tags, playbooks, filters (one whose name is taken saved as *name
+  (journal name)*), dashboards, checklists, merged trades, checklist answers, check-ins and Tag My Next Trade join
+  too. An archived journal's reviews join without a view, and a journal named All accounts becomes the view *All
+  accounts (view)*. The data folder is backed up first to `backups/before-journal-views-<time>.zip`, and the named
+  journals' folders are removed only once that backup reads back.
+- **Checklists** drawn on the old node canvas (0.4.17 or earlier) become a plain list, walked from the first
+  question: an answer's pass and counter nodes fold into it, a third answer and an answer's own wording go, and a
+  checklist only ever run from the old session menu runs before the session, its runs on the day they started.
+- **Tag My Next Trade** (0.4.17 or earlier): a pre-trade draft whose time window had ended is cancelled; one still
+  inside its window waits for its next trade.
+- **MAE / MFE are measured again** from your recorded ticks, so on a scaled trade dollars, points, ticks and R show
+  the same moment.
+- **Watched CSVs** (0.4.16 or earlier) stop being read; the trades they brought in stay, and reading the study's
+  file is always on.
 
-Long 2 NQ at 100, price dips to 97, you sell 1 at 102, then the runner dips to 96: MAE is 3 points on the 2
-contracts held at the dip, $120, 12 ticks. The runner's 4-point dip on 1 contract is $80, less, so it is not
-the MAE. The MAE / MFE path under a trade's **Details**, drawn in points or ticks, still reaches that 4-point
-dip, so the chart says which moment MAE counts: "MAE counts the moment the most money was at risk: 3.00 pts with
-2 contracts." In dollars and R the path never reaches past MAE and MFE, so it says nothing there.
+The look follows Tradecraft's charcoal workspace and coloured tag cards, and its
+[public daily-trades documentation](https://support.tradecraft.club/kb/daily-trades-section/), not its proprietary
+implementation or brand assets. See [reference notes and remaining gaps](docs/tradecraft-reference.md).
 
-Only recorded ticks measure MAE and MFE: there is no accuracy to choose and no price source to pick.
-Candles, proxies, simulated replay prints and ticks with a reported gap do not measure a trade, and a trade
-they would have measured shows why it has none, never zero. Under a trade's time, the Trades page says
-**From MotiveWave's tick history** when its ticks were loaded from MotiveWave's history after the trade, or
-**From your imported prices** when they are prices an earlier version imported; ticks the study recorded while
-you traded need no label. The trade's chart draws MotiveWave's 1-minute candles when there are any, with recorded
-ticks filling any minute that has no candle. The backup keeps every stored measurement; summary excursions and the trades CSV
-are in account currency. Points remain available without a cash multiplier; currency and R do not.
+## Dashboards, checklists and the Session menu
 
-Stats always shows the same tabs, in one order: **Overview** for the equity curve, the trading calendar and the
-spread of results; **Compare** for tag (Setup tags and Rating included), playbook, market and time comparisons;
-**MAE / MFE** for price/position excursions; **After Exit** for what the price did after your exits; and
-**Dashboards**, your own pages of widgets. There is nothing to hide or reorder, so there is no Customize on Stats.
-
-Overview's calendar counts the same trades as the rest of Stats: closed trades after **Filters** and the period
-above Stats. Each day shows its net result and number of trades, each week's total ends its row, and a click on a
-day opens its Daily Report Card on Trades. It shows Monday to Friday, and Saturday and Sunday too in a month with a
-trade on one.
-
-**Compare by** is one list wherever trades are compared: on Compare, in a Compare widget and on After Exit. It
-offers Tags, Playbooks, Market, Exact contract, Direction, Entry hour and Weekday. On Compare, Tags is a table per
-tag category with your tags in your own order, and the Rating table runs from 5 stars to 1; every other table lists
-the worst Net P&L first, the place to look first. Tables lead with sample count and average net result per trade.
-Comparisons are descriptions of your recorded sample, not proof of an edge.
-
-**Filters**, on Trades and on Stats, is one menu with one set of filters: Markets and Entry Dates, then under
-**More Filters** Accounts, Exact Contracts, Tags with **Tag Match** (all or any selected), Exclude Tags, Playbook,
-Trade Status, Directions, Rating and **Number Ranges** (Net P&L, R, MAE, MFE, Contracts and Minutes held, and Tag
-Score once a tag has a score). MAE and MFE limits are in your MAE / MFE Units, so a limit of 2 means 2 points
-while you show points and $2 while you show dollars; a saved limit is read in the unit chosen now. Trades and
-Stats share these filters, and the button says how many are on: **Filters · 2**, or just **Filters** when none
-is. **Clear Filters** empties them and goes back to All trades. **Saved Filter on Every Page** chooses a saved
-filter for every page (it counts as one filter); while one is chosen, **Rename** and **Delete** sit beside it. A
-renamed filter stays in use; deleting it goes back to All trades. Type a name under the filters and press Enter
-or **Save Filter** to save what is shown, the saved filter in use together with the filters above. Required
-historical tag aliases still resolve after a rename; unknown required names match nothing, not everything.
-
-**Settings → Tags, Playbooks & Checklists** edits names, colors, group membership, order and availability on
-trades/days, and deletes a tag or category that nothing uses. Stable tag IDs and aliases preserve historical associations when renamed. Retirement
-hides a tag from new choices without deleting its history; unretire it to restore the choice.
-Exclusive groups allow one current choice; enabling exclusivity does not erase historical conflicts.
-Day tags use the entry's date in your Time Zone, midnight to midnight (not an exchange-session roll).
-Trade-level choices and unchecked inherited tags override the day. Changing the Time Zone keeps each day's
-tags and review on its date; a trade near midnight can then fall on the neighbouring date and wear that
-date's day tags. A new tag made in a category of day tags, such as Day, is a day tag too.
-
-Playbooks accept alternatives within each participating group (OR), require every participating
-group (AND), and ignore other groups. Matching is automatic; applying a combination is explicit.
-For exclusive alternatives, application retains a matching choice or selects the first listed tag.
-Non-exclusive groups apply the saved alternatives together. **Check This Combination** tests
-hypothetical selections without retagging the trade and includes only trades closed before this
-entry in the same currency; its sample is descriptive, not a forecast.
-
-The outright index tick defaults follow CME's [Micro equity product overview](https://www.cmegroup.com/education/courses/micro-e-mini-futures/micro-e-mini-futures-products-overview),
-[NQ specifications](https://www.cmegroup.com/markets/equities/nasdaq/e-mini-nasdaq-100.contractSpecs.html)
-and [MNQ specifications](https://www.cmegroup.com/markets/equities/nasdaq/micro-e-mini-nasdaq-100.contractSpecs.html).
-These are not spread/option specifications; contract-specific overrides are stored separately.
-
-A trade's review is its note and its Stop, side by side under the chart. Every review box
-(the note, the Stop, and each box of the Daily Report Card) saves when it changes or you leave it; there is no
-Save button, and clicking another trade or day keeps what was typed. Opening a journal from 0.4.16 or earlier
-once turns each typed setup into a Setup tag and each Followed my plan answer into an Execution tag (Yes is
-Followed Plan, No is Broke Plan); the old answers stay stored, unread. **Prev / Next** reviews adjacent trades while
-the list remains visible. A tag edit that removes the current trade from your filters keeps it
-open until you change the filter/selection, rather than interrupting the review. Existing flat tags
-remain under **Other tags**. **+ Category** creates first-class groups such as Orderflow or Psychology,
-including empty groups; **+ Tag** creates and immediately applies a reusable tag. A journal from 0.4.0
-keeps its untouched Setup, Execution and Mindset suggestions hidden unless **Show starter examples**
-(under More Tagging Tools) is on, and shows them when it has no categories of its own. Any starter
-tag already used on a trade remains visible. Renames display the current label but keep the original stored review
-and aliases. Tags, categories and playbooks are one local library for Live and Replay, while each keeps the
-tags chosen on its own trades and days; the backup holds them all. A journal is upgraded to a new schema only
-after a copy of it is saved beside it.
-
-The charcoal workspace, yellow accents, outcome-tinted trade rows and coloured selected tag groups
-follow the same visual direction as Tradecraft. Selection outlines and signed P&L remain alongside
-colour cues. This workflow is inspired by its [public daily-trades documentation](https://support.tradecraft.club/kb/daily-trades-section/)
-and official tutorials, not its proprietary implementation or brand assets. Study setup, imports
-and backups remain in Settings. See [reference notes and remaining gaps](docs/tradecraft-reference.md).
-
-**Markets** automatically groups recognised futures expiries: NQZ6/NQM7 → NQ, ESZ6/ESH7 → ES,
-and MNQZ6/MNQM7 → MNQ. Micros remain separate from full-size contracts. Use **Filters → More Filters →
-Exact Contracts** to narrow to one expiry, or **Stats → Compare → Market / Exact contract**
-to compare them. Unknown symbols stay unchanged.
-
-This is an analytics rollup, not a continuous futures price series: fills, round trips, protective
-orders, charts and MAE/MFE always retain the exact traded contract. No stored trades are rewritten,
-no rollover price gaps are silently adjusted, and one expiry's ticks never substitute for another's.
-
-## Dashboard and session workflows (0.3)
-
-**Stats → Dashboards → Customize Page** is the one place to customize Stats: it creates/clones/renames pages,
-chooses 1–3 columns, adds/edits/removes and reorders widgets. Until you save a page there is one, **My Dashboard**,
-and it is empty: Overview already draws the equity curve, the calendar and the results, so a page holds only the
-widgets you add, and says **Add a widget under Customize Page.** while it has none. A page holds up to 24 widgets
-and can be emptied again. Summary, equity, drawdown, calendar, comparisons, distributions, MAE/MFE,
-tag score, Rating, radar, trades and custom-statistics widgets are independently configurable, in independently
-stacked columns. A Compare widget's bars run lowest first; its Tags bars stand together by tag category, each
-category in its colour. **Page Filters** (on top of the Stats filters) and each widget's filters, under
-Customize Page, are the same editor as the Filters menu, with the same words, and save with their own button;
-**Page Filters · 3** says how many the page has. Saved filters, page filters and widget filters intersect;
-they never change recorded trades. Saved tag rules use stable identities and show a tag's name now. A Calendar
-widget is Overview's calendar for the widget's trades: its days open the exact day's Report Card on Trades, follow
-the **Time Zone** on Settings, and include Saturday and Sunday only in a month with a trade on one.
-
-A **Rating** widget charts each trade's stars, 1 to 5. Tag scores are signed values configured on each tag; a
-trade's score is the sum of its selected tag scores, and a widget can restrict the contributing tags. The Tag
-score widget, measure and filter appear once a tag has a score; a widget saved before then still draws. These
-are process measures, not P&L, forecasts, or claims of Tradecraft's exact formula.
+**Stats → Dashboards** holds your own pages. **Customize Page** names a page, sets 1 to 3 columns, clones it, and
+adds, edits, moves and removes its widgets, up to 24: Summary, Equity, Drawdown, Calendar, Compare, Distribution,
+MAE / MFE, Tag score, Rating, Radar, Trades and Script. Until you save one there is **My Dashboard**, empty, as
+Overview already draws the equity curve, the calendar and the results. **Page Filters** and each widget's filters are
+the Filters menu's editor and add to the Stats filters; they never change a trade. A Compare widget's bars run
+lowest first, tags standing together by category in its colour. A Calendar widget is Overview's calendar for the
+widget's trades. A Rating widget charts each trade's stars; Tag score, the sum of the scores you give tags, appears
+once a tag has a score. A Script widget runs your own JavaScript on the widget's trades only after **Run Local
+Script**, for at most two seconds, with no page, files, account IDs or network, and returns a text or a line or bar
+series of up to 5,000 values.
 
 **Settings → Tags, Playbooks & Checklists → Checklists** builds a checklist as a plain list: its name, **Runs on**
-(**Each trade** or **Before the session**), and numbered yes/no questions, each a text box with **Move Up**,
-**Move Down** and **Remove**, then **Add Question** and one **Save Checklist**. A question goes on to the next one
-whatever the answer, unless **Add a Branch** under it says otherwise: for Yes and for No, where it goes (the next
-question, another question by its number, or Finish), the tags it collects and **Count this answer**. A line under
-the question says what its branches do. **Delete Checklist** removes a checklist; answers already given keep their
-own copy of it, and **Back Up Journal** keeps checklists with everything else.
+(**Each trade** or **Before the session**) and numbered yes/no questions, each with **Move Up**, **Move Down** and
+**Remove**, then **Add Question** and **Save Checklist**. A question goes on to the next whatever the answer, unless
+**Add a Branch** under it says where Yes or No goes (the next question, another by its number, or Finish), the tags
+it collects and **Count this answer**. A checklist that runs on each trade is the **Checklist** section of every
+trade's page; one that runs before the session is on the Daily Report Card, once a day. Only the question due takes
+a click, **Undo Last Answer** takes one back, and the tags collected reach the trade or the day only with **Apply
+Collected Tags**. **Delete Checklist** removes a checklist; answers already given keep their own copy of it.
 
-A checklist that runs on each trade is the **Checklist** section of every trade's page; one that runs before the
-session is on the Daily Report Card, once for each day. Its questions are listed in order with Yes and No; only the
-question due takes a click, and a branch hides the questions it skips. **Undo Last Answer** takes an answer back.
-The tags the answers collect are listed under it and reach the trade, or the day, only with **Apply Collected
-Tags** (on a day, only tags available on days). Opening a journal from 0.4.17 or earlier once turns each checklist
-drawn on the old node canvas into this list, walked from its first question: an answer's pass and counter nodes
-fold into it, a third answer and an answer's own wording go, and a checklist only ever run from the old session
-menu runs before the session, its runs on the day they started. No checklist can place, modify or block an order.
+The **Session** menu, at the top of Trades beside Filters and Merge Trades, stays out of the way until you open it
+(a journal with no trades has none of these):
 
-**Session tools** stay out of the way until you want them: one **Session** menu at the top of Trades, beside
-Filters and Merge Trades (a journal with no trades yet has none of these). **Start Check-In Timer** starts an
-optional repeating check-in timer, after the minutes between check-ins and the categories that ask, set just above
-it. Only while the timer runs or is paused is its count in the bar, with pause and stop. When it runs out, one click
-on a tag is the check-in, logged to the session or an explicitly selected open position; the menu lists the latest
-check-ins. Timer state is not persisted or restarted automatically, and there are no background notifications or
-sounds.
-**Tag My Next Trade**, in the same menu, takes a contract (account · contract, the most recently traded first),
-tags by category, an optional Stop and a note, with one button. They go on the next trade opened on that account
-and contract that was not in the journal yet when you clicked, whenever it comes; when two new trades arrive at
-once, the one opened first. Tagging that contract again replaces what is waiting. Categories, a note and a stop
-already chosen on the trade take precedence. The list below says **Waiting**, **Used** (naming the trade),
-**Cancelled**, or **Needs review** when a tag was retired, or two came to share a one-choice category, since you
-clicked; **Cancel Tags** cancels one waiting or needing review. Nothing here is a fake execution, and the tags go on
-after the watcher reads new fills, never during a read-only render. Opening a journal from 0.4.17 or earlier once
-cancels each pre-trade draft whose time window had ended; one still inside its window waits for its next trade the
-same way.
-
-Custom-statistics scripts require an explicit **Run Local Script** click for each changed code or
-trade sample. Code runs in a two-second Web Worker inheriting a restrictive CSP, with no DOM,
-account IDs, raw fills, file access, broker access or external libraries. Return a text result or
-up to 5,000 finite values in a line/bar series. This is intentionally a smaller surface than
-Tradecraft's arbitrary DOM/CDN scripting; do not describe it as full script-widget compatibility.
+- **Check-In Timer**: set the minutes between check-ins and the categories that ask, then **Start Check-In Timer**.
+  While it runs or is paused its count sits beside the menu with pause and stop; when it runs out, one click on a
+  tag is the check-in, for the session or an open position you choose. The latest check-ins are listed under it.
+  The timer stops when the app closes, and it makes no sound.
+- **Tag My Next Trade**: choose a contract (account · contract, the most recently traded first), tags, an optional
+  Stop and a note. They go on the next trade opened on that account and contract; tagging the contract again
+  replaces what is waiting, and what you choose on the trade itself wins. The list says **Waiting**, **Used** (with
+  the trade), **Cancelled**, or **Needs review** when a tag was retired, or two came to share a one-choice category,
+  since; **Cancel Tags** cancels one.
 
 ## Status and limitations
 
 Experimental. Fixture tests exercise the Java writer through the Python reader and app. The native
 method-contract check resolves the installed MotiveWave method names, but neither test proves
-capture of your actual Rithmic/manual or replay fills inside a running MotiveWave session.
-That acceptance check is still required. The study never places, changes or cancels orders.
+recording of your actual Rithmic/manual or replay fills inside a running MotiveWave session.
+That acceptance check is still required. Nothing in the study or the app places, changes or cancels an order:
+the chart, the checklists and Tag My Next Trade only review.
 
-What the study can and cannot see: it reads fills from MotiveWave internals outside its supported SDK, so a
-MotiveWave update can stop it reading fills; Settings → Data → Connection then shows the study's own message,
-and prices keep recording. A stop order counts when it is on your position's account and contract and on its
-closing side (a sell stop for a long, a buy stop for a short); take-profit orders are not read. Fees can be the
-platform's estimates, and such trades are flagged. Put the study on the chart you trade, contract or continuous:
-its prices go with trades of the same product whatever the contract month, and one study reads every fill of the
-account.
+What the study can and cannot see: prices come through MotiveWave's public SDK, but fills come from MotiveWave
+internals outside its supported SDK, through an allow-listed, read-only adapter, so a MotiveWave update can stop it
+reading fills; Settings → Data → Connection then shows the study's own message, and prices keep recording. It sees
+the executions MotiveWave keeps, not a full broker archive. Stop orders are polled, so a very fast change can be
+missed. A stop order counts when it is on your position's account and contract and on its closing side (a sell stop
+for a long, a buy stop for a short); take-profit orders are not read. Put the study on the chart you trade,
+contract or continuous: its prices go with trades of the same product whatever the contract month, and one study
+reads every fill of the account.
 
 What MAE / MFE can and cannot know: they are only as complete as the ticks MotiveWave delivered. Recorded ticks
 are not proof that the feed sent every print, and a missed print can understate MAE or MFE; a gap the study
@@ -648,7 +597,27 @@ as your exit is left out, as MotiveWave's times cannot say whether it came befor
 path chart draws at most 1,000 points; MAE and MFE themselves use every tick, and once the trade is closed
 **Show/export full recorded trade path** shows and exports every one.
 
-## SCS-style capture, with MotiveWave
+What Stats can and cannot say: Stats, Compare, playbooks, tag scores and the Radar widget describe the trades you
+recorded. They are not proof of an edge, a forecast, or a claim that a setup makes money, and a small sample
+misleads: judge a row from about 10 trades and the whole journal from 100 to 150. A trade with several tags counts
+under each, so tag rows overlap. The equity curve is closed trades after recorded fees, not account equity.
+
+What fees can and cannot tell: they are what MotiveWave reports for each fill, set by your commission rates there.
+Some are the platform's estimates, and Stats flags the trades whose commission was not confirmed; a missing fee is
+not proven zero, and fees are never an estimate of slippage.
+
+After Exit is hindsight on a price path, not a strategy backtest or profit you could have made. A stop touch is not
+a stop fill; spread, slippage, fees and trailing stops are not modelled; and recorded ticks are not proof that the
+feed sent every print. Do not add these peaks to your expectancy: pick a fixed exit rule from them, then check it on
+trades you have not looked at yet.
+
+Times: fills are stored in UTC. The trades CSV adds each entry and exit in your Time Zone; the full-path CSV is in
+UTC.
+
+Script widgets are a small, safe part of Tradecraft's scripting, with no page, CDN libraries or network: not full
+compatibility with its script widgets.
+
+## SCS-style recording, with MotiveWave
 
 The study records fills, linked order updates and prices into newline-committed local NDJSON;
 the app watches it without routine exports. This follows the platform-connector/local-app
@@ -660,13 +629,13 @@ export reads exactly the same ticks as before. There is nothing to set or do. Th
 opens a journal it packs every tick already recorded and shrinks the file (a tester's 222 MB journal became
 17 MB in 13 seconds). The default
 P&L chart is compacted for display; once a trade is closed, **Show/export full recorded trade path**
-reconstructs every available observation with held quantity and average cost. Missing prices are not
+reconstructs every available observation with the contracts held and average cost. Missing prices are not
 invented.
 
-### Study-only capture
+### Study-only recording
 
 The desktop app contains no screen, video, audio, microphone, camera, OBS or FFmpeg recorder.
-Automatic capture comes only from the MotiveWave study: fills, partials, linked protection, ticks,
+Automatic recording comes only from the MotiveWave study: fills, partials, linked protection, ticks,
 bars and replay events are appended to the local bridge file. The app reads that file and never
 needs permission to see the desktop. Once the app has read and stored all of the file, the study empties
 it, so it holds only what the app has not read yet (while the app is closed it keeps everything). The
@@ -700,18 +669,8 @@ choice: Tags (each tag under its category, in your order), Playbooks, Market, Ex
 or Weekday, the most room after the exit first. **Filters** narrows the trades, for example to winners by Net P&L
 or to exits near 1R by R. A trade counts only when all of its 15 minutes were recorded, so a partial window is never
 averaged in as zero. An exit at or past the stop counts as 0, as there was nothing left to hold: leaving it out
-would make the averages look bigger than your trades were. A trade with several tags counts under each.
-
-This is hindsight on a price path, not a strategy backtest or profit you could have made. A stop touch is not
-a stop fill; spread, slippage, fees and trailing stops are not modelled; and recorded ticks are not proof that
-the feed sent every print. Do not add these peaks to your expectancy: pick a fixed exit rule from them, then
-check it on trades you have not looked at yet.
-
-Prices use the public SDK. Reading manual-account fills uses an allow-listed, read-only adapter to
-MotiveWave internals, **not its supported SDK**; a platform update can break it. The connection status
-shows errors as **Needs attention**, and a study that has not reported in for a minute as **Not recording**.
-The observer only sees retained executions, not
-a guaranteed full broker archive. Linked stop order updates are polled and very fast changes can be missed.
+would make the averages look bigger than your trades were. A trade with several tags counts under each. It is
+hindsight, not profit you missed: see *Status and limitations*.
 
 ## Start the app
 
@@ -810,7 +769,7 @@ See [MotiveWave's import instructions](https://docs.motivewave.com/knowledge-bas
 
 Use `MOTIVEWAVE_SDK` for a non-default SDK path and `JAVA_HOME` for the JDK. No SDK/native platform
 jars are bundled. `build.sh deploy` explicitly installs the JAR into your extensions folder;
-ordinary build/test commands do not install it. Do not run two different capture studies against
+ordinary build/test commands do not install it. Do not run two different recording studies against
 the same bridge file.
 
 Default data folders:
@@ -903,11 +862,6 @@ For actual acceptance, install/add the study yourself, check its fresh heartbeat
 you chose to take against MotiveWave's fills (time, price, size, symbol), linked orders and received
 price extrema. Repeat in replay, pause immediately after a short round trip, and then rewind.
 Never count a fixture chart as proof of that integration.
-
-Stats separates gross/net closed-trade curves and recorded fee drag, including fees in R
-for trades with a stop. Fees are not slippage and a closed-trade curve is not marked
-account equity. The app also offers optional CSV imports of fills, daily reviews, a trades CSV, and one-file backup
-and restore.
 
 ## Design and future work
 

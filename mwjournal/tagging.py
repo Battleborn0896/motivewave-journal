@@ -383,13 +383,13 @@ def effective(state, annotation, session):
 
 def set_group(state, annotation, group, chosen, session):
     if group not in state['groups'] or len(ids(state, chosen)) != len(set(chosen)):
-        raise ValueError('Choose known tags from a known group.')
+        raise ValueError('Choose known tags from a known category.')
     chosen = ids(state, chosen)
     if any(state['tags'][id]['group'] != group or state['tags'][id]['retired']
            or 'trade' not in state['tags'][id]['levels'] for id in chosen):
-        raise ValueError('Choose active tags from this group.')
+        raise ValueError('Choose active tags from this category.')
     if state['groups'][group]['exclusive'] and len(chosen) > 1:
-        raise ValueError('This group permits one choice.')
+        raise ValueError('This category allows one choice.')
     group_ids = {id for id, t in state['tags'].items() if t['group'] == group}
     direct = selected(state, annotation) - group_ids | chosen
     excluded = set(annotation.get('day_tag_exclusions', [])) - group_ids
@@ -406,7 +406,7 @@ def edit_tag(state, id, **changes):
     name = str(changes.get('name', tag['name'])).strip()
     group = str(changes.get('group', tag['group'])).strip()
     if not name or len(name) > 64 or not group or len(group) > 40:
-        raise ValueError('Tag names need 1–64 characters; group names need 1–40.')
+        raise ValueError('Tag names need 1–64 characters; category names need 1–40.')
     if any(name in other['aliases'] for key, other in state['tags'].items() if key != id):
         raise ValueError('That name or historical alias belongs to another tag.')
     color = changes.get('color', tag['color'])

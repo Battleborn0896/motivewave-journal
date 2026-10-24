@@ -144,8 +144,8 @@ def render(journal, trade):
                     conflict = exclusive and len(values) > 1
                     st.pills(group, names, selection_mode='single' if exclusive else 'multi', key=group_key,
                              on_change=save_group, args=(journal, trade, group, group_key),
-                             help='One choice at a time.' + (' This trade has older conflicting choices; picking one '
-                                                             'resolves them.' if conflict else '') if exclusive else None)
+                             help=('One choice at a time; picking one clears the older conflicting choices on this '
+                                   'trade.' if conflict else 'One choice at a time.') if exclusive else None)
         rating_key = common.key(journal, 'rating-' + trade.id)
         stars(annotation.get('rating'), key=rating_key, on_change=save_field,
               args=(journal, trade.id, 'rating', rating_key))
@@ -166,7 +166,7 @@ def render(journal, trade):
                                          format_func=lambda t: f'{common.moment(t.opened, zone, seconds=False)} · {t.symbol} · '
                                                                f'{len(saved[t.id]["tags"])} tags',
                                          key=common.key(journal, 'tag-donor-' + trade.id),
-                                         help='Adds that trade’s tags to this one. Tags, notes and stop already here stay.')
+                                         help='Adds that trade’s tags to this one; the tags, note and Stop already here stay.')
                     if st.button('Apply Copied Tags', key=common.key(journal, 'tag-copy-' + trade.id)):
                         try:
                             journal.update_annotation(trade.id, {}, add_tags=saved[donor.id]['tags'])
@@ -176,7 +176,8 @@ def render(journal, trade):
             if tagging.scored(library):
                 from mwjournal.workspace import tag_score
                 st.caption(f'Tag score {tag_score(library, chosen):+g}',
-                           help='The sum of the scores set on each chosen tag in Settings → Tags, Playbooks & Checklists, separate from P&L and Rating.')
+                           help='The sum of the scores set on each chosen tag in Settings → Tags, Playbooks & '
+                                'Checklists, separate from P&L and Rating.')
             retired = [library['tags'][id]['name'] for id in chosen if library['tags'][id]['retired']]
             if retired:
                 st.caption('Retired tags kept on this trade: ' + ', '.join(retired))
@@ -223,8 +224,8 @@ def playbook_panel(journal, trade, library, chosen):
         with st.popover('Apply Playbook', width='stretch'):
             book = st.selectbox('Playbook', books, format_func=lambda p: p['name'],
                                 key=common.key(journal, 'apply-playbook-' + trade.id),
-                                help='Chooses the playbook’s tags in their categories. Choices in other categories stay. '
-                                     'In a one-choice category your matching choice is kept, else its first tag is chosen.')
+                                help='Chooses the playbook’s tags in their categories and leaves the other categories as '
+                                     'they are.')
             if st.button('Apply Combination', key=common.key(journal, 'apply-combo-' + trade.id)):
                 try:
                     journal.apply_playbook(trade, book['id'])
@@ -234,12 +235,13 @@ def playbook_panel(journal, trade, library, chosen):
     with st.popover('Check This Combination', width='stretch'):
         names = tagging.names(library, chosen)
         options = sorted(set(names) | {t['name'] for t in library['tags'].values() if not t['retired']})
-        required = st.multiselect('Required tags · all must match', options, default=names,
+        required = st.multiselect('Tags to check', options, default=names,
                                   key=common.key(journal, 'combo-check-' + trade.id),
                                   help='Try other tags here without changing this trade.')
-        interpretation = st.radio('Combination logic', ['All selected tags', 'OR within groups'],
+        interpretation = st.radio('Combination logic', ['All selected tags', 'Any tag within a category'],
                                   key=common.key(journal, 'combo-logic-' + trade.id),
-                                  help='OR accepts any of the chosen tags within a category; every category must still match.')
+                                  help='Any tag within a category accepts one of its chosen tags; every category must '
+                                       'still match.')
         if required:
             rules = {}
             for id in tagging.ids(library, required):
@@ -250,10 +252,8 @@ def playbook_panel(journal, trade, library, chosen):
                          else tagging.matches(library, r['tag_ids'], {'rules': rules}))]
             s = summary(rows)
             win_rate = f"{s['win_rate']:.1f}%" if s['win_rate'] is not None else '—'
-            st.write(common.md(f"{s['count']} earlier closed trades · win rate {win_rate} · "
-                               f"average net {common.money(s['expectancy'], trade.currency)}"))
-            st.caption('Earlier trades only · a description, not a prediction',
-                       help='Excludes this trade and anything entered after it. A small sample can mislead.')
+            st.write(common.md(f"{s['count']} closed trades entered before this one · Win Rate {win_rate} · "
+                               f"Average Trade {common.money(s['expectancy'], trade.currency)}"))
 
 
 def day_panel(journal, date):

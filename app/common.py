@@ -385,8 +385,7 @@ def tick_size_menu(journal, trade):
     with st.popover('Set Tick Size for ' + trade.symbol):
         with st.form(key(journal, 'tick-size-' + trade.id)):
             size = st.number_input('Minimum price increment', min_value=0., value=0., step=.000001, format='%.8f',
-                                    help='Use the confirmed minimum price increment for this exact contract; '
-                                         'this starting value is not an inferred specification.')
+                                    help='The smallest price step of this exact contract, such as 0.25 for ES.')
             if st.form_submit_button('Save Tick Size'):
                 if size <= 0:
                     st.error('Enter a confirmed tick size greater than zero.')
@@ -521,7 +520,7 @@ def show_result(result: dict) -> None:
 
 # The number limits a filter offers, by their name in a rule. MAE and MFE are in the chosen MAE / MFE Units.
 NUMBER_LIMITS = {'net': 'Net P&L', 'r': 'R', 'mae': 'MAE', 'mfe': 'MFE', 'quantity': 'Contracts',
-                 'duration': 'Minutes held', 'score': 'Tag Score'}
+                 'duration': 'Minutes held', 'score': 'Tag score'}
 TAG_MATCH = ('All selected', 'Any selected')
 
 
@@ -692,7 +691,7 @@ def multiplier_form(journal, form_key: str, symbol: str) -> None:
     when it is wrong. Saving measures every trade again, so that contract's trades follow it."""
     in_use = next((t.point_value for t in journal.trades() if t.symbol == symbol and t.point_value), None)
     with st.form(key(journal, form_key)):
-        st.caption('Instrument: ' + symbol)
+        st.caption('Contract: ' + symbol)
         pv = st.number_input('Dollars per point', min_value=.000001,
                              value=float(in_use or point_value(symbol) or 1.),
                              key=key(journal, form_key + '-value-' + symbol),
@@ -701,8 +700,8 @@ def multiplier_form(journal, form_key: str, symbol: str) -> None:
         tick = st.number_input('Tick size · optional', min_value=0.,
                                value=float(units.tick_size(symbol, journal.display_settings()['tick_sizes']) or 0.),
                                format='%.6f', key=key(journal, form_key + '-tick-' + symbol),
-                               help='One minimum price increment, not its dollar value. Zero leaves it unchanged. '
-                                    'ES/MES/NQ/MNQ are detected automatically. Other contracts need a confirmed size.')
+                               help='The smallest price step of this contract, not its dollar value; zero leaves it '
+                                    'unchanged.')
         if st.form_submit_button('Save and Recalculate'):
             journal.set_instrument(symbol, pv)
             if tick > 0:

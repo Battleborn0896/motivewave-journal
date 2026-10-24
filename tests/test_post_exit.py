@@ -209,7 +209,7 @@ def test_the_sentence_uses_the_mae_unit_and_r_needs_a_stop(tmp_path):
     # In R without a stop there is no R amount: the MAE tile's '—' and its reason, never another unit.
     assert sentence(tmp_path / 'd', up, unit='r') == (
         f'{OPENING} went — further your way and did not reach breakeven. '
-        'No stop order 10 seconds after entry. Type your stop to get R.')
+        'No stop order 10 seconds after entry: type your stop to get R.')
 
 
 def test_minutes_not_over_or_not_recorded_say_so(tmp_path):

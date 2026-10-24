@@ -40,23 +40,13 @@ PAGE_HELP = {
 TABS = {'Tags': ('Tags', 'Categories', 'Playbooks', 'Checklists'),
         'Data': ('Import Trades', 'Export & Backup', 'Journals & Accounts', 'Connection')}
 
-# One line per state: what it means, first in the status line's ?. Needs attention also says it under the status;
+# One sentence per state: what it means, the status line's ?. Needs attention also says it under the status;
 # Not recording has the one step to take there instead (STEPS). Never a path or a raw error.
 STATUS_COPY = {
-    common.RECORDING: 'MotiveWave is sending data. Trade as usual: each trade appears in Trades by itself.',
-    common.NOT_RECORDING: 'The study is not sending data. Do the step under this line; it turns green by itself.',
-    common.ATTENTION: 'Something stops the recording. Open Data → Connection to see what.',
+    common.RECORDING: 'MotiveWave is sending data, so trade as usual: each trade appears in Trades by itself.',
+    common.NOT_RECORDING: 'The study is not sending data: do the step under this line, and it turns green by itself.',
+    common.ATTENTION: 'Open Data → Connection to see what stops the recording.',
 }
-FLAT_TO_FLAT = ('One trade runs flat to flat for one provider, account and exact contract. The first fill that moves '
-                'the position away from zero opens it. Scale-ins and partial exits stay inside that same trade. The '
-                'fill that returns the position to zero closes it. A reversal closes the old trade at the crossing '
-                'fill and opens a new one; other accounts and contracts stay separate. Replay works the same way and '
-                'is kept in the separate Replay journal. Once a replay trade is flat, the study loads the real ticks '
-                'of its holding time from MotiveWave\'s history, never past the replay\'s current time, so its MAE / '
-                'MFE comes from real ticks, where that history has them, even when the replay itself plays from bars.')
-CONTRACTS = 'The contracts named are those the study wrote prices or fills for in the last hour.'
-CONTRACTS_REPLAY = ('The contracts named are those of the replay run the study wrote last, within an hour of replay '
-                    'time of its newest price or fill.')
 INSTALL = 'Install MotiveWave Study'
 # The one thing to do when the study is not recording or is older than this app's: (the line, the ? beside it).
 STEPS = {
@@ -216,10 +206,9 @@ def render_status(journal):
     except (AttributeError, TypeError, ValueError, OSError):
         contracts = []
     notes = [(STATUS_COPY[common.ATTENTION], True)] if link.state == common.ATTENTION else []
-    named = (CONTRACTS_REPLAY if getattr(journal, 'dataset', '') == 'replay' else CONTRACTS) if contracts else ''
     # Always one element: theme.status explains why a redrawn fragment must not change its element count.
     theme.status(headline(link, contracts), link.tone, link.state, big=True, notes=notes,
-                 help=' '.join(part for part in (STATUS_COPY.get(link.state, ''), named, FLAT_TO_FLAT) if part))
+                 help=STATUS_COPY.get(link.state))
     return link
 
 
@@ -228,14 +217,14 @@ def step(link) -> None:
     which = needed_step(link, study_installed())
     if which is None:
         return
-    line, explained = STEPS[which]
+    line = STEPS[which][0]
     if which == 'update':
         line = update_line(link)
     elif which == 'install' and not connection.JAR.is_file():
         line = ('In MotiveWave choose **Study → All Studies → Import** and pick motivewave-journal.jar, then add '
                 'the study to your chart.')
     with st.container(key='setup-step-' + which):
-        st.markdown(line, help=explained)
+        st.markdown(line, help=STEPS[which][1])
         if which in ('install', 'update') and connection.JAR.is_file() and not connection.bundled_study_installed():
             if st.button(INSTALL, type='primary', key='simple-study-install'):
                 try:
@@ -264,9 +253,7 @@ def about(link=None) -> None:
     """One line to quote in a bug report, then the chart library's credit and the independence notice."""
     version = getattr(link, 'version', '') or paths.STUDY_VERSION
     st.caption(f'{paths.APP_NAME} {paths.VERSION} · study {version} · data folder {paths.data_home()}',
-               help='Quote this line in a bug report. The study version is the one MotiveWave last reported, or the '
-                    'one this app comes with before it has. Trades, reviews and settings stay in the data folder on '
-                    'this computer; Data → Export & Backup makes a copy.')
+               help='Quote this line in a bug report; your trades, reviews and settings are in the data folder it names.')
     with st.container(key='setup-fine-print', gap=None):
         st.caption(common.CREDIT)
         st.caption('MotiveWave Journal is an independent open-source project, not affiliated with or endorsed by '

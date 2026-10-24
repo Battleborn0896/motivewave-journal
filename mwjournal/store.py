@@ -1246,7 +1246,7 @@ class Journal(Workspace):
                     choices = [id for id in incoming if state['tags'][id]['group'] == group]
                     if settings['exclusive'] and choices:
                         if len(choices) > 1:
-                            raise ValueError('Copied tags contain multiple choices in an exclusive group.')
+                            raise ValueError('Copied tags hold more than one choice in a one-choice category.')
                         tags = {name for name in tags
                                 if state['tags'][next(iter(tagging.ids(state, [name])))]['group'] != group}
                         tags.update(tagging.names(state, choices))
@@ -1274,12 +1274,12 @@ class Journal(Workspace):
         """Create a reusable tag; no existing trade is retagged or deleted."""
         name, group = name.strip(), group.strip()
         if not name or not group or len(name) > 64 or len(group) > 40:
-            raise ValueError('Give the tag a name (up to 64 characters) and group (up to 40).')
+            raise ValueError('Give the tag a name (up to 64 characters) and a category (up to 40).')
         with self._settings(write=True) as db:
             state = self._library(db)
             existing = tagging.ids(state, [name])
             if existing and state['tags'][next(iter(existing))]['group'] != group:
-                raise ValueError('That tag already belongs to another group. Use a different name.')
+                raise ValueError('That tag already belongs to another category: use a different name.')
             if existing and state['tags'][next(iter(existing))]['name'] != name:
                 raise ValueError('That name is a historical alias; rename the existing tag instead.')
             tagging.ensure_names(state, [name], group)
@@ -1329,7 +1329,7 @@ class Journal(Workspace):
         with self._settings(write=True) as db:
             state = self._library(db)
             if group not in state['groups']:
-                raise ValueError('Unknown group.')
+                raise ValueError('Unknown category.')
             if exclusive is not None:
                 state['groups'][group]['exclusive'] = bool(exclusive)
             ordered = sorted(state['groups'], key=lambda g: state['groups'][g]['order'])
@@ -1341,7 +1341,7 @@ class Journal(Workspace):
             if name is not None and name.strip() != group:
                 name = name.strip()
                 if not name or len(name) > 40 or name in state['groups']:
-                    raise ValueError('Use a unique group name, 1–40 characters.')
+                    raise ValueError('Use a unique category name, 1–40 characters.')
                 state['groups'][name] = state['groups'].pop(group)
                 for tag in state['tags'].values():
                     if tag['group'] == group:
@@ -1388,13 +1388,13 @@ class Journal(Workspace):
             row = db.execute('SELECT payload FROM sessions WHERE key=?', (key,)).fetchone()
             old = json.loads(row[0]) if row else {}
             if group not in state['groups'] or len(tagging.ids(state, chosen)) != len(set(chosen)):
-                raise ValueError('Choose known day tags from a known group.')
+                raise ValueError('Choose known day tags from a known category.')
             chosen = tagging.ids(state, chosen)
             if any(state['tags'][id]['group'] != group or state['tags'][id]['retired']
                    or 'day' not in state['tags'][id]['levels'] for id in chosen):
-                raise ValueError('Choose active day tags from this group.')
+                raise ValueError('Choose active day tags from this category.')
             if state['groups'][group]['exclusive'] and len(chosen) > 1:
-                raise ValueError('This group permits one choice.')
+                raise ValueError('This category allows one choice.')
             other = {id for id in tagging.inherited(state, old) if state['tags'][id]['group'] != group}
             data = {**old, 'date': key, 'day_tag_ids': sorted(other | chosen)}
             db.execute('INSERT OR REPLACE INTO sessions VALUES(?,?)', (key, encode(data)))
@@ -1411,12 +1411,12 @@ class Journal(Workspace):
                 raise ValueError('Unknown playbook.')
             if any(group not in state['groups'] or len(tagging.ids(state, tags)) != len(set(tags))
                    for group, tags in rules.items()):
-                raise ValueError('Choose known tags from known groups.')
+                raise ValueError('Choose known tags from known categories.')
             normalized = {group: sorted(tagging.ids(state, tags), key=lambda i: state['tags'][i]['order'])
                           for group, tags in rules.items() if tags}
             if not normalized or any(not values or any(state['tags'][i]['group'] != group for i in values)
                                      for group, values in normalized.items()):
-                raise ValueError('Choose at least one valid tag per participating group.')
+                raise ValueError('Choose at least one valid tag in each category the playbook uses.')
             if any(p['name'] == name and key != id for key, p in state['playbooks'].items()):
                 raise ValueError('That playbook name already exists.')
             id = id or tagging.identity('playbook:' + name)
@@ -1442,7 +1442,7 @@ class Journal(Workspace):
             for group, choices in state['playbooks'][id]['rules'].items():
                 active = [i for i in choices if not state['tags'][i]['retired'] and 'trade' in state['tags'][i]['levels']]
                 if not active:
-                    raise ValueError('A playbook group has no active choices.')
+                    raise ValueError('A playbook category has no active choices.')
                 if state['groups'][group]['exclusive']:
                     current = tagging.effective(state, data, session)
                     active = [i for i in active if i in current][:1] or active[:1]

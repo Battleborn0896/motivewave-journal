@@ -50,7 +50,8 @@ def render(journal, rows):
         scope = st.selectbox('Account to rename', known, format_func=lambda s: journals.alias(journal, s))
         with st.form(common.key(journal, 'account-alias-form')):
             name = st.text_input('Display name', journals.alias(journal, scope), max_chars=80,
-                                 help='A label only. Provider and account IDs in fills and order links stay unchanged.')
+                                 help='The name this account is shown by everywhere; its trades and fills stay as '
+                                      'recorded.')
             if st.form_submit_button('Save Display Name'):
                 try:
                     journals.account_alias(journal, *scope, name)
