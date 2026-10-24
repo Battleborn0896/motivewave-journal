@@ -33,7 +33,7 @@ side.
 
 ## Tick path and replay
 
-The study records the chart's observed trade prints while its capture gate is open, including a
+The study records the chart's observed trade prints while its recording gate is open, including a
 bounded pre-roll and exit tail. The resulting path drives observed-tick MAE/MFE and the one-minute
 candles drawn from those prints. Put the study on the chart you trade, the contract's or a continuous one:
 a trade is measured with the prices of its product (`NQZ6`, `NQ` and a continuous `NQ` are all `NQ`;
@@ -76,7 +76,7 @@ Use a simulation account, not a live account:
 
 1. Confirm Settings says **Recording** with the study version this app comes with.
 2. Buy two contracts, exit one, add one, then flatten two.
-3. Confirm exactly one completed trade appears with four fills and the correct maximum quantity.
+3. Confirm exactly one completed trade appears with four fills and **Contracts** 2, the most held at once.
 4. Open the trade and confirm observed ticks exist from entry through exit.
 5. Create `Orderflow` and `Psychology` categories, add tags, restart the app and confirm they persist.
 6. Repeat in Replay and confirm it appears only in the Replay journal.

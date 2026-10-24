@@ -417,7 +417,7 @@ One row above the list holds three menus:
   empties them. **Saved Filter on Every Page** keeps one saved filter on for every page, with **Rename** and
   **Delete** beside it; type a name under the filters and press Enter to save what is shown.
 - **Merge Trades**: reviews trades of one account, contract and direction within 24 hours as one trade, their own
-  fills and notes kept; **Split** gives them back.
+  fills and notes kept; **Split Into Original Trades** gives them back.
 
 **Markets** groups the expiries of a future (NQZ6 and NQM7 are NQ; micros stay apart from full-size contracts), and
 **Exact Contracts** narrows to one. Fills, charts and MAE / MFE always keep the exact contract traded, and one
