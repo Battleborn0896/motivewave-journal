@@ -13,7 +13,7 @@ from pathlib import Path
 
 import pytest
 
-from mwjournal import Execution, Journal, PriceSample, journals, store
+from mwjournal import Execution, Journal, PriceSample, store
 from mwjournal.importers import apply_preview, preview_bridge
 from mwjournal.metrics import carry_on, excursions, measurements
 from mwjournal.model import instant
@@ -496,40 +496,6 @@ def test_the_one_time_trim_keeps_a_packed_minute_that_starts_before_a_trades_win
     journal = Journal(path)
     assert meta(path, 'prices_trimmed') == '0' and len(rows(path, PACKED)) == 2
     assert text(journal.prices('NQZ6', LIVE, start=(instant(trade.opened) - store.PRINTS_BEFORE).isoformat())) == before
-
-
-# ---------------------------------------------------------------- named journals
-
-def test_a_named_journal_takes_the_packed_minutes_and_its_copies_of_their_prints_go(tmp_path, monkeypatch):
-    monkeypatch.setenv('MWJ_HOME', str(tmp_path))
-    capture = day_journal(Journal().path)
-    id = journals.create(capture, 'Sim only', [(STUDY, 'sim')])
-    named = journals.journal_path(capture, id)
-    assert len(rows(named, LOOSE)) == len(rows(capture.path, LOOSE))
-    capture.pack_prices()
-    journal = journals.open_named(capture, id)
-    # The capture's packed minutes came over and every loose copy of their prints went: none is read twice.
-    assert not rows(named, LOOSE) and len(rows(named, PACKED)) == len(rows(capture.path, PACKED))
-    assert reads(journal) == reads(capture)
-    # A late print: a row in both, until the capture packs it; then the named journal's copy goes as it comes.
-    late = PriceSample('NQZ6', f'{DAY}T14:03:30.5Z', LIVE, 20100., 20100.)
-    capture.ingest_prices([late])
-    journal = journals.open_named(capture, id)
-    assert len(rows(named, LOOSE)) == 1 and reads(journal) == reads(capture)
-    capture.pack_prices()
-    capture.pack_prices()
-    journal = journals.open_named(capture, id)
-    assert not rows(named, LOOSE) and reads(journal) == reads(capture)
-    # An open trade's page brings it up to date the same way.
-    trade = next(t for t in journal.trades() if t.status == 'open')
-    capture.ingest_prices([PriceSample('NQZ6', f'{DAY}T16:21:10Z', LIVE, 20040., 20040.)])
-    journals.follow(journal, trade)
-    capture.pack_prices()
-    capture.pack_prices()
-    journals.follow(journal, trade)
-    assert not rows(named, LOOSE) and reads(journal) == reads(capture)
-    journals.open_named(capture, id)
-    assert not rows(named, LOOSE) and reads(journal) == reads(capture)
 
 
 # ---------------------------------------------------------------- a real journal, on a developer's machine

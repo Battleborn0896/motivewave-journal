@@ -107,9 +107,9 @@ are explicitly defined, not asserted to be the vendor's exact calculations.
 | Session video | Explicit existing local/YouTube link; account/contract/clock/duration/speed alignment; execution jumps/pre-roll | Native playback acceptance, variable-speed/paused replay segmentation UI and Book-of-Charts session-video integration |
 | Custom scripts | Opt-in, two-second Web Worker; filtered display values; text/line/bar result | Deliberately not arbitrary DOM/CDN execution or vendor script compatibility |
 | Trade legs | Raw matching handles scale-ins and partial exits, exact fill roles/time/SL/TP, chart paths | Manual merge/explode of separately imported round trips with reversible provenance-aware excursions |
-| Multiple journals/accounts | Separate Live/Replay databases, currency/account filters and named dashboard/filter views | Named isolated journals, rename/clone/export/import across journal workspaces; account aliases |
+| Multiple journals/accounts | Separate Live/Replay databases; views of chosen accounts in the Journal menu, sharing one set of reviews and settings; currency/account filters, account names and named dashboard/filter views | Named isolated journals, rename/clone/export/import across journal workspaces; account aliases |
 | Imports / sync | Manual fills, mapped CSV of fills, experimental MotiveWave bridge | Dedicated parsers/connectors for every vendor-supported platform; direct R-Trader/Sierra/other integrations |
-| Backups | One zip of every journal (Live, Replay, named and archived) with tag library + workspace definitions/runs/check-ins/drafts/videos; restore from it after a copy of the current journal is saved; trades CSV | Media files in the backup and cloud synchronization (not required for the free local target) |
+| Backups | One zip of both journals (Live and Replay, with their views and account names) with tag library + workspace definitions/runs/check-ins/drafts/videos; restore from it after a copy of the current journal is saved; trades CSV | Media files in the backup and cloud synchronization (not required for the free local target) |
 
 This table is intentionally not all green. It is the acceptance checklist for subsequent work;
 shipping a broader 0.3 app is not completion of the user's “all features” request. Current widget

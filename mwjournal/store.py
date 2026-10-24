@@ -167,26 +167,6 @@ def unpack(data: dict) -> list:
     return prints
 
 
-def drop_copies(db, keys) -> int:
-    """For a named journal, which holds its capture journal's prices as they are stored there (journals.mirror):
-    the packed minutes `keys` were just copied in, and the loose copies of the prints they hold go, inside the
-    caller's transaction, so no print is read twice. A print the packed minute does not hold stays. Returns how
-    many went."""
-    dropped = 0
-    for key in keys:
-        symbol, source, start, payload = db.execute('SELECT symbol, source, ts, payload FROM main.prices WHERE key=?',
-                                                    (key,)).fetchone()
-        held = {identity(data) for _, data in unpack(json.loads(payload))}
-        until = (instant(start) + dt.timedelta(minutes=1)).isoformat()
-        gone = [(rowid,) for rowid, text in db.execute(
-                    'SELECT rowid, payload FROM main.prices WHERE symbol=? AND source=? AND ts>=? AND ts<? AND key!=?',
-                    (symbol, source, start, until, key))
-                if plain_print(data := json.loads(text)) and identity(data) in held]
-        db.executemany('DELETE FROM main.prices WHERE rowid=?', gone)
-        dropped += len(gone)
-    return dropped
-
-
 def _schema_3(db) -> dict:
     """Schema 3, inside the caller's transaction, and harmless to run twice.
 
@@ -691,6 +671,7 @@ class Journal(Workspace):
     A Replay journal first opened with a shared one gives its own settings to it (merge_settings)."""
 
     def __init__(self, path: Path | None = None, *, dataset='live', shared: Journal | None = None):
+        from . import journals
         if dataset not in ('live', 'replay'):
             raise ValueError('Journal dataset must be live or replay.')
         self.dataset = dataset
@@ -759,7 +740,15 @@ class Journal(Workspace):
                 _drafts_without_windows(db)
             if self.shared is not self:            # last: every step above runs on this journal's own settings
                 self._share_settings(db, existed=bool(existing))
+            # Named journals of 0.4.17 and earlier become views, after this transaction (journals.fold); a registry
+            # without one has nothing to fold, and says so here.
+            fold = not db.execute('SELECT 1 FROM journal_meta WHERE key=?', (journals.FLAG,)).fetchone()
+            if fold and not journals.named(db):
+                db.execute('INSERT INTO journal_meta VALUES(?,?)', (journals.FLAG, '0'))
+                fold = False
             trim = not db.execute("SELECT 1 FROM journal_meta WHERE key='prices_trimmed'").fetchone()
+        if fold:
+            journals.fold(self)
         if trim:
             self._trim_prices()
         if os.name != 'nt':
@@ -812,12 +801,7 @@ class Journal(Workspace):
             if first and existed and keeps:
                 from . import backup
                 home = self.shared.path.parent
-                stamp = dt.datetime.now(dt.timezone.utc).strftime('%Y%m%dT%H%M%SZ')
-                copy, n = home / 'backups' / f'before-shared-settings-{stamp}.zip', 1
-                while copy.exists():
-                    n += 1
-                    copy = copy.with_name(f'before-shared-settings-{stamp}-{n}.zip')
-                copy = backup.write(copy, home)
+                copy = backup.write(backup.before(home, 'shared-settings'), home)
             folds, renamed = merge_settings(shared, db)
             if first:
                 shared.execute("INSERT INTO journal_meta VALUES('shared_settings',?)",
@@ -928,9 +912,10 @@ class Journal(Workspace):
         Stats tabs that is no longer used (_fixed_stats_tabs); under 'checklists', the checklists that became lists of
         yes/no questions (_checklists_as_lists); under 'drafts', the pre-trade drafts that lost their time window and
         those cancelled with it (_drafts_without_windows); under 'shared_settings', in the Live journal, Replay's
-        settings joining Live's and the backup taken first (_share_settings); and under 'measurement_rules_3', every
-        trade measured again under MEASUREMENT_RULES 3 (recalculation_done). Each one-time step has a note in plain
-        words, which Settings shows once (unseen_notes)."""
+        settings joining Live's and the backup taken first (_share_settings); under 'journal_views', named journals
+        becoming views, the fills only they held and the backup taken first (journals.fold); and under
+        'measurement_rules_3', every trade measured again under MEASUREMENT_RULES 3 (recalculation_done). Each
+        one-time step has a note in plain words, which Settings shows once (unseen_notes)."""
         with self.connect() as db:
             row = db.execute("SELECT value FROM journal_meta WHERE key='schema_upgrade'").fetchone()
         return json.loads(row[0]) if row else None
@@ -969,8 +954,7 @@ class Journal(Workspace):
         still names the newest price stored (recent_contracts).
 
         The first pass then gives the freed space back to the disk once (_compact) and says so in the upgrade note
-        ('packed'); every later pass gives back what it freed (incremental_vacuum). A named journal packs nothing of
-        its own: it holds its capture journal's prints as they are stored there (journals.mirror)."""
+        ('packed'); every later pass gives back what it freed (incremental_vacuum)."""
         with self.connect() as db:
             row = db.execute("SELECT value FROM journal_meta WHERE key='prices_packed'").fetchone()
             marks = json.loads(row[0]) if row else None

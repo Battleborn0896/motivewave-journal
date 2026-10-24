@@ -282,7 +282,7 @@ def test_accounts_are_shown_by_their_name_never_the_provider_code(home):
     drafts = next(d.value for d in app.dataframe if 'Contract' in d.value.columns)
     assert list(drafts['Contract']) == ['Practice · ESZ6'] and list(drafts['Status']) == ['Waiting']
     show(app, 'Journals')
-    assert widget(app.multiselect, 'Capture accounts').options == ['Practice', 'SIM']
+    assert widget(app.multiselect, 'Accounts').options == ['Practice', 'SIM']
     assert widget(app.selectbox, 'Account to rename').options == ['Practice', 'SIM']
     assert not any('motivewave-native' in text for text in [*cells(app), everything(app)])
 

@@ -34,7 +34,7 @@ PAGES = (HOME, 'Tags', 'Data')
 LABELS = {HOME: 'Settings', 'Tags': 'Tags, Playbooks & Checklists', 'Data': 'Data'}
 PAGE_HELP = {
     'Tags': 'Tag categories, tags, playbooks and day tags, and the yes/no checklists you answer on trades and days.',
-    'Data': 'Import trades, export and back up, named journals and account names, and the connection to MotiveWave.',
+    'Data': 'Import trades, export and back up, journal views and account names, and the connection to MotiveWave.',
 }
 # The tabs of each page, linked one by one from its tile so every one is two clicks from the sidebar.
 TABS = {'Tags': ('Tags', 'Categories', 'Playbooks', 'Checklists'),
@@ -151,9 +151,8 @@ def render(journal, rows: list[dict], *, tool: PageRenderer | None = None,
 
 
 def home(journal, rows: list[dict], *, display: DisplayRenderer | None = None, links: bool = True) -> None:
-    capture = getattr(journal, 'capture_journal', journal)
-    upgrade_notes([journal] + ([capture] if capture is not journal else []))
-    link = live_status(capture)
+    upgrade_notes(journal)
+    link = live_status(journal)
     step(link)
     if display is None:
         from views import preferences
@@ -164,19 +163,16 @@ def home(journal, rows: list[dict], *, display: DisplayRenderer | None = None, l
     about(link)
 
 
-def upgrade_notes(journals) -> None:
+def upgrade_notes(journal) -> None:
     """What opening an older journal did once (Journal.upgrade_note), said once: one quiet line of the sentences not
     seen yet, and OK, which marks them seen. Nothing when there is nothing new to say."""
-    unseen = [(journal, journal.unseen_notes()) for journal in journals]
-    # A named journal and the one it is drawn from can have taken the same step: its sentence is said once.
-    said = list(dict.fromkeys(note for _, notes in unseen for note in notes.values()))
-    if not said:
+    unseen = journal.unseen_notes()
+    if not unseen:
         return
     with st.container(horizontal=True, vertical_alignment='center', gap='small', key='setup-upgrade-notes'):
-        st.caption(' '.join(said))
+        st.caption(' '.join(unseen.values()))
         if st.button('OK', type='tertiary', key='setup-upgrade-notes-ok'):
-            for journal, notes in unseen:
-                journal.notes_seen(notes)
+            journal.notes_seen(unseen)
             st.rerun()
 
 

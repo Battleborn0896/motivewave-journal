@@ -5,8 +5,12 @@ A backup is a zip of the data folder's databases, Live and Replay together:
     backup.json                            {app, version, schema, created}
     live.sqlite3                           <home>/trades.sqlite3
     replay.sqlite3                         <home>/replay/trades.sqlite3
-    journals/<id>/trades.sqlite3           each named Live journal, archived ones too
-    replay/journals/<id>/trades.sqlite3    each named Replay journal
+    journals/<id>/trades.sqlite3           a named Live journal of 0.4.17 or earlier, archived ones too
+    replay/journals/<id>/trades.sqlite3    a named Replay journal of 0.4.17 or earlier
+
+A named journal is in a backup only while its folder is in the data folder: until this version first opens its
+environment's journal, which backs them up, folds each into it as a view and removes their folders (journals.fold).
+A backup that holds them is restored as it was taken, and they are folded at the next open.
 
 Each database is SQLite's own online snapshot, taken on a plain connection: consistent while the watcher
 writes, and never through Journal(), so a migration that runs while a Journal opens can back up first.
@@ -52,8 +56,8 @@ def _dataset(member: str) -> str:
 
 
 def _place(home: Path, member: str) -> Path:
-    """Where a member lives in the data folder: the environments where paths.database puts them, named
-    journals under the same relative path."""
+    """Where a member lives in the data folder: the environments where paths.database puts them, a named journal
+    under the same relative path."""
     if member in SLOTS:
         return home / paths.database(SLOTS[member]).relative_to(paths.data_home())
     return home / member
@@ -178,20 +182,25 @@ def read(file) -> dict:
     return {'created': manifest['created'], 'version': manifest.get('version'), 'trades': trades}
 
 
+def before(home, step: str) -> Path:
+    """Where the backup taken before `step` goes: <home>/backups/before-<step>-<UTC time>.zip, or -2, -3 and on after
+    the time when one was taken in the same second, so none is ever written over."""
+    stamp = dt.datetime.now(dt.timezone.utc).strftime('%Y%m%dT%H%M%SZ')
+    target, n = Path(home) / 'backups' / f'before-{step}-{stamp}.zip', 1
+    while target.exists():
+        n += 1
+        target = target.with_name(f'before-{step}-{stamp}-{n}.zip')
+    return target
+
+
 def restore(file, home=None) -> dict:
     """Puts a backup back in `home` (the data folder by default): read()'s summary, with 'previous', the zip the
-    journal as it was is saved to first (<home>/backups/before-restore-<UTC time>.zip). Each database is copied
-    into its existing file; named journals in the data folder that the backup does not hold stay as they are.
+    journal as it was is saved to first (before(home, 'restore')). Each database is copied into its existing file.
     Each environment is then opened once, Replay with the Live journal it shares settings with, so a backup from an
-    older version is brought up to date. The caller stops the watchers first."""
+    older version is brought up to date: its named journals become views. The caller stops the watchers first."""
     home = _home(home)
     summary = read(file)
-    stamp = dt.datetime.now(dt.timezone.utc).strftime('%Y%m%dT%H%M%SZ')
-    previous, n = home / 'backups' / f'before-restore-{stamp}.zip', 1
-    while previous.exists():         # a second restore within the same second never writes over the first one's copy
-        n += 1
-        previous = previous.with_name(f'before-restore-{stamp}-{n}.zip')
-    previous = write(previous, home)
+    previous = write(before(home, 'restore'), home)
     with _unpacked(file) as (_, copies):
         for member, copy in copies.items():
             target = _place(home, member)

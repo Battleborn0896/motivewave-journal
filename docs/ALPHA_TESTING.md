@@ -61,8 +61,8 @@ study already recorded: they would count twice. **Add One Fill by Hand** takes a
 ### Back up and restore
 
 Back up before every test session and before every update: open **Settings → Data → Export & Backup** and
-click **Back Up Journal**. It downloads one zip, `MotiveWave Journal backup YYYY-MM-DD.zip`, that holds Live,
-Replay and every journal you made. Keep it outside the app's data folder.
+click **Back Up Journal**. It downloads one zip, `MotiveWave Journal backup YYYY-MM-DD.zip`, that holds Live and
+Replay, with your views and account names. Keep it outside the app's data folder.
 
 To go back to a backup, choose its zip under **Restore From Backup** on the same tab. The app shows the
 backup's date and how many live and replay trades it holds; click **Restore This Backup**. The journal as it
@@ -98,16 +98,20 @@ Run this with a simulation account:
 7. Open **Stats → After Exit**, compare by **Tags** and find each tag under its category. On **Stats → Overview**,
    click the trade's day in the calendar under the equity curve and confirm it opens that day's Daily Report Card.
 8. Restart the journal and confirm the review and tags remain.
-9. Repeat a trade in Replay and confirm it appears only in the Replay journal, with MAE / MFE from the
+9. Under **Settings → Data → Journals & Accounts → New View**, make a view of the simulation account. Choose it
+   under **Journal** in the sidebar and confirm it lists only that account's trades, with the same tags, Rating and
+   note; then delete it and confirm nothing else changed. A named journal from 0.4.17 or earlier is in that menu as
+   a view after the update, its reviews joined into **All accounts**.
+10. Repeat a trade in Replay and confirm it appears only in the Replay journal, with MAE / MFE from the
    replay's own ticks, and that it is offered the tags, filters and Units you set in Live: Live and Replay share
    them, and each keeps its own trades and reviews. Leave the study on the replay chart, contract or
    continuous: within about ten seconds of going flat MotiveWave's log should show one
    `replay trade tick backfill` line for the pass;
    when those history ticks saw more of the trade, the line under its time reads **From MotiveWave's tick
    history**.
-10. Check that live and replay prints arrive while the chart runs: an open trade's MAE / MFE should move
+11. Check that live and replay prints arrive while the chart runs: an open trade's MAE / MFE should move
    with the market, and the line under its time should name no price source.
-11. Quit the journal and confirm MotiveWave stays open.
+12. Quit the journal and confirm MotiveWave stays open.
 
 Do not report missing or partial minutes after an exit as zero. The app leaves out of Stats → After Exit any
 trade whose 15 minutes after the exit were not all recorded, or had a gap the study reported, and that trade's

@@ -7,7 +7,6 @@ import types
 
 import common
 from mwjournal import Execution, Journal, PriceSample
-from mwjournal import journals
 from mwjournal.chart import trade_chart
 from mwjournal.matching import match
 from mwjournal.metrics import excursions
@@ -184,55 +183,6 @@ def test_prices_read_back_are_the_prices_stored(tmp_path):
     assert [dataclasses.asdict(s) for s in read] == [dataclasses.asdict(s) for s in stored]
 
 
-def stored(journal, trade):
-    """A trade's one stored measurement, shown or not: one the study reported a gap in is still stored."""
-    metric, = journal.metric_options(trade)
-    return metric
-
-
-def test_a_named_journals_open_trade_is_brought_up_to_date_at_each_redraw(tmp_path):
-    capture, bridge = watched(tmp_path)
-    write(bridge, [fill('buy', 'in', 20000, '2026-10-07T14:00:00Z'), tick(19995, '2026-10-07T14:00:01Z')])
-    worker = SyncWorker(capture)
-    worker.poll()
-    id = journals.create(capture, 'Main', [('motivewave-native:ws:live', 'SIM')])
-    named = journals.open_named(capture, id)
-    named.set_excursion_unit('points')
-    trade, = named.trades()
-    # The watcher keeps writing to the capture journal; the named copy is behind until it is followed.
-    write(bridge, [tick(20030, '2026-10-07T14:00:02Z'),
-                   {'version': 1, 'type': 'gap', 'provider': 'motivewave-ticks', 'symbol': 'NQ', 'dropped': 1,
-                    'start_ts': '2026-10-07T14:00:02Z', 'end_ts': '2026-10-07T14:00:02Z', 'ts': '2026-10-07T14:00:02Z'}])
-    worker.poll()
-    assert stored(named, trade)['observations'] == 1 and len(named.prices('NQZ6', 'motivewave-ticks')) == 1
-    journals.follow(named, trade)
-    assert stored(named, trade) == stored(capture, trade)
-    assert stored(named, trade)['observations'] == 2 and len(named.prices('NQZ6', 'motivewave-ticks')) == 2
-    assert named.capture_gaps('motivewave-ticks') == capture.capture_gaps('motivewave-ticks')
-    # Its own settings stay its own; following again with nothing new changes nothing.
-    assert named.display_settings()['excursion_unit'] == 'points' != capture.display_settings()['excursion_unit']
-    journals.follow(named, trade)
-    assert stored(named, trade)['observations'] == 2
-    # A capture journal and a closed trade: nothing to do.
-    journals.follow(capture, trade)
-    journals.follow(named, dataclasses.replace(trade, closed='2026-10-07T14:00:05+00:00'))
-    # A trade changed in the named journal alone (a fill added by hand) is measured there as prices arrive.
-    named.ingest([(Execution('motivewave-native:ws:live', 'SIM', 'NQZ6', 'buy', 1, 20010, '2026-10-07T14:00:01.5Z',
-                             execution_id='by-hand'), {})])
-    by_hand, = named.trades()
-    assert by_hand.id == trade.id and by_hand.basis != trade.basis and not capture.metric_options(by_hand)
-    write(bridge, [tick(19980, '2026-10-07T14:00:03Z')])
-    worker.poll()
-    journals.follow(named, by_hand)
-    measured = stored(named, by_hand)                  # measured from entry the first time
-    assert measured['observations'] == 3 and measured['last_price'] == 19980
-    assert measured['mae_points'] == 25                    # from the average of 20000 and 20010
-    write(bridge, [tick(19970, '2026-10-07T14:00:04Z')])
-    worker.poll()
-    journals.follow(named, by_hand)
-    assert stored(named, by_hand)['mae_points'] == 35 and stored(named, by_hand)['observations'] == 4
-
-
 def test_an_open_trades_chart_reads_only_the_prices_after_its_kept_minutes(tmp_path, monkeypatch):
     from views import trades as view
     journal = Journal(tmp_path / 'trades.sqlite3')
@@ -354,136 +304,6 @@ def test_a_draft_waiting_for_its_trade_is_not_written_again_at_every_poll(tmp_pa
         write(bridge, [tick(20001 + second, f'2026-10-07T14:00:1{second}Z')])
         worker.poll()
     assert journal.workspace()['drafts'][id]['state'] == 'armed' and written == []
-
-
-
-def named_with_open_trade(tmp_path):
-    capture, bridge = watched(tmp_path)
-    write(bridge, [fill('buy', 'in', 20000, '2026-10-07T14:00:00Z'), tick(19995, '2026-10-07T14:00:01Z')])
-    worker = SyncWorker(capture)
-    worker.poll()
-    id = journals.create(capture, 'Main', [('motivewave-native:ws:live', 'SIM')])
-    return capture, bridge, worker, id
-
-
-def test_a_second_window_on_the_named_journal_makes_follow_wait_not_fail(tmp_path):
-    import sqlite3
-    import threading
-    capture, bridge, worker, id = named_with_open_trade(tmp_path)
-    named = journals.open_named(capture, id)
-    trade, = named.trades()
-    write(bridge, [tick(20030, '2026-10-07T14:00:02Z')])
-    worker.poll()
-    other = sqlite3.connect(named.path, timeout=15)
-    other.execute('BEGIN IMMEDIATE')                      # the other window, mid-write
-    failed = []
-    thread = threading.Thread(target=lambda: _follow(named, trade, failed))
-    thread.start()
-    thread.join(0.3)
-    assert thread.is_alive()                             # waiting its turn
-    other.rollback()
-    other.close()
-    thread.join(10)
-    assert not failed and common.best_display_metric(named, trade)['observations'] == 2
-
-
-def _follow(named, trade, failed):
-    try:
-        journals.follow(named, trade)
-    except Exception as exc:                             # noqa: BLE001 - the test reports any failure
-        failed.append(exc)
-
-
-def test_follow_writes_nothing_when_nothing_is_new(tmp_path):
-    import sqlite3
-    capture, bridge, worker, id = named_with_open_trade(tmp_path)
-    named = journals.open_named(capture, id)
-    trade, = named.trades()
-    journals.follow(named, trade)
-    watcher = sqlite3.connect(named.path)
-    version = watcher.execute('PRAGMA data_version').fetchone()[0]
-    journals.follow(named, trade)
-    assert watcher.execute('PRAGMA data_version').fetchone()[0] == version
-    watcher.close()
-
-
-def test_prices_a_whole_page_copies_are_measured_on_that_page_and_by_follow(tmp_path):
-    capture, bridge, worker, id = named_with_open_trade(tmp_path)
-    named = journals.open_named(capture, id)
-    named.ingest([(Execution('motivewave-native:ws:live', 'SIM', 'NQZ6', 'buy', 1, 20010, '2026-10-07T14:00:01.5Z',
-                             execution_id='by-hand'), {})])
-    by_hand, = named.trades()
-    journals.follow(named, by_hand)                       # measured here: the capture does not hold this trade
-    assert common.best_display_metric(named, by_hand)['observations'] == 1
-    # A print the capture stores late, with a time before the measurement's newest: the whole page copies it.
-    write(bridge, [tick(19970, '2026-10-07T14:00:03Z')])
-    worker.poll()
-    named = journals.open_named(capture, id)             # its mirror copies the print and measures from entry
-    by_hand, = named.trades()
-    assert common.best_display_metric(named, by_hand)['observations'] == 2 and common.best_display_metric(named, by_hand)['mae_points'] == 35
-    write(bridge, [tick(19960, '2026-10-07T14:00:04Z')])
-    worker.poll()
-    journals.follow(named, by_hand)                       # and the next print by follow, carried on
-    assert common.best_display_metric(named, by_hand)['observations'] == 3 and common.best_display_metric(named, by_hand)['mae_points'] == 45
-
-
-def test_a_named_journals_own_trades_are_measured_again_once_under_new_rules(tmp_path):
-    """MEASUREMENT_RULES 2 reaches named journals too, which have no watcher of their own: a trade only the named
-    journal holds (here closed by a fill added by hand) is measured again from its stored prints, and the bid / ask
-    rows 0.4.7 kept go, once the capture journal has been measured again too."""
-    capture, bridge, worker, id = named_with_open_trade(tmp_path)
-    named = journals.open_named(capture, id)
-    named.ingest([(Execution('motivewave-native:ws:live', 'SIM', 'NQZ6', 'sell', 1, 20010, '2026-10-07T14:00:01.5Z',
-                             execution_id='by-hand', point_value=20), {})])
-    named = journals.open_named(capture, id)
-    own, = named.trades()
-    assert own.closed and not capture.metric_options(own)
-    fresh = common.best_display_metric(named, own)
-    assert (fresh['mae'], fresh['mae_points']) == (100, 5)    # 19995 against 20000, 1 contract of $20 a point
-    # As 0.4.7 left both journals: measured under rules 1, a stale number and bid / ask rows.
-    stale = {**fresh, 'mae': 999.0}
-    named.record_metric(own, stale)
-    named.record_metric(own, {**stale, 'basis': 'liquidation'})
-    with named.connect() as db:                           # a bid / ask row the mirror copied from the capture
-        db.execute('INSERT INTO metrics VALUES(?,?,?,?)', (own.id, 'capture-basis', json.dumps(['motivewave-ticks', 'liquidation']),
-                                                           json.dumps({**stale, 'basis': 'liquidation'})))
-    for journal in (named, capture):
-        with journal.connect() as db:
-            db.execute("UPDATE journal_meta SET value='1' WHERE key='measurement_rules'")
-    named = journals.open_named(capture, id)
-    assert [(m['basis'], m['mae']) for m in named.metric_options(own)] == [('last', 100)]
-    assert named.recalculation_due()                      # not done until the capture is: its mirror may still copy
-    SyncWorker(Journal(capture.path)).recalculate()
-    assert not capture.recalculation_due()
-    named = journals.open_named(capture, id)
-    assert not named.recalculation_due()
-    with named.connect() as db:
-        assert db.execute("SELECT count(*) FROM metrics WHERE json_extract(source, '$[1]')='liquidation'").fetchone()[0] == 0
-    named.record_metric(own, stale)                       # once only: a closed trade is not measured again
-    journals.open_named(capture, id)
-    assert common.best_display_metric(named, own)['mae'] == 999
-
-
-def test_a_named_journal_copying_does_not_hold_up_the_watcher(tmp_path):
-    import sqlite3
-    capture, bridge, worker, id = named_with_open_trade(tmp_path)
-    named = journals.open_named(capture, id)
-    with named.connect() as db:                           # what follow and mirror do, held open
-        db.execute('ATTACH DATABASE ? AS capture', (str(capture.path),))
-        journals.lock_named(db)
-        db.execute('SELECT count(*) FROM capture.prices').fetchone()
-        watcher = sqlite3.connect(capture.path, timeout=0.5)
-        watcher.execute('BEGIN IMMEDIATE')                # the capture stays writable
-        watcher.rollback()
-        watcher.close()
-        other = sqlite3.connect(named.path, timeout=0.2)
-        try:
-            other.execute('BEGIN IMMEDIATE')              # the named journal is held
-            raise AssertionError('the named journal was not locked')
-        except sqlite3.OperationalError:
-            pass
-        finally:
-            other.close()
 
 
 def test_measuring_from_entry_leaves_no_measurement_it_did_not_make(tmp_path):

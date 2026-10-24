@@ -61,7 +61,7 @@ CREDIT = '[TradingView Lightweight Charts™, Copyright (c) 2025 TradingView, In
 
 
 def key(journal, name: str) -> str:
-    return f'{name}-{getattr(journal, "ui_scope", journal.dataset)}'
+    return f'{name}-{journal.dataset}'
 
 
 def open_journal(dataset: str):
@@ -362,7 +362,7 @@ def account_name(journal, provider, account) -> str:
     """An account as the trader knows it: the name given to it under Journals & Accounts, else the platform's
     own ('SIM'). Never the provider code it is stored under."""
     from mwjournal import journals
-    return journals.alias(getattr(journal, 'capture_journal', journal), (provider, account))
+    return journals.alias(journal, (provider, account))
 
 
 def metric_options(journal, trade):
@@ -407,7 +407,6 @@ def rows_signature(journal) -> tuple | None:
     review, a day's tags, a merge, the shared settings (a tag edited in Live rebuilds Replay's rows too) or an
     account's name. The second, by trade id: a measurement stored again (prices that came in late, a gap the study
     reported) leaves changes() as it was, but it replaces its row, and the new row has a higher rowid."""
-    capture = getattr(journal, 'capture_journal', journal)
     found = hashlib.sha256()
     try:
         with journal.connect() as db:
@@ -417,12 +416,13 @@ def rows_signature(journal) -> tuple | None:
                     "SELECT 'm ' || key || ' ' || value FROM journal_meta WHERE key='trade_merges'"):
                 found.update(text.encode())
             measured = dict(db.execute('SELECT trade_id, max(rowid) FROM metrics GROUP BY trade_id'))
+            # The accounts' names, not the views beside them: a view filters the rows and changes none.
+            names = db.execute("SELECT json_extract(value, '$.account_aliases') FROM journal_meta "
+                               "WHERE key='journal_registry'").fetchone()
         with journal.shared.connect() as db:
             for (text,) in db.execute("SELECT key || ' ' || value FROM journal_meta WHERE key IN (%s)"
                                       % ','.join('?' * len(ROW_SETTINGS)), ROW_SETTINGS):
                 found.update(text.encode())
-        with capture.connect() as db:
-            names = db.execute("SELECT value FROM journal_meta WHERE key='journal_registry'").fetchone()
     except sqlite3.Error:
         return None                            # never equal to a signature read before: the rows are built again
     # A journal shown with its merged trades (merging.ReviewJournal) has other rows than the same journal without.
@@ -462,7 +462,7 @@ def rows_for(journal) -> list[dict]:
     sessions = journal.get('sessions')
     from mwjournal.workspace import tag_score
     from mwjournal import journals
-    aliases = journals.registry(getattr(journal, 'capture_journal', journal))['account_aliases']
+    aliases = journals.registry(journal)['account_aliases']
     import json
     zone = display_zone(journal)
     unit, sizes = excursion_unit(journal), journal.display_settings()['tick_sizes']

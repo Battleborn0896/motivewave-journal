@@ -7,7 +7,7 @@ import types
 
 import pytest
 
-from mwjournal import Execution, Journal, PriceSample, journals, store
+from mwjournal import Execution, Journal, PriceSample, store
 from mwjournal.metrics import measurements
 from mwjournal.post_exit import best_post_exit
 from mwjournal.risk import plan_for
@@ -255,26 +255,3 @@ def test_without_room_on_the_disk_it_waits_or_leaves_the_file_its_size(tmp_path,
     assert note['note'].startswith('Removed ') and 'The file keeps its size' in note['note']
     monkeypatch.undo()
     assert Journal(path).upgrade_note()['prices'] == note                     # once, even so
-
-
-def test_a_named_journal_trims_its_own_copies_by_its_own_trades(tmp_path, monkeypatch):
-    monkeypatch.setenv('MWJ_HOME', str(tmp_path))
-    capture = Journal()
-    capture.ingest([(fill('a-in', 'buy', '14:00:00'), {}), (fill('a-out', 'sell', '14:10:00'), {}),
-                    (fill('d-in', 'buy', '18:00:00', account='other'), {}),
-                    (fill('d-out', 'sell', '18:05:00', account='other'), {})])
-    capture.ingest_prices([tick('14:05:00'), tick('19:00:00'), tick('23:00:00'), bar('23:00:00')])
-    id = journals.create(capture, 'Sim only', [(STUDY, 'sim')])
-    named = journals.journal_path(capture, id)
-    assert len(stored(named)) == 4                         # the mirror copies every price of the traded market
-    as_0_4_13(capture.path)
-    as_0_4_13(named)
-    capture = Journal()
-    assert [ts[11:19] for _, _, _, ts in stored(capture.path)] == ['14:05:00', '19:00:00', '23:00:00']   # print, print, bar
-    journals.open_named(capture, id, refresh=False)
-    # Its one trade's window: the other account's print goes from this copy, and the candle stays.
-    assert [(source, ts[11:19]) for _, source, _, ts in stored(named)] == [(LIVE, '14:05:00'), (BARS, '23:00:00')]
-    assert meta(named, 'prices_trimmed') == '2'
-    journals.open_named(capture, id)
-    # The capture journal's prints still come across, all of them near one of its trades.
-    assert sorted(ts[11:19] for _, _, _, ts in stored(named)) == ['14:05:00', '19:00:00', '23:00:00']
