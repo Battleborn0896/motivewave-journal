@@ -9,7 +9,6 @@ from dataclasses import replace
 
 from .model import Trade, digest, instant
 from .metrics import measurements
-from .workspace import time_zone
 from . import tagging
 
 KEY = 'trade_merges'
@@ -81,6 +80,7 @@ def create(journal, ids):
         raise ValueError('Choose original unmerged trades from this journal.')
     id = 'merged-' + digest(sorted(ids))[:24]
     review = compound(id, [raw[key] for key in ids])
+    library, zone = journal.tag_library(), journal.time_zone()      # the shared settings, read before the write lock
     with journal.connect() as db:
         db.execute('BEGIN IMMEDIATE')
         row = db.execute('SELECT value FROM journal_meta WHERE key=?', (KEY,)).fetchone()
@@ -89,7 +89,6 @@ def create(journal, ids):
             raise ValueError('A selected trade already belongs to a merged review. Split it first.')
         data[id] = {'id': id, 'leg_ids': ids, 'active': True, 'at': dt.datetime.now(dt.timezone.utc).isoformat()}
         db.execute('INSERT OR REPLACE INTO journal_meta VALUES(?,?)', (KEY, json.dumps(data, allow_nan=False)))
-        library, zone = tagging.library(db), time_zone(db)
         tags = set()
         for leg in (raw[key] for key in ids):
             row = db.execute('SELECT payload FROM annotations WHERE trade_id=?', (leg.id,)).fetchone()

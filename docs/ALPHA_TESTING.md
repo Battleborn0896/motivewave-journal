@@ -99,8 +99,10 @@ Run this with a simulation account:
    click the trade's day in the calendar under the equity curve and confirm it opens that day's Daily Report Card.
 8. Restart the journal and confirm the review and tags remain.
 9. Repeat a trade in Replay and confirm it appears only in the Replay journal, with MAE / MFE from the
-   replay's own ticks. Leave the study on the replay chart, contract or continuous: within about ten
-   seconds of going flat MotiveWave's log should show one `replay trade tick backfill` line for the pass;
+   replay's own ticks, and that it is offered the tags, filters and Units you set in Live: Live and Replay share
+   them, and each keeps its own trades and reviews. Leave the study on the replay chart, contract or
+   continuous: within about ten seconds of going flat MotiveWave's log should show one
+   `replay trade tick backfill` line for the pass;
    when those history ticks saw more of the trade, the line under its time reads **From MotiveWave's tick
    history**.
 10. Check that live and replay prints arrive while the chart runs: an open trade's MAE / MFE should move

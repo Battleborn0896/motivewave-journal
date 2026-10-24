@@ -8,7 +8,8 @@ the study and the app meet at one bridge file without either being configured.
 MWJ_HOME overrides the folder. A desktop MotiveWave does not inherit a terminal's environment,
 so set it for both programs or for neither.
 
-    <home>/trades.sqlite3                   live journal; its screenshots sit beside it
+    <home>/trades.sqlite3                   live journal, which also keeps the tags and settings Replay shares;
+                                            its screenshots sit beside it
     <home>/replay/trades.sqlite3            replay journal
     <home>/bridge/motivewave.ndjson         live events written by the study
     <home>/bridge/motivewave.replay.ndjson  replay events
@@ -67,6 +68,12 @@ def bridge_file(dataset: str = 'live') -> Path:
     return replay_bridge(live) if _checked(dataset) == 'replay' else live
 
 
+def replay_beside(live) -> Path:
+    """The Replay journal that shares the tags and settings of the Live journal at `live`: trades.sqlite3 in a
+    replay folder beside it."""
+    return Path(live).parent / 'replay' / 'trades.sqlite3'
+
+
 def database(dataset: str = 'live') -> Path:
-    home = data_home()
-    return (home / 'replay' if _checked(dataset) == 'replay' else home) / 'trades.sqlite3'
+    live = data_home() / 'trades.sqlite3'
+    return replay_beside(live) if _checked(dataset) == 'replay' else live

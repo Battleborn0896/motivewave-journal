@@ -2,6 +2,9 @@
 
 Definitions live in journal_meta; runs retain a snapshot so an edited checklist cannot rewrite
 past answers. Every partial mutation takes the SQLite write lock and preserves other workflows.
+
+Live and Replay share one set of definitions (SHARED), kept in the Live journal (Journal.shared); the
+runs, check-ins and drafts of each environment's trades stay in its own journal (OWN).
 """
 from __future__ import annotations
 
@@ -10,9 +13,11 @@ import datetime as dt
 import json
 import re
 import uuid
+from contextlib import contextmanager
+from pathlib import Path
 from zoneinfo import ZoneInfo
 
-from . import humanize, tagging
+from . import humanize, paths, tagging
 from .model import finite, instant, product, timestamp
 from .risk import stop_for_risk
 
@@ -48,11 +53,16 @@ def label(value, limit=80):
     return value
 
 
+# The workspace's parts kept once for Live and Replay, in the journal that keeps the shared settings, and those each
+# environment keeps of its own, about its own trades. Preferences are the Time Zone and the check-in timer's.
+SHARED = ('dashboards', 'filters', 'checklists', 'preferences')
+OWN = ('runs', 'checkins', 'drafts')
+
+
 def read(db):
+    """The workspace stored in the journal `db`, every part there (an empty one when it holds none)."""
     row = db.execute("SELECT value FROM journal_meta WHERE key='workspace'").fetchone()
-    return {**{'version': 1, 'dashboards': {}, 'filters': {}, 'checklists': {},
-               'runs': {}, 'checkins': {}, 'drafts': {}, 'videos': {}, 'preferences': {}},
-            **(json.loads(row[0]) if row else {})}
+    return {'version': 1, **{part: {} for part in (*SHARED, *OWN)}, **(json.loads(row[0]) if row else {})}
 
 
 def write(db, state):
@@ -61,10 +71,10 @@ def write(db, state):
 
 
 def time_zone(db) -> str:
-    """The one time zone of this journal, read on `db` (inside a caller's transaction, its own view): every time is
-    shown in it and every trading day runs from midnight to midnight there. The Time Zone saved on Settings; a
-    journal saves this computer's when it is made or upgraded to schema 4, so its days never move with a computer
-    taken elsewhere. This computer's zone only when none valid is saved."""
+    """The one time zone of the journal `db` keeps the settings of (Journal.shared), read on `db` (inside a caller's
+    transaction, its own view): every time is shown in it and every trading day runs from midnight to midnight there.
+    The Time Zone saved on Settings; a journal saves this computer's when it is made or upgraded to schema 4, so its
+    days never move with a computer taken elsewhere. This computer's zone only when none valid is saved."""
     chosen = read(db)['preferences'].get('display_timezone')
     return chosen if humanize.valid_zone(chosen) else humanize.local_zone()
 
@@ -357,22 +367,76 @@ def replay_run(graph, answers):
 
 
 class Workspace:
-    """Mixin keeping Journal's execution/price collector independent from review workflows."""
+    """Mixin keeping Journal's execution/price collector independent from review workflows. `shared` is the journal
+    that keeps the tags and settings this one uses: itself for Live, the Live journal for Replay (Journal)."""
+
+    @contextmanager
+    def _settings(self, db=None, *, write=False):
+        """A connection to the journal keeping the shared settings: `db`, a connection to this journal, when this
+        journal keeps them, else one of its own, inside that journal's write lock with `write`. A caller holding this
+        journal's write lock takes the shared one after it, as every caller does, so no two wait on each other."""
+        if db is not None and self.shared is self:
+            yield db
+            return
+        with self.shared.connect() as shared:
+            if write:
+                shared.execute('BEGIN IMMEDIATE')
+            yield shared
+
+    def _sharing(self) -> list[Path]:
+        """The files of the other journals whose trades use the shared settings: this one, and the Replay journal
+        beside the Live journal that keeps them (paths.replay_beside). A tag in use in any of them is not deleted."""
+        files = [self.path, *([paths.replay_beside(self.shared.path)] if self.shared.dataset == 'live' else [])]
+        kept = Path(self.shared.path).resolve()
+        return [file for file in dict.fromkeys(Path(file).resolve() for file in files) if file != kept]
+
+    def _library(self, shared):
+        """The tag library, read on `shared` (_settings)."""
+        return tagging.library(shared, self._sharing())
+
+    def _write_own(self, db, state):
+        """Saves the workspace `state` in this journal: all of it when this journal keeps the shared settings, else
+        all but the shared parts."""
+        write(db, state if self.shared is self else {name: part for name, part in state.items() if name not in SHARED})
+
+    def _combined(self, db, shared) -> dict:
+        """Every part of the workspace this journal uses: its own (OWN), read on `db`, and the shared ones (SHARED),
+        read on `shared` (_settings)."""
+        state = read(db)
+        if self.shared is not self:
+            stored = read(shared)
+            state.update({part: stored[part] for part in SHARED})
+        return state
+
     def workspace(self):
-        with self.connect() as db:
-            return read(db)
+        """Every part of the workspace this journal uses (_combined)."""
+        with self.connect() as db, self._settings(db) as shared:
+            return self._combined(db, shared)
 
     def time_zone(self) -> str:
-        """The journal's Time Zone: what every time is shown in and where every trading day starts (time_zone)."""
-        with self.connect() as db:
-            return time_zone(db)
+        """The journal's Time Zone: what every time is shown in and where every trading day starts (time_zone), one for
+        Live and Replay."""
+        with self._settings() as shared:
+            return time_zone(shared)
 
-    def _workspace_edit(self, operation):
+    def _settings_edit(self, operation):
+        """Runs `operation(state, library)` on the workspace kept with the shared settings, inside that journal's write
+        lock, and saves what it changes there: a dashboard, filter, checklist or preference."""
+        with self._settings(write=True) as shared:
+            state = read(shared)
+            result = operation(state, self._library(shared))
+            write(shared, state)
+            return result
+
+    def _own_edit(self, operation):
+        """Runs `operation(state, library)` on every part of the workspace this journal uses (workspace), inside its
+        write lock, and saves what it changes of its own parts: a checklist run, a check-in or a draft."""
         with self.connect() as db:
             db.execute('BEGIN IMMEDIATE')
-            state = read(db)
-            result = operation(state, tagging.library(db))
-            write(db, state)
+            with self._settings(db) as shared:
+                state, library = self._combined(db, shared), self._library(shared)
+            result = operation(state, library)
+            self._write_own(db, state)
             return result
 
     def save_dashboard(self, name, widgets, *, id=None, filters=None, columns=2):
@@ -403,12 +467,12 @@ class Workspace:
                                         'filters': validate_filter(filters or {}, library),
                                         'order': state['dashboards'].get(key, {}).get('order', len(state['dashboards']))}
             return key
-        return self._workspace_edit(save)
+        return self._settings_edit(save)
 
     def save_filter(self, name, filters):
         """Saves the rule under `name`, replacing a filter of that name, and returns the name as saved."""
         name = label(name)
-        self._workspace_edit(lambda s, lib: s['filters'].update({name: validate_filter(filters, lib)}))
+        self._settings_edit(lambda s, lib: s['filters'].update({name: validate_filter(filters, lib)}))
         return name
 
     def delete_filter(self, name):
@@ -418,7 +482,7 @@ class Workspace:
             if name not in state['filters']:
                 raise ValueError(f'There is no saved filter named {name}.')
             del state['filters'][name]
-        self._workspace_edit(delete)
+        self._settings_edit(delete)
 
     def rename_filter(self, old, new):
         """Gives the saved filter `old` the name `new`, a name no other saved filter has, and returns it as saved."""
@@ -429,7 +493,7 @@ class Workspace:
             if new != old and new in state['filters']:
                 raise ValueError(f'A saved filter is already named {new}.')
             state['filters'][new] = state['filters'].pop(old)
-        self._workspace_edit(rename)
+        self._settings_edit(rename)
         return new
 
     def save_checklist(self, name, questions, *, runs_on='trade', id=None):
@@ -441,7 +505,7 @@ class Workspace:
                 raise ValueError('Unknown checklist.')
             store_checklist(state, library, key, name, questions, runs_on)
             return key
-        return self._workspace_edit(save)
+        return self._settings_edit(save)
 
     def delete_checklist(self, id):
         """Removes checklist `id`. Its runs stay stored, each with its own copy of the checklist it answered."""
@@ -449,7 +513,7 @@ class Workspace:
             if id not in state['checklists']:
                 raise ValueError('Unknown checklist.')
             del state['checklists'][id]
-        self._workspace_edit(delete)
+        self._settings_edit(delete)
 
     def start_checklist(self, id, trade_id=None, *, day=None):
         """Starts a run of checklist `id` on one trade, or on one day ('YYYY-MM-DD', a date in the Time Zone), and
@@ -468,7 +532,7 @@ class Workspace:
                                   'started': dt.datetime.now(dt.timezone.utc).isoformat(),
                                   'graph': graph, 'answers': [], 'answer_events': [], **replay_run(graph, [])}
             return key
-        return self._workspace_edit(start)
+        return self._own_edit(start)
 
     def answer_checklist(self, id, answer=None, *, undo=False):
         def respond(state, library):
@@ -482,7 +546,7 @@ class Workspace:
             run.setdefault('answer_events', []).append({'action': 'undo' if undo else 'answer', 'answer': answer,
                                                          'at': dt.datetime.now(dt.timezone.utc).isoformat()})
             return copy.deepcopy(run)
-        return self._workspace_edit(respond)
+        return self._own_edit(respond)
 
     def record_checkin(self, group, choices, *, trade_id=None, at=None):
         if trade_id and trade_id not in {t.id for t in self.trades()}:
@@ -497,7 +561,7 @@ class Workspace:
             state['checkins'][key] = {'id': key, 'group': group, 'tag_ids': sorted(ids), 'trade_id': trade_id,
                                       'at': timestamp(at or dt.datetime.now(dt.timezone.utc).isoformat())}
             return key
-        return self._workspace_edit(save)
+        return self._own_edit(save)
 
     def save_preferences(self, **changes):
         allowed = {'timer_minutes', 'timer_groups', 'display_timezone'}
@@ -515,7 +579,7 @@ class Workspace:
             if 'timer_groups' in changes and not set(changes['timer_groups']) <= set(library['groups']):
                 raise ValueError('Choose known timer groups.')
             state['preferences'].update(changes)
-        return self._workspace_edit(save)
+        return self._settings_edit(save)
 
     def save_draft(self, *, provider, account, symbol, tags=(), notes='', stop=None):
         """Tag My Next Trade: tags, a note and the stop price R will use (risk.py) for the next trade on one account
@@ -545,7 +609,7 @@ class Workspace:
                                     'trade_id': None, 'existing_trades': existing,
                                     'at': timestamp(dt.datetime.now(dt.timezone.utc).isoformat())}
             return key
-        return self._workspace_edit(save)
+        return self._own_edit(save)
 
     def reconcile_drafts(self, trades=None):
         """Each waiting draft goes on the next trade on its account and exact contract: of the trades there that were
@@ -554,14 +618,18 @@ class Workspace:
         two tags now in a one-choice category, attach nothing: the draft says Needs review and names that trade.
 
         A used draft stays used after a restart. No placeholder fill, P&L or price is invented. Called after the
-        watcher's poll, not by a read-only render.
+        watcher's poll, not by a read-only render. The tags and the Time Zone are only read from the journal keeping
+        them.
         """
-        if not any(d['state'] == 'armed' for d in self.workspace()['drafts'].values()):
-            return
+        with self.connect() as db:
+            if not any(d['state'] == 'armed' for d in read(db)['drafts'].values()):
+                return
         trades = self.trades() if trades is None else trades
         with self.connect() as db:
             db.execute('BEGIN IMMEDIATE')
-            state, library, zone = read(db), tagging.library(db), time_zone(db)
+            state = read(db)
+            with self._settings(db) as shared:
+                library, zone = self._library(shared), time_zone(shared)
             changed = False
             for draft in (d for d in state['drafts'].values() if d['state'] == 'armed'):
                 scope, existing = (draft['provider'], draft['account'], draft['symbol']), set(draft['existing_trades'])
@@ -605,7 +673,7 @@ class Workspace:
                 draft['state'] = 'attached'
             # The watcher asks every second, and a draft can wait for hours: write only when one found its trade.
             if changed:
-                write(db, state)
+                self._write_own(db, state)
 
     def cancel_draft(self, id):
         def cancel(state, library):
@@ -613,4 +681,4 @@ class Workspace:
                 raise ValueError('Choose tags that are waiting or need review. Used tags stay on their trade.')
             state['drafts'][id]['state'] = 'cancelled'
             state['drafts'][id].pop('existing_trades', None)        # read only while a draft waits
-        return self._workspace_edit(cancel)
+        return self._own_edit(cancel)

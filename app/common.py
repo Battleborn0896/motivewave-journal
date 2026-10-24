@@ -2,7 +2,8 @@
 
 Views take (journal, rows) and draw; anything two of them share lives here so they can change
 independently. Widget keys are scoped to the trading environment with key(), so Live and Replay
-never show each other's selections.
+never show each other's selections. The settings both share (tags, filters, Time Zone, Units) are
+read from the journal on every run, so a change made in one environment shows in the other.
 """
 
 from __future__ import annotations
@@ -187,16 +188,8 @@ def display_zone(journal=None) -> str:
 
 
 def set_display_zone(journal, zone: str) -> None:
-    """Saves the display time zone for this journal and for both environments, so Live and Replay
-    always show the same clock."""
+    """Saves the Time Zone, one for Live and Replay: it is kept with the settings they share."""
     journal.save_preferences(display_timezone=zone)
-    for dataset in paths.DATASETS:
-        try:
-            other = Journal(dataset=dataset)
-            if other.path != getattr(journal, 'path', None):
-                other.save_preferences(display_timezone=zone)
-        except (ValueError, OSError, sqlite3.Error):
-            pass                               # that journal cannot be opened; it keeps its own setting
 
 
 def timezone_choices(*include) -> list[str]:
@@ -265,18 +258,20 @@ def money_table(frame, currency='USD', *, results=()):
 
 
 def unit_selector(journal, container=st):
-    """MAE / MFE Units, saved for this journal the moment it is chosen."""
+    """MAE / MFE Units, saved the moment it is chosen, one choice for Live and Replay. The box opens on the saved choice
+    on every run, so a choice made in the other environment shows here."""
     widget_key = key(journal, 'excursion-unit')
-    st.session_state.setdefault(widget_key, journal.display_settings()['excursion_unit'])
+    st.session_state[widget_key] = excursion_unit(journal)
     def save():
         journal.set_excursion_unit(st.session_state[widget_key])
     container.selectbox('MAE / MFE Units', units.UNITS, format_func=units.LABELS.get, key=widget_key, on_change=save,
-                        help='Changes how MAE / MFE are shown, and the unit their filter limits are in.')
+                        help='Changes how MAE / MFE are shown in Live and Replay, and the unit their filter limits '
+                             'are in.')
 
 
 def excursion_unit(journal):
-    widget_key = key(journal, 'excursion-unit')
-    return st.session_state[widget_key] if widget_key in st.session_state else journal.display_settings()['excursion_unit']
+    """The MAE / MFE Units saved on Settings."""
+    return journal.display_settings()['excursion_unit']
 
 
 def excursion_amount(value, unit, currency='USD'):
@@ -401,16 +396,17 @@ def tick_size_menu(journal, trade):
 
 
 # What the trade rows show besides fills, measurements, linked orders and multipliers (changes()): the journal_meta
-# entries holding the tag library, display time zone and settings, and merged trades.
-ROW_SETTINGS = ('workspace', 'tag_library', 'tag_catalog', 'display_settings', 'trade_merges')
+# entries of the settings Live and Replay share, read from the journal keeping them (Journal.shared): the tag library,
+# the Time Zone in the workspace, and Units with the tick sizes. Merged trades are each journal's own.
+ROW_SETTINGS = ('workspace', 'tag_library', 'tag_catalog', 'display_settings')
 
 
 def rows_signature(journal) -> tuple | None:
     """(what changes whenever a trade row could, the newest measurement of each trade), or None when the journal
     cannot be read. The first: changes() (a fill, a trade's first measurement, a linked order, a multiplier), a
-    review, a day's tags, the tag library, a setting, a merge or an account's name. The second, by trade
-    id: a measurement stored again (prices that came in late, a gap the study reported) leaves changes() as it
-    was, but it replaces its row, and the new row has a higher rowid."""
+    review, a day's tags, a merge, the shared settings (a tag edited in Live rebuilds Replay's rows too) or an
+    account's name. The second, by trade id: a measurement stored again (prices that came in late, a gap the study
+    reported) leaves changes() as it was, but it replaces its row, and the new row has a higher rowid."""
     capture = getattr(journal, 'capture_journal', journal)
     found = hashlib.sha256()
     try:
@@ -418,10 +414,13 @@ def rows_signature(journal) -> tuple | None:
             for (text,) in db.execute(
                     "SELECT 'a ' || trade_id || ' ' || payload FROM annotations UNION ALL "
                     "SELECT 's ' || key || ' ' || payload FROM sessions UNION ALL "
-                    "SELECT 'm ' || key || ' ' || value FROM journal_meta WHERE key IN (%s)" % ','.join('?' * len(ROW_SETTINGS)),
-                    ROW_SETTINGS):
+                    "SELECT 'm ' || key || ' ' || value FROM journal_meta WHERE key='trade_merges'"):
                 found.update(text.encode())
             measured = dict(db.execute('SELECT trade_id, max(rowid) FROM metrics GROUP BY trade_id'))
+        with journal.shared.connect() as db:
+            for (text,) in db.execute("SELECT key || ' ' || value FROM journal_meta WHERE key IN (%s)"
+                                      % ','.join('?' * len(ROW_SETTINGS)), ROW_SETTINGS):
+                found.update(text.encode())
         with capture.connect() as db:
             names = db.execute("SELECT value FROM journal_meta WHERE key='journal_registry'").fetchone()
     except sqlite3.Error:

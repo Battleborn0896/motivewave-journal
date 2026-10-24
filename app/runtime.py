@@ -27,7 +27,9 @@ def _worker(path: str, dataset: str) -> SyncWorker:
         old = _running.pop(path, None)
         if old is not None:
             old.stop()
-        worker = _running[path] = SyncWorker(Journal(path, dataset=dataset)).start()
+        # The environment's own journal, which Replay's watcher needs: it reads the tags, from Live, for Tag My Next
+        # Trade. `path` is that journal's file, the key it is kept under.
+        worker = _running[path] = SyncWorker(Journal(dataset=dataset)).start()
     return worker
 
 

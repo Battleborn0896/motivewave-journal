@@ -92,13 +92,6 @@ def create(capture, name, scopes, *, clone=None):
         path.write_bytes(source.backup())
         path.chmod(0o600)
     journal = Journal(path, dataset=capture.dataset)
-    if not source:
-        # Reuse definitions/display preferences, but not another journal's review outcomes or runs.
-        with capture.connect() as src, journal.connect() as dst:
-            for key in ('tag_library', 'tag_catalog', 'display_settings'):
-                row = src.execute('SELECT value FROM journal_meta WHERE key=?', (key,)).fetchone()
-                if row:
-                    dst.execute('INSERT OR REPLACE INTO journal_meta VALUES(?,?)', (key, row[0]))
     mirror(capture, journal, scopes)
     def register(state):
         if any(d['name'].casefold() == name.casefold() for d in state['journals'].values()):

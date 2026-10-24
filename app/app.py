@@ -79,8 +79,8 @@ def keep_view() -> None:
 with st.sidebar:
     theme.brand(paths.APP_NAME, 'Trades. Review. Improve.')
     environment = st.radio('Trading environment', list(ENVIRONMENTS), horizontal=True, key='journal-environment',
-                           help='Live holds live and paper trades. Replay holds trades taken in replay mode: '
-                                'a separate journal with its own reviews and statistics.')
+                           help='Live holds live and paper trades, Replay your replay trades, each with its own '
+                                'reviews and stats; both share your tags, filters and Time Zone.')
 dataset = ENVIRONMENTS[environment]
 capture = common.open_journal(dataset)
 journal, selected_journal, rows, currency = None, None, [], 'USD'

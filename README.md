@@ -2,7 +2,8 @@
 
 A free, local-first trade journal: a read-only MotiveWave study records fills and prices; a Python
 app automatically reads them and provides trade charts, reviews, tags, statistics, MAE and MFE.
-Live/paper and replay have separate databases. No routine CSV export/import is required.
+Live/paper and replay keep their trades and reviews in separate databases and share one set of tags and
+settings. No routine CSV export/import is required.
 
 MotiveWave Journal is an independent open-source project. It is not affiliated with, endorsed by or
 supported by MotiveWave Software.
@@ -376,6 +377,18 @@ Daily Report Card; Stats holds the dashboards (its last tab); Settings holds tag
 (imports, backups, journals, the connection), each two clicks from the sidebar. Under the pages, the sidebar says
 whether the study is **Recording**, **Not recording** or **Needs attention** (see *Build and connect the study*); click it
 to open Settings.
+
+**Live** and **Replay**, at the top of the sidebar, each keep their own trades, trade reviews, Daily Report Cards,
+checklist answers, check-ins and Tag My Next Trade. They share one set of tags, categories, playbooks, saved
+filters, dashboards and checklists, and one **Time Zone**, **MAE / MFE Units**, tick sizes and check-in timer: a
+change made in one shows in the other, and a tag on a trade or a day in either cannot be deleted. The Live
+journal keeps them, so the app makes it when only Replay is used. The first time 0.4.17's separate journals open,
+Replay's settings join Live's: Live's names, categories, colours, preferences and Units win; a Replay tag whose
+name Live already uses, in any case, becomes Live's tag on Replay's trades; a Replay filter with a name Live uses
+for another filter is saved as *name (Replay)*; and Replay's own tags, categories, dashboards, checklists and
+playbooks are added. Both are backed up first, to `backups/before-shared-settings-<time>.zip` in the data folder,
+and Settings says so once.
+
 The trade list stays on the left while the selected trade stays on the right, as one page that scrolls.
 Click a row, or use Prev / Next; no separate opening/back-navigation step is needed. The trade's page, top to
 bottom:
@@ -420,9 +433,8 @@ the trade's chips, Stats → Compare and the filters; a choice made on the trade
 wins.
 
 **MAE / MFE Units** is on **Settings**: choose account currency, points, ticks or R. It changes how MAE / MFE
-are shown, and the unit MAE and MFE filter limits are in. The preference is remembered independently for Live and
-Replay, and applies to the trade list, detail cards, excursion plots, After Exit and filters. Actual net P&L is
-unchanged.
+are shown, and the unit MAE and MFE filter limits are in. It is one choice for Live and Replay, and applies to the
+trade list, detail cards, excursion plots, After Exit and filters. Actual net P&L is unchanged.
 
 MAE means the same in every unit: how far the position you held went against you, from its average entry
 (MFE: for you). The moment counted is the one where that price move times the contracts you held was
@@ -513,8 +525,9 @@ including empty groups; **+ Tag** creates and immediately applies a reusable tag
 keeps its untouched Setup, Execution and Mindset suggestions hidden unless **Show starter examples**
 (under More Tagging Tools) is on, and shows them when it has no categories of its own. Any starter
 tag already used on a trade remains visible. Renames display the current label but keep the original stored review
-and aliases. Tag libraries, playbooks and day tags are local and live/replay-specific, and the backup
-holds them. A journal is upgraded to a new schema only after a copy of it is saved beside it.
+and aliases. Tags, categories and playbooks are one local library for Live and Replay, while each keeps the
+tags chosen on its own trades and days; the backup holds them all. A journal is upgraded to a new schema only
+after a copy of it is saved beside it.
 
 The charcoal workspace, yellow accents, outcome-tinted trade rows and coloured selected tag groups
 follow the same visual direction as Tradecraft. Selection outlines and signed P&L remain alongside
@@ -791,7 +804,8 @@ Default data folders:
 
 The study writes `bridge/motivewave.ndjson` and `bridge/motivewave.replay.ndjson`, and empties each once the
 app has read it to its end (the app says how far it has read in a small `.read` file beside it); databases are
-`trades.sqlite3` and `replay/trades.sqlite3`. Set `MWJ_HOME` to override the folder, but a desktop
+`trades.sqlite3`, which also keeps the tags and settings Live and Replay share, and `replay/trades.sqlite3`. Set
+`MWJ_HOME` to override the folder, but a desktop
 MotiveWave will not necessarily inherit your terminal environment: the study writes into the folder
 `MWJ_HOME` names only when MotiveWave itself is started with it.
 

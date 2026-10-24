@@ -160,13 +160,15 @@ def menu(journal, rows) -> None:
 def check_ins(journal, rows) -> None:
     """Start Check-In Timer, with how long it counts down and the categories that ask, then the latest check-ins."""
     theme.subsection('Check-In Timer')
+    # Both boxes open on what is saved, one choice for Live and Replay, on every run.
     widget = common.key(journal, 'timer-minutes')
-    st.number_input('Minutes Between Check-Ins', min_value=1, max_value=120, step=1, value=minutes(journal),
+    st.session_state[widget] = minutes(journal)
+    st.number_input('Minutes Between Check-Ins', min_value=1, max_value=120, step=1,
                     key=widget, on_change=lambda: journal.save_preferences(timer_minutes=st.session_state[widget]),
                     help='How long the timer counts down; a change counts from its next start.')
     every = list(tagging.ordered_groups(journal.tag_library()))
     groups_key = common.key(journal, 'timer-groups')
-    st.session_state.setdefault(groups_key, groups(journal))
+    st.session_state[groups_key] = groups(journal)
     st.multiselect('Check-In Categories', every, key=groups_key,
                    on_change=lambda: journal.save_preferences(timer_groups=st.session_state[groups_key]),
                    help='Each chosen category asks for one tag every time the timer runs out.')

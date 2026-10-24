@@ -347,8 +347,9 @@ def test_a_journal_from_a_newer_version_is_refused_with_a_message_not_a_crash(ho
     app = AppTest.from_file(str(APP), default_timeout=30).run()
     assert not app.exception and said(app.error, 'newer version of MotiveWave Journal')
     assert app.segmented_control(key=common.VIEW_KEY).options == [common.NAV_LABELS.get(v, v) for v in common.PRIMARY_VIEWS]
-    app.radio(key='journal-environment').set_value('Replay').run()     # the other journal is still usable
-    assert not app.exception and not app.error and landmarks(app, 'Trades', empty=True)
+    # Replay keeps its tags and settings in the Live journal, so it waits for the same update, and says so.
+    app.radio(key='journal-environment').set_value('Replay').run()
+    assert not app.exception and said(app.error, 'newer version of MotiveWave Journal')
 
 
 # ---------------------------------------------------------------- trades and reviews
@@ -1157,8 +1158,8 @@ def test_excursion_unit_picker_updates_detail_list_plot_and_persists_without_rew
     app = open_app('Settings')
     assert widget(app.selectbox, 'MAE / MFE Units').options == [
         'Dollars / account currency', 'Points', 'Ticks', 'R · risk to your stop']
-    assert widget(app.selectbox, 'MAE / MFE Units').help == ('Changes how MAE / MFE are shown, and the unit their '
-                                                             'filter limits are in.')
+    assert widget(app.selectbox, 'MAE / MFE Units').help == ('Changes how MAE / MFE are shown in Live and Replay, '
+                                                             'and the unit their filter limits are in.')
     # The most in your favour was with both contracts held, 2.5 points up: $250, over $200 at risk to 4998. Every
     # unit is that one moment, never the 3.5 points the one contract left saw later.
     display_setting(app, 'MAE / MFE Units', 'points')
@@ -1190,9 +1191,7 @@ def test_excursion_unit_picker_updates_detail_list_plot_and_persists_without_rew
     display_setting(app, 'MAE / MFE Units', 'points')
     fresh = open_app('Settings')
     assert widget(fresh.selectbox, 'MAE / MFE Units').value == 'points'
-    fresh.radio(key='journal-environment').set_value('Replay').run()
-    assert widget(fresh.selectbox, 'MAE / MFE Units').value == 'currency'
-    fresh.radio(key='journal-environment').set_value('Live').run()
+    fresh.radio(key='journal-environment').set_value('Replay').run()         # one choice for Live and Replay
     assert widget(fresh.selectbox, 'MAE / MFE Units').value == 'points'
 
 

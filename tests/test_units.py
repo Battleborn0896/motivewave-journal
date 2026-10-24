@@ -113,9 +113,9 @@ def test_known_tick_sizes_do_not_guess_other_products_and_overrides_are_exact():
     assert units.tick_size('CLH7', {'CLZ6': .01}) is None
 
 
-def test_preferences_persist_independently_and_concurrent_changes_merge(tmp_path):
+def test_preferences_persist_for_live_and_replay_and_concurrent_changes_merge(tmp_path):
     live = Journal(tmp_path / 'live.db')
-    replay = Journal(tmp_path / 'replay.db', dataset='replay')
+    replay = Journal(tmp_path / 'replay.db', dataset='replay', shared=live)
     assert live.display_settings()['excursion_unit'] == 'currency'
     barrier = threading.Barrier(2)
     def set_unit():
@@ -129,7 +129,7 @@ def test_preferences_persist_independently_and_concurrent_changes_merge(tmp_path
         for f in futures:
             f.result()
     assert Journal(live.path).display_settings() == {'excursion_unit': 'ticks', 'tick_sizes': {'CUSTOM': .01}}
-    assert replay.display_settings() == {'excursion_unit': 'currency', 'tick_sizes': {}}
+    assert replay.display_settings() == {'excursion_unit': 'ticks', 'tick_sizes': {'CUSTOM': .01}}
     with pytest.raises(ValueError):
         live.set_excursion_unit('made-up')
     with pytest.raises(ValueError):

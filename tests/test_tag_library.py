@@ -97,7 +97,7 @@ def test_day_tags_inherit_lazily_and_trade_override_survives_day_review_save(tmp
     assert journal.get('sessions')['2026-10-07']['notes'] == 'Daily notes'
 
 
-def test_a_day_is_its_date_in_the_journals_time_zone_and_replay_is_separate(tmp_path):
+def test_a_day_is_its_date_in_the_journals_time_zone_and_replays_days_are_its_own(tmp_path):
     journal = Journal(tmp_path / 'live.db')
     journal.edit_tag(tag_id(journal, 'Patient'), levels=['day'])
     journal.save_preferences(display_timezone='America/Los_Angeles')
@@ -107,8 +107,8 @@ def test_a_day_is_its_date_in_the_journals_time_zone_and_replay_is_separate(tmp_
     journal.set_day_tag_group('2026-10-07', 'Mindset', ['Patient'])
     assert journal.get('sessions') == {'2026-10-07': {'date': '2026-10-07',
                                                       'day_tag_ids': [tag_id(journal, 'Patient')]}}
-    replay = Journal(tmp_path / 'replay.db', dataset='replay')
-    assert not replay.get('sessions')
+    replay = Journal(tmp_path / 'replay.db', dataset='replay', shared=journal)
+    assert not replay.get('sessions') and replay.time_zone() == 'America/Los_Angeles'      # one Time Zone, its own days
     assert 'session_timezone' not in replay.tag_library() and 'session_timezone' not in journal.tag_library()
 
 
@@ -329,15 +329,16 @@ def test_a_journal_with_tag_history_keeps_the_old_suggestions_exactly(tmp_path, 
     assert 'Moved Stop' not in {t['name'] for t in library['tags'].values()}
 
 
-def test_live_and_replay_are_offered_their_own_starters(tmp_path):
-    live = Journal(tmp_path / 'live.db')
-    replay = Journal(tmp_path / 'replay.db', dataset='replay')
+def test_live_and_replay_are_offered_one_set_of_starters_and_share_every_edit(tmp_path):
+    live = Journal(tmp_path / 'trades.sqlite3')
+    replay = Journal(tmp_path / 'replay' / 'trades.sqlite3', dataset='replay', shared=live)
     live.delete_tag(tag_id(live, 'Range'))
     live.add_tag('VWAP reclaim', 'Setup')
     setup = {t['color'] for t in live.tag_library()['tags'].values() if t['group'] == 'Setup'}
     assert len(setup) == 1                              # a new tag wears its category's colour
-    assert 'Range' in replay.tag_catalog() and 'VWAP reclaim' not in replay.tag_catalog()
-    assert 'Range' not in live.tag_catalog() and live.tag_catalog()['VWAP reclaim'] == 'Setup'
+    assert 'Range' not in replay.tag_catalog() and replay.tag_catalog()['VWAP reclaim'] == 'Setup'
+    replay.edit_tag(tag_id(replay, 'VWAP reclaim'), name='VWAP Reclaim')
+    assert live.tag_catalog()['VWAP Reclaim'] == 'Setup' and replay.tag_library() == live.tag_library()
 
 
 def test_two_first_reads_at_once_store_one_identical_library(tmp_path):

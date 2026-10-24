@@ -29,8 +29,7 @@ def render(journal, rows):
     current = common.display_zone(journal)
     choices = common.timezone_choices(current)
     zone_key = common.key(journal, 'display-zone')
-    if st.session_state.get(zone_key) != current:
-        st.session_state[zone_key] = current          # follows a change made in the other environment
+    st.session_state[zone_key] = current              # follows a change made in the other environment
 
     def save_zone():
         common.set_display_zone(journal, st.session_state[zone_key])
