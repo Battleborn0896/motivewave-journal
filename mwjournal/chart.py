@@ -76,7 +76,7 @@ def minute_candles(samples: list[PriceSample], symbol: str, source: str) -> tupl
     if any(b['time'] - a['time'] > 60 for a, b in zip(data, data[1:])):
         notes.append('Missing minutes are left blank (market closures or missing data); no prices are fabricated.')
     if any(s.proxy for s in samples):
-        notes.append('Proxy/continuous-contract candles: fills still show your actual execution prices.')
+        notes.append('Continuous-contract candles: your fills still show the prices you traded at.')
     return data, notes
 
 

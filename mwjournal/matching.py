@@ -39,7 +39,7 @@ def _leg(trade: Trade, fill: Execution, take: float, entry: bool):
     if not fill.commission_known and not platform:
         _flag(trade, 'fees not provided')
     if not fill.execution_id:
-        _flag(trade, 'no execution ID')
+        _flag(trade, 'no Fill ID')
     if not fill.priced:
         _flag(trade, NO_FILL_PRICE)
     if entry:

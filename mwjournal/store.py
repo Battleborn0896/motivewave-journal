@@ -1073,8 +1073,8 @@ class Journal(Workspace):
         if previous['payload'] != payload:
             held = json.loads(previous['payload'])
             if {k: v for k, v in held.items() if k not in LABELS} != {k: v for k, v in data.items() if k not in LABELS}:
-                raise ImportConflict('An execution ID already exists with different values. '
-                                     'Reconcile the source export before importing a correction.')
+                raise ImportConflict('A fill with this Fill ID is already in the journal with other values. Correct '
+                                     'the file before importing it again.')
             # The same fill, described again: the newer wording replaces the old, and a position id
             # the journal already holds is not lost to a line that does not carry one.
             merged = encode({**data, **{k: held[k] for k in NATIVE if k in held and k not in data}})
@@ -1098,7 +1098,7 @@ class Journal(Workspace):
         for fill, raw in fills:
             if ('mode' in raw or fill.provider.startswith('motivewave-native:')) and event_mode(
                     {**raw, 'provider': fill.provider}) != self.dataset:
-                raise ValueError('Execution belongs to the other trading environment.')
+                raise ValueError('This fill belongs to the other trading environment.')
         with self._write(db) as db:
             return sum(self._insert(db, fill, raw) for fill, raw in fills)
 
