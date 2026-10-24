@@ -526,3 +526,6 @@ def test_analytics_excludes_open_positions_and_missing_prices():
     assert stat['count'] == 2 and stat['expectancy'] == 25
     assert stat['drawdown'] == 50 and stat['profit_factor'] == 2
     assert grouped(rows, 'tags')[0]['count'] == 2
+    by_side = grouped([{**row, 'direction': 'short' if row['net'] and row['net'] < 0 else 'long'} for row in rows],
+                      'direction')
+    assert [(g['group'], g['net']) for g in by_side] == [('short', -50), ('long', 100)]     # the worst Net P&L first

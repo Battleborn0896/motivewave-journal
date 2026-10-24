@@ -447,18 +447,17 @@ def _one_connection(db) -> None:
         _add_note(db, 'connections', {'removed': removed, 'note': note})
 
 
-def _after_exit_tab(db) -> None:
-    """Once per journal, inside the caller's transaction. The Stats tab Runners of 0.4.17 and earlier is called After
-    Exit, so a saved choice of Stats tabs (set_dashboard_sections) that has it names it so, in the same place. Only
-    that name changes, so this needs no backup; the upgrade note says so under 'after_exit'."""
+def _fixed_stats_tabs(db) -> None:
+    """Once per journal, inside the caller's transaction. Until 0.4.17 Customize on Stats chose which tabs it showed,
+    in which order; now it always shows all of them, in one order. The saved choice stays stored, unread, so this
+    needs no backup; when it hid or moved a tab, the upgrade note says so under 'stats_tabs'."""
     row = db.execute("SELECT value FROM journal_meta WHERE key='display_settings'").fetchone()
-    settings = json.loads(row[0]) if row else {}
-    renamed = 'Runners' in settings.get('dashboard_sections', [])
-    if renamed:
-        settings['dashboard_sections'] = ['After Exit' if s == 'Runners' else s for s in settings['dashboard_sections']]
-        db.execute("INSERT OR REPLACE INTO journal_meta VALUES('display_settings',?)", (encode(settings),))
-        _add_note(db, 'after_exit', {'note': 'The Stats tab Runners is now called After Exit.'})
-    db.execute("INSERT OR REPLACE INTO journal_meta VALUES('after_exit_tab',?)", (str(int(renamed)),))
+    chosen = (json.loads(row[0]) if row else {}).get('dashboard_sections')
+    changed = chosen is not None and chosen != ['Overview', 'Compare', 'MAE / MFE', 'After Exit']
+    if changed:
+        _add_note(db, 'stats_tabs', {'note': 'Stats now always shows all of its tabs: Overview, Compare, MAE / MFE, '
+                                             'After Exit and Dashboards.'})
+    db.execute("INSERT OR REPLACE INTO journal_meta VALUES('fixed_stats_tabs',?)", (str(int(changed)),))
 
 
 def _add_note(db, name: str, data: dict):
@@ -530,8 +529,8 @@ class Journal(Workspace):
             _answers_to_tags(db)
             if not db.execute("SELECT 1 FROM journal_meta WHERE key='one_connection'").fetchone():
                 _one_connection(db)
-            if not db.execute("SELECT 1 FROM journal_meta WHERE key='after_exit_tab'").fetchone():
-                _after_exit_tab(db)
+            if not db.execute("SELECT 1 FROM journal_meta WHERE key='fixed_stats_tabs'").fetchone():
+                _fixed_stats_tabs(db)
             trim = not db.execute("SELECT 1 FROM journal_meta WHERE key='prices_trimmed'").fetchone()
         if trim:
             self._trim_prices()
@@ -661,10 +660,10 @@ class Journal(Workspace):
         the move to one time zone (_schema_4); under 'prices', the prints recorded away from trades that were removed
         once (_trim_prices); under 'packed', the first packing of the recorded ticks (pack_prices); under
         'answers', the typed setups and 'Followed my plan' answers that became tags (_answers_to_tags); under
-        'connections', the watched files that were removed (_one_connection); under 'after_exit', a saved Runners tab
-        that became After Exit (_after_exit_tab); and under 'measurement_rules_3', every trade measured again under
-        MEASUREMENT_RULES 3 (recalculation_done). Each one-time step has a note in plain words, which Settings shows
-        once (unseen_notes)."""
+        'connections', the watched files that were removed (_one_connection); under 'stats_tabs', a saved choice of
+        Stats tabs that is no longer used (_fixed_stats_tabs); and under 'measurement_rules_3', every trade measured
+        again under MEASUREMENT_RULES 3 (recalculation_done). Each one-time step has a note in plain words, which
+        Settings shows once (unseen_notes)."""
         with self.connect() as db:
             row = db.execute("SELECT value FROM journal_meta WHERE key='schema_upgrade'").fetchone()
         return json.loads(row[0]) if row else None
@@ -1213,17 +1212,10 @@ class Journal(Workspace):
     def display_settings(self):
         with self.connect() as db:
             stored = db.execute("SELECT value FROM journal_meta WHERE key='display_settings'").fetchone()
-        settings = {'excursion_unit': 'currency', 'tick_sizes': {},
-                    'dashboard_sections': ['Overview', 'Compare', 'MAE / MFE', 'After Exit'],
-                    **(json.loads(stored[0]) if stored else {})}
+        settings = {'excursion_unit': 'currency', 'tick_sizes': {}, **(json.loads(stored[0]) if stored else {})}
         settings.pop('excursion_policy', None)     # MAE / MFE Accuracy, until 0.4.7: only recorded ticks measure now
+        settings.pop('dashboard_sections', None)   # the Stats tabs chosen until 0.4.17: Stats shows them all now
         return settings
-
-    def set_dashboard_sections(self, sections):
-        allowed = {'Overview', 'Compare', 'MAE / MFE', 'After Exit'}
-        if not sections or len(set(sections)) != len(sections) or not set(sections) <= allowed:
-            raise ValueError('Choose at least one unique dashboard section.')
-        self._update_display_settings({'dashboard_sections': list(sections)})
 
     def set_excursion_unit(self, unit):
         from .units import UNITS

@@ -1,9 +1,10 @@
 """Stats: the headline numbers first, then charts of what the closed trades say. Descriptive, never a forecast.
 
-One row holds the page title, Filters (with the saved filter every page uses) and Customize; the numbers
-come straight after it, then a tab each for Overview, Compare, MAE / MFE and After Exit, and Dashboards, your
-own pages of widgets, always last. The equity curve counts trades along the bottom (1, 2, 3, ...) so nights
-and weekends take no room; a toggle puts it on the clock instead, in the display time zone.
+One row holds the page title and Filters (with the saved filter every page uses); the numbers come straight after
+it, then always the same tabs: Overview, Compare, MAE / MFE, After Exit and Dashboards, your own pages of widgets.
+Overview draws the equity curve, the trading calendar and the spread of results. The equity curve counts trades
+along the bottom (1, 2, 3, ...) so nights and weekends take no room; a toggle puts it on the clock instead, in the
+display time zone. The calendar shows Saturday and Sunday only in a month with a trade on one.
 
 Compare finds an edge by tag, the way a trader drills down: chips for every tag category and the Rating stars
 keep or leave out trades, then Totals and a table for each category side by side, every tag listed even at 0
@@ -13,6 +14,7 @@ be saved as a playbook.
 
 from __future__ import annotations
 
+import calendar
 import datetime as dt
 import hashlib
 import html
@@ -32,12 +34,12 @@ from views import preferences
 from views.trades import REPORT
 from common import money
 from mwjournal.analytics import cost_summary, grouped, summary
-from mwjournal.model import instrument_market
+from mwjournal.model import instant, instrument_market
+from mwjournal.workspace import GROUPS, group_labels
 from mwjournal import units
 
-SEGMENTS = ['Market', 'Exact contract', 'Entry hour', 'Weekday', 'Direction']
 SECTIONS = ['Overview', 'Compare', 'MAE / MFE', 'After Exit']
-DASHBOARDS = 'Dashboards'          # always the last tab, so Customize can never hide it
+DASHBOARDS = 'Dashboards'          # always the last tab, and the only one before the first closed trade
 AXES = {'trade': 'By Trade', 'time': 'By Date'}
 LABELS = {'closed': 'Exit', 'net': 'Net P&L', 'mae': 'MAE', 'mfe': 'MFE', 'max_qty': 'Contracts',
           'symbol': 'Instrument'}
@@ -115,27 +117,24 @@ LIST_CSS = f"""<style>
 def render(journal, rows) -> None:
     """`rows` have passed the saved filter."""
     all_closed = [r for r in rows if r['status'] == 'closed' and r['net'] is not None]
-    heading, filter_col, custom_col = st.columns([5, 1, 1], vertical_alignment='center')
+    heading, filter_col = st.columns([6, 1], vertical_alignment='center')
     with filter_col.popover(preferences.filters_label(journal, rows), width='stretch',
                             key=common.key(journal, 'filters-menu'),
                             help='Narrow the stats by market, date, account, tag, playbook or rating; the saved filter '
                                  'here applies to every page.'):
         rows = preferences.filter_menu(journal, rows)
-    with custom_col.popover('Customize', width='stretch', help='Choose which tabs Stats shows, and their order.'):
-        customize(journal)
     rows = period_rows(journal, rows)
     closed = [r for r in rows if r['status'] == 'closed' and r['net'] is not None]
     with heading:
         count = f'{len(closed)} closed trade{"" if len(closed) == 1 else "s"}'
         theme.section('Stats', f'{len(closed)} of {len(all_closed)} closed trades' if len(closed) != len(all_closed) else count)
-    # Without a closed trade there is nothing to count, but the dashboards (and their calendar) still open.
-    sections = journal.display_settings()['dashboard_sections'] if closed else []
     if closed:
         stat = summary(closed)
         tiles(stat, closed[0]['currency'])
     else:
         st.info('Statistics need at least one closed round trip with a known multiplier.')
-    labels = [*sections, DASHBOARDS]
+    # Without a closed trade there is nothing to count, but the dashboards still open.
+    labels = [*SECTIONS, DASHBOARDS] if closed else [DASHBOARDS]
     panels = dict(zip(labels, common.tabs(labels, common.key(journal, 'analytics-tabs'))))
     # Each tab is drawn only while it is open: each goes over every closed trade, and some read prices too.
     if panels[DASHBOARDS].open:                # every widget is a chart of its own
@@ -144,34 +143,21 @@ def render(journal, rows) -> None:
             dashboard.render(journal, rows)
     if not closed:
         return
-    if 'Overview' in panels and panels['Overview'].open:
+    if panels['Overview'].open:
         with panels['Overview']:
             overview(journal, closed, stat, pd.DataFrame(closed).sort_values('closed'))
-    if 'Compare' in panels and panels['Compare'].open:
+    if panels['Compare'].open:
         with panels['Compare']:
             comparisons(journal, closed)
-    if 'MAE / MFE' in panels and panels['MAE / MFE'].open:
+    if panels['MAE / MFE'].open:
         with panels['MAE / MFE']:
             excursion(journal, closed)
-    if 'After Exit' in panels and panels['After Exit'].open:     # the comparison itself waits for its button
+    if panels['After Exit'].open:              # the comparison itself waits for its button
         with panels['After Exit']:
             st.markdown('### Was There Room to Hold Longer?',
                         help='Hindsight on the prices after your final exit, apart from the MAE / MFE of the trade '
                              'you took.')
             after_exit.stats(journal, closed)
-
-
-def customize(journal) -> None:
-    with st.form(common.key(journal, 'dashboard-preferences'), border=False):
-        sections = st.multiselect('Tabs, in order', SECTIONS, default=journal.display_settings()['dashboard_sections'],
-                                  help='Remove a tab to hide it; add it again to put it at the end. Dashboards '
-                                       'is always last. Saved separately for Live and Replay.')
-        if st.form_submit_button('Save Tabs'):
-            try:
-                journal.set_dashboard_sections(sections)
-                st.rerun()
-            except ValueError as exc:
-                st.error(str(exc))
 
 
 def tone(value) -> str:
@@ -277,6 +263,8 @@ def overview(journal, closed, stat, frame):
                             zone, axis=axis, currency=currency)
     chart(journal, figure, 'equity', keep_layout=True)
     show_costs(closed, stat)
+    st.markdown('### Trading Calendar', help=CALENDAR_HELP)
+    trading_calendar(journal, closed, common.key(journal, 'overview-calendar'))
     st.markdown('### Trade Results', help='How often each net result occurred, one bar per range of results.')
     outcomes = px.histogram(frame, x='net', nbins=min(30, max(5, len(frame))), labels=LABELS)
     outcomes.update_traces(hovertemplate='%{x}<br>%{y} trades<extra></extra>', marker_color=theme.SERIES[0])
@@ -350,12 +338,11 @@ def comparisons(journal, closed):
     library = journal.tag_library()
     groups = chip_groups(library, closed)
     narrowed = narrow(journal, closed, groups)
-    options = [*SEGMENTS, 'Tags', 'Playbooks']
     segment = common.key(journal, 'edge-segment')
-    remember = common.keep({segment: 'Tags'})          # still chosen after another tab has been open
-    field = st.columns([1, 2])[0].selectbox('Compare by', options, key=segment, on_change=remember,
-                                            help='Tags shows a table for each tag category and for your Rating; '
-                                                 'times use your display time zone.')
+    remember = common.keep({segment: GROUPS[0]})          # still chosen after another tab has been open
+    field = st.columns([1, 2])[0].selectbox('Compare by', GROUPS, key=segment, on_change=remember,
+                                            help='Tags shows a table for each tag category and your Rating; every '
+                                                 'other table lists the worst Net P&L first.')
     if not narrowed:
         st.info('No closed trade matches these chips. Click one again to change it, or Clear All.')
         return
@@ -365,15 +352,9 @@ def comparisons(journal, closed):
         if field == 'Playbooks':
             grouped_rows = grouped(narrowed, 'playbooks')
         else:
-            timezone = common.display_zone(journal)
-            segmented = []
-            for row in narrowed:
-                opened = pd.Timestamp(row['opened']).tz_convert(timezone)
-                value = {'Entry hour': f'{opened.hour:02d}:00', 'Weekday': opened.day_name(),
-                         'Market': instrument_market(row['symbol']), 'Exact contract': row['symbol'],
-                         'Direction': row['direction']}[field]
-                segmented.append({**row, 'segment': value})
-            grouped_rows = grouped(segmented, 'segment')
+            zone = common.display_zone(journal)
+            grouped_rows = grouped([{**row, 'segment': group_labels(row, field, zone)[0]} for row in narrowed],
+                                   'segment')
         # A playbook's name in its own colour, as a tag's is.
         colours = {book['name']: book.get('color') for book in library['playbooks'].values()} if field == 'Playbooks' else {}
         grouped_rows = [{**row, 'color': colours.get(row['group'])} for row in grouped_rows]
@@ -704,3 +685,90 @@ def chart(journal, figure, name: str, *, height=320, keep_layout=False) -> None:
         # Room above the plot for both the title and the legend row, which otherwise print over each other.
         figure.update_layout(height=height, legend_title_text='', margin_t=64 if figure.layout.title.text else 24)
     st.plotly_chart(figure, width='stretch', config=theme.PLOTLY_CONFIG, key=common.key(journal, 'edge-' + name))
+
+
+# ---------------------------------------------------------------- the calendar, on Overview and in a Calendar widget
+
+CALENDAR_HELP = ("Each day's net result and closed trades in your Time Zone, with each week's total; click a day for "
+                 'its Daily Report Card.')
+DAYS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun']
+
+
+def trade_count(n) -> str:
+    return f'{n} trade{"" if n == 1 else "s"}'
+
+
+def calendar_cell(label, net, trades, biggest, currency, *, kind='mwj-cal') -> str:
+    """A calendar cell (a day, a week, or the month's total, kind 'mwj-cal-month'): its label, then its net result
+    and number of closed trades when it has any, tinted by the result against `biggest`, the month's largest
+    day (or week). The tint follows the whole amount the cell shows, so a cell that reads $0 stays neutral: a
+    break-even day of prices such as 71.15 adds up to a crumb like 0.00000000001, not 0. '$' is written as an
+    entity: two in one block of Markdown would start a formula."""
+    amount = html.escape(money(net, currency, decimals=0)).replace('$', '&#36;')
+    lines, title = f"<span class='d'>{label}</span>" if label else '', ''
+    if trades:
+        lines += f"<span class='n'>{amount}</span><span class='k'>{trade_count(trades)}</span>"
+        title = f" title='{amount}, {trade_count(trades)}'"       # all of it, for a cell too narrow to show it
+    return f"<div class='{kind} {theme.tint(round(net), biggest)}'{title}>{lines}</div>"
+
+
+def trading_calendar(journal, rows, key):
+    """The month's days, each tinted by its closed trades' net result, deeper for a bigger day of that month, with
+    each week's total at the end of its row and the month's beside the month. Monday to Friday, and Saturday and
+    Sunday too in a month with a closed trade on one. A day opens its Daily Report Card on Trades."""
+    zone = common.display_zone(journal)
+    currency = rows[0]['currency'] if rows else 'USD'
+    days = [instant(r['opened']).astimezone(ZoneInfo(zone)).date() for r in rows]
+    latest = max(days) if days else dt.datetime.now(ZoneInfo(zone)).date()
+    months = sorted({d.replace(day=1) for d in days} | {latest.replace(day=1)}, reverse=True)
+
+    def open_day(date):
+        # The Daily Report Card is on Trades, in place of a trade, for this date.
+        st.session_state.update(common.navigation('Daily review'))
+        st.session_state[common.key(journal, 'review-day')] = date
+
+    with st.container(key='journal-calendar-' + key):
+        choice, total = st.columns(2, vertical_alignment='center')
+        month = choice.selectbox('Month', months, format_func=lambda d: d.strftime('%B %Y'), key=key + '-month',
+                                 label_visibility='collapsed')
+        results = {}                                   # the month's days with closed trades: [net, trades]
+        for r, day in zip(rows, days):
+            if day.replace(day=1) == month and r['status'] == 'closed' and r['net'] is not None:
+                result = results.setdefault(day, [0, 0])
+                result[0] += r['net']
+                result[1] += 1
+        add = lambda dates: [sum(results[d][i] for d in dates if d in results) for i in (0, 1)]
+        weeks = [[dt.date(month.year, month.month, day) if day else None for day in week]
+                 for week in calendar.monthcalendar(month.year, month.month)]
+        totals = [add(week) for week in weeks]
+        month_net, month_trades = add(results)
+        total.markdown(calendar_cell('', month_net, month_trades, abs(month_net), currency, kind='mwj-cal-month'),
+                       unsafe_allow_html=True)
+        biggest_day = max((abs(net) for net, _ in results.values()), default=0)
+        biggest_week = max((abs(net) for net, _ in totals), default=0)
+        shown = 7 if any(day.weekday() >= 5 for day in results) else 5
+        names = DAYS[:shown] + ['Week']
+        for col, name in zip(st.columns(len(names)), names):
+            col.caption(name)
+        number = 0
+        for week, (week_net, week_trades) in zip(weeks, totals):
+            if not any(week[:shown]):
+                continue                               # a weekend that starts the month, nothing traded on it
+            number += 1
+            cols = st.columns(len(names))
+            for col, date in zip(cols, week[:shown]):
+                if date is None:
+                    col.caption(' ')
+                    continue
+                net, trades = results.get(date, (0, 0))
+                with col.container(key=f'calendar-day-{key}-{date}'):
+                    st.markdown(calendar_cell(date.day, net, trades, biggest_day, currency), unsafe_allow_html=True)
+                    # Invisible, over the cell: its label is what a screen reader says.
+                    st.button(f'{date.day}  \n' + common.md(money(net, currency, decimals=0)) +
+                              f'  \n{trade_count(trades)}' if trades else str(date.day),
+                              key=key + '-day-' + str(date), on_click=open_day, args=(date,), width='stretch',
+                              help=common.md(f'{common.day_label(date, zone, weekday=True)}: {trade_count(trades)} '
+                                             f'closed, {money(net, currency)} · click for its Daily Report Card '
+                                             'on Trades'))
+            cols[-1].markdown(calendar_cell(f'Week {number}', week_net, week_trades, biggest_week, currency),
+                              unsafe_allow_html=True)

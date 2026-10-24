@@ -10,15 +10,31 @@ import datetime as dt
 import json
 import re
 import uuid
+from zoneinfo import ZoneInfo
 
 from . import humanize, tagging
-from .model import finite, instant, timestamp
+from .model import finite, instant, product, timestamp
 from .risk import stop_for_risk
 
 WIDGETS = ('Summary', 'Equity', 'Drawdown', 'Calendar', 'Compare', 'Distribution',
            'MAE / MFE', 'Tag score', 'Rating', 'Radar', 'Trades', 'Script')
 METRICS = ('Net P&L', 'Gross P&L', 'R', 'Tag score', 'Rating')
-GROUPS = ('Market', 'Exact contract', 'Direction', 'Entry hour', 'Weekday', 'Tags', 'Playbooks')
+# The one list trades are compared by: Stats' Compare by, the Compare widget and the After Exit tab.
+GROUPS = ('Tags', 'Playbooks', 'Market', 'Exact contract', 'Direction', 'Entry hour', 'Weekday')
+WEEKDAYS = ('Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday')
+
+
+def group_labels(row, group, zone) -> list[str]:
+    """What a trade row counts under when trades are compared by `group` (GROUPS): the name of each of its tags or
+    playbooks (none: an empty list), or one name: its market, exact contract or direction, or the hour ('09:00') or
+    weekday ('Monday') it was entered in `zone`."""
+    if group in ('Tags', 'Playbooks'):
+        return list(row[group.lower()])
+    if group in ('Entry hour', 'Weekday'):
+        opened = instant(row['opened']).astimezone(ZoneInfo(zone))
+        return [f'{opened.hour:02d}:00' if group == 'Entry hour' else WEEKDAYS[opened.weekday()]]
+    return [product(row['symbol']) if group == 'Market' else row['symbol'] if group == 'Exact contract'
+            else row['direction']]
 
 
 def identifier():
@@ -260,8 +276,8 @@ class Workspace:
 
     def save_dashboard(self, name, widgets, *, id=None, filters=None, columns=2):
         name = label(name)
-        if columns not in (1, 2, 3) or not isinstance(widgets, list) or not 1 <= len(widgets) <= 24:
-            raise ValueError('Use 1–24 widgets and 1–3 columns.')
+        if columns not in (1, 2, 3) or not isinstance(widgets, list) or len(widgets) > 24:
+            raise ValueError('Use up to 24 widgets and 1–3 columns.')
         def save(state, library):
             key = id or identifier()
             if id and id not in state['dashboards']:
@@ -375,7 +391,7 @@ class Workspace:
         return self._workspace_edit(save)
 
     def save_preferences(self, **changes):
-        allowed = {'timer_minutes', 'timer_groups', 'display_timezone', 'hide_weekends'}
+        allowed = {'timer_minutes', 'timer_groups', 'display_timezone'}
         if not set(changes) <= allowed:
             raise ValueError('Unknown workspace preference.')
         if 'timer_minutes' in changes and not 1 <= finite(changes['timer_minutes'], 'Timer minutes') <= 120:

@@ -252,7 +252,21 @@ def test_dashboard_pages_widgets_clone_and_partial_writes_are_dataset_local(home
     before = journal.workspace()
     with pytest.raises(ValueError):
         journal.save_dashboard('Bad', [{'kind': 'eval arbitrary code'}])
+    with pytest.raises(ValueError, match='up to 24 widgets'):
+        journal.save_dashboard('Crowded', [{'kind': 'Summary'}] * 25)
     assert journal.workspace() == before
+    # A page can be empty: a new one starts that way, and its last widget can be removed.
+    empty = journal.save_dashboard('Empty', [])
+    assert journal.workspace()['dashboards'][empty]['widgets'] == []
+    journal.save_dashboard('Renamed', [], id=id, columns=1)
+    assert journal.workspace()['dashboards'][id]['widgets'] == []
+
+
+def test_the_calendar_decides_its_weekends_and_there_is_nothing_to_set_for_them(home):
+    journal = Journal()
+    with pytest.raises(ValueError, match='Unknown workspace preference'):
+        journal.save_preferences(hide_weekends=True)
+    assert 'hide_weekends' not in journal.workspace()['preferences']
 
 
 def test_concurrent_workspace_preferences_and_filters_do_not_clobber(home):
@@ -409,13 +423,21 @@ def test_checklist_ui_build_run_branch_undo_and_apply_tags(home):
 def test_dashboard_calendar_navigation_and_widget_save(home):
     journal = seed_preview(home)
     app = open_app('Dashboard')
-    widget(app.text_input, 'Page name').set_value('My dashboard')
+    # Before a page is saved: one empty page, and one line saying how to fill it. Overview has the rest.
+    assert widget(app.selectbox, 'Dashboard page').options == ['My Dashboard']
+    assert said(app.info, 'Add a widget under Customize Page.') and not app.get('plotly_chart')
+    widget(app.text_input, 'Page name').set_value('Days')
     press(app, 'Save Page Layout')
-    assert widget(app.selectbox, 'Dashboard page').value in journal.workspace()['dashboards']
+    page_id = widget(app.selectbox, 'Dashboard page').value
+    assert journal.workspace()['dashboards'][page_id]['widgets'] == []
+    assert widget(app.selectbox, 'Dashboard page').options == ['Days']           # the built-in page is gone
     widget(app.selectbox, 'Widget type').set_value('Rating')
     press(app, 'Save Widget')
-    page = journal.workspace()['dashboards'][widget(app.selectbox, 'Dashboard page').value]
+    page = journal.workspace()['dashboards'][page_id]
     assert page['widgets'][-1]['kind'] == 'Rating' and 'rating_id' not in page['widgets'][-1]
+    widget(app.selectbox, 'Widget type').set_value('Calendar')
+    press(app, 'Save Widget')
+    assert said(app.markdown, '### Calendar')
     button = next(b for b in app.button if b.label.startswith('7  \n'))
     button.click().run()
     assert not app.exception
@@ -488,6 +510,7 @@ def calendar_cells(app):
 
 
 def test_calendar_days_and_weeks_are_tinted_by_their_result_and_say_how_many_trades(home):
+    """The calendar on Stats → Overview, under the equity curve."""
     journal = Journal()
     journal.save_preferences(display_timezone='America/New_York')
     trade_on(journal, '2026-10-05', 50)                  # Mon +$1,000: the month's biggest day
@@ -496,7 +519,7 @@ def test_calendar_days_and_weeks_are_tinted_by_their_result_and_say_how_many_tra
     trade_on(journal, '2026-10-07', 25)                  # Wed +$500: half of it
     trade_on(journal, '2026-10-08', 0)                   # Thu break-even; Fri no trades
     trade_on(journal, '2026-10-13', -20)                 # the next Tuesday, -$400
-    app = open_app('Dashboard')
+    app = open_app('Edge')
     cells = calendar_cells(app)
     assert cells['5'] == (['mwj-cal', 'up', 'l3'], '+$1,000', '1 trade')
     assert cells['6'] == (['mwj-cal', 'down', 'l1'], '-$300', '2 trades')
@@ -509,7 +532,7 @@ def test_calendar_days_and_weeks_are_tinted_by_their_result_and_say_how_many_tra
     assert cells['Week 3'] == (['mwj-cal', 'down', 'l1'], '-$400', '1 trade')
     assert cells['Month'] == (['mwj-cal-month', 'up', 'l3'], '+$800', '6 trades')
     captions = [c.value for c in app.main.caption]
-    assert captions[captions.index('Mon'):][:8] == ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun', 'Week']
+    assert captions[captions.index('Mon'):][:6] == ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Week']    # no weekend trade
     # The tints are the result colours, three steps deep; the amount takes the result colour too.
     css = re.sub(r'\s+', ' ', theme.CSS)
     for tone, colour in (('up', theme.UP), ('down', theme.DOWN)):
@@ -523,15 +546,36 @@ def test_calendar_days_and_weeks_are_tinted_by_their_result_and_say_how_many_tra
     assert not app.exception and widget(app.date_input, 'Trading day').value == dt.date(2026, 10, 6)
 
 
-def test_a_hidden_weekend_still_counts_in_its_weeks_total(home):
+def calendar_columns(app):
+    """The calendar's column headings, Mon to Week."""
+    captions = [c.value for c in app.main.caption]
+    start = captions.index('Mon')
+    return captions[start:captions.index('Week', start) + 1]
+
+
+def test_saturday_and_sunday_show_only_in_a_month_with_a_trade_on_one(home):
     journal = Journal()
-    journal.save_preferences(display_timezone='America/New_York', hide_weekends=True)
-    trade_on(journal, '2026-10-09', 10)                  # Fri +$200
-    trade_on(journal, '2026-10-11', 5)                   # Sun +$100, in a column that is hidden
-    cells = calendar_cells(open_app('Dashboard'))
-    assert '9' in cells and '10' not in cells and '11' not in cells
+    journal.save_preferences(display_timezone='America/New_York')
+    trade_on(journal, '2026-09-08', 10)                  # Tue Sep 8 +$200: a month without a weekend trade
+    trade_on(journal, '2026-10-09', 10)                  # Fri Oct 9 +$200
+    trade_on(journal, '2026-10-11', 5)                   # Sun Oct 11 +$100: October shows its weekends
+    trade_on(journal, '2026-11-03', -5)                  # Tue Nov 3 -$100; Sunday Nov 1 starts that month
+    app = open_app('Edge')
+    month = app.selectbox(key='overview-calendar-live-month')
+    assert month.value == dt.date(2026, 11, 1)
+    # November: Monday to Friday, and the Sunday that starts the month has no row of its own.
+    assert calendar_columns(app) == ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Week']
+    cells = calendar_cells(app)
+    assert '1' not in cells and cells['3'][1:] == ('-$100', '1 trade') and cells['Week 1'][1:] == ('-$100', '1 trade')
+    month.set_value(dt.date(2026, 10, 1)).run()
+    assert calendar_columns(app) == ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun', 'Week']
+    cells = calendar_cells(app)
+    assert cells['10'] == (['mwj-cal'], None, None) and cells['11'][1:] == ('+$100', '1 trade')
     assert cells['Week 2'] == (['mwj-cal', 'up', 'l3'], '+$300', '2 trades')
     assert cells['Month'][1:] == ('+$300', '2 trades')
+    app.selectbox(key='overview-calendar-live-month').set_value(dt.date(2026, 9, 1)).run()
+    assert calendar_columns(app) == ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Week']
+    assert '5' not in calendar_cells(app) and '8' in calendar_cells(app)          # Saturday Sep 5 has no cell
 
 
 def test_a_break_even_day_stays_neutral_when_its_trades_add_up_to_a_crumb(home):
@@ -543,7 +587,7 @@ def test_a_break_even_day_stays_neutral_when_its_trades_add_up_to_a_crumb(home):
                     for side, price, at in (('buy', 71.05, '10:00'), ('sell', 71.15, '10:30'),
                                             ('buy', 72.30, '20:00'), ('sell', 72.20, '20:30'))])
     assert 0 < sum(trade.net for trade in journal.trades()) < 1e-9
-    cells = calendar_cells(open_app('Dashboard'))
+    cells = calendar_cells(open_app('Edge'))
     assert cells['6'] == (['mwj-cal'], '$0', '2 trades')
     assert cells['Week 2'] == (['mwj-cal'], '$0', '2 trades')
     assert cells['Month'] == (['mwj-cal-month'], '$0', '2 trades')

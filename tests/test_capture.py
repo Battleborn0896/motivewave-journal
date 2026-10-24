@@ -284,6 +284,7 @@ def print_at(second, price, provider):
 def test_history_backfill_ticks_are_observed_ticks_with_their_own_label_and_are_never_added_to_live_ticks(tmp_path):
     import common
     from mwjournal.post_exit import best_post_exit
+    from mwjournal.risk import plan_for
     from views.trades import PRICES_FROM
     journal = Journal(tmp_path / 'live.db')
     path = tmp_path / 'motivewave.ndjson'
@@ -311,7 +312,7 @@ def test_history_backfill_ticks_are_observed_ticks_with_their_own_label_and_are_
     best = common.best_display_metric(journal, trade)     # equal quality: the stream that saw more of the trade
     assert best['source'] == 'motivewave-ticks:history' and best['precision'] == 'observed-ticks'
     # Only recorded ticks measure, and backfilled prints are recorded ticks, for the minutes after the exit too.
-    runner = best_post_exit(journal, trade)
+    runner = best_post_exit(journal, trade, plan_for(journal, trade).stop)
     assert (runner['source'], runner['precision']) == ('motivewave-ticks:history', 'observed-ticks')
     assert runner['extra_mfe'] == 200 and runner['observations'] == 3 and runner['coverage'] == 'window-observed'
     # The chart draws one stream at a time and says which; volume is that stream's, not the sum.
@@ -341,6 +342,7 @@ def test_replay_history_ticks_are_real_ticks_of_their_own_run_and_never_of_anoth
     from MotiveWave's history once it was flat. Observed ticks of that run only, never simulated."""
     from common import best_display_metric, metric_options
     from mwjournal.post_exit import best_post_exit
+    from mwjournal.risk import plan_for
     from mwjournal.scope import allows_source, is_history, is_simulated, provenance
     journal = Journal(tmp_path / 'replay.db', dataset='replay')
     path = tmp_path / 'motivewave.replay.ndjson'
@@ -375,7 +377,7 @@ def test_replay_history_ticks_are_real_ticks_of_their_own_run_and_never_of_anoth
     assert not any('Generated/unknown replay ticks' in note for note in chart['notes'])
     lows = [bar['low'] for bar in chart['series']['data'] if 'low' in bar]
     assert min(lows) == 4990 and 4900 not in lows
-    runner = best_post_exit(journal, trade)
+    runner = best_post_exit(journal, trade, plan_for(journal, trade).stop)
     assert runner['precision'] == 'observed-ticks' and runner['source'] == source
     # A trade of the other run is measured only with that run's prices.
     other = SimpleNamespace(provider='motivewave-native:workspace:replay:run-b')

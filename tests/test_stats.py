@@ -11,7 +11,9 @@ import common
 import runtime
 import theme
 from mwjournal import Execution, Journal, tagging
-from test_app import open_app, open_tab, said, show, widget
+from mwjournal.workspace import GROUPS
+from test_app import open_app, open_tab, press, said, show, widget
+from test_workspace import calendar_cells
 from views import edge
 
 NY = 'America/New_York'
@@ -64,7 +66,7 @@ def test_stats_opens_on_the_headline_numbers_with_one_row_of_controls_above_them
     order = walk(app.main)
     first_number = order.index(next(item for item in order if item[0] == 'metric'))
     above = order[:first_number]
-    assert [label for kind, label in above if kind == 'popover'] == ['Filters', 'Customize']
+    assert [label for kind, label in above if kind == 'popover'] == ['Filters']                # one menu, no Customize
     assert not any(kind in ('button', 'expander') for kind, _ in above)            # no stacked buttons first
     assert order.index(next(item for item in order if item[0] == 'tab')) > first_number   # numbers, then charts
     assert [m.label for m in app.metric][:5] == ['Net P&L', 'Win Rate', 'Average Trade', 'Profit Factor',
@@ -115,6 +117,7 @@ def test_the_equity_curve_switches_to_the_display_clock_and_remembers_it():
 
 def test_a_dashboard_equity_widget_counts_trades_too_and_can_be_put_on_the_clock(home):
     journal = three_trades()
+    journal.save_dashboard('Trades', [{'kind': 'Equity', 'title': 'By trade'}])
     page = journal.save_dashboard('Clock', [{'kind': 'Equity', 'title': 'On the clock', 'axis': 'time'}])
     app = open_app('Dashboard')
     curve = spec(app, '"Total"')
@@ -401,6 +404,91 @@ def test_compare_says_so_when_no_trade_has_a_tag():
     assert listed_trades(app)                                 # the trades and their curve are still there
     widget(app.selectbox, 'Compare by').set_value('Weekday').run()
     assert next(d.value for d in app.dataframe if 'Weekday' in d.value.columns)['Trades'].sum() == 3
+
+
+def compared(app, field):
+    """The Compare table by `field`, top to bottom, as {name: Net P&L}."""
+    widget(app.selectbox, 'Compare by').set_value(field).run()
+    assert not app.exception
+    table = next(d.value for d in app.dataframe if field in d.value.columns)
+    return dict(zip(table[field], table['Net P&L']))
+
+
+def test_every_table_but_the_tag_tables_lists_the_worst_net_pnl_first():
+    """f1 +$196 entered at 10:00 on Friday, f2 -$104 at 15:00 on Friday, m1 +$496 at 09:30 on Monday, New York time."""
+    tagged_trades()
+    app = open_tab(open_app('Edge'), 'Compare')
+    assert widget(app.selectbox, 'Compare by').options == list(GROUPS)
+    assert list(compared(app, 'Entry hour')) == ['15:00', '10:00', '09:00']        # not 09:00, 10:00, 15:00
+    assert list(compared(app, 'Weekday')) == ['Friday', 'Monday']
+    assert list(compared(app, 'Direction')) == ['long']
+    # The tag tables keep your own order: Breakout (+$92) stays above Pullback (+$496), and Rating 5 stars to 1.
+    widget(app.selectbox, 'Compare by').set_value('Tags').run()
+    assert list(dict(tables(app))['Setup'])[:2] == ['Breakout', 'Pullback']
+    assert list(dict(tables(app))['Rating'])[:5] == ['5 stars', '4 stars', '3 stars', '2 stars', '1 star']
+
+
+def numbers(values):
+    """A chart's numbers as a list: Plotly sends a column of numbers packed, as {'dtype', 'bdata'}."""
+    if isinstance(values, dict):
+        import base64
+        import numpy
+        return numpy.frombuffer(base64.b64decode(values['bdata']), dtype=values['dtype']).tolist()
+    return list(values)
+
+
+def test_one_compare_list_for_stats_the_compare_widget_and_after_exit(home):
+    journal = tagged_trades()
+    page = journal.save_dashboard('Bars', [{'kind': 'Compare', 'title': 'By hour', 'group': 'Entry hour'},
+                                           {'kind': 'Compare', 'title': 'By tag', 'group': 'Tags'}])
+    app = open_tab(open_app('Edge'), 'After Exit')
+    assert widget(app.selectbox, 'Compare by').options == list(GROUPS)
+    open_tab(app, 'Dashboards')
+    assert widget(app.selectbox, 'Dashboard page').value == page
+    assert widget(app.selectbox, 'Compare by').options == list(GROUPS)       # under Customize Page
+    hours, tags = (json.loads(c.proto.spec) for c in app.get('plotly_chart'))
+    # The bars, lowest first.
+    assert hours['data'][0]['x'] == ['15:00', '10:00', '09:00'] and numbers(hours['data'][0]['y']) == [-104, 196, 496]
+    assert not hours['layout'].get('showlegend')
+    # Tag bars stand together by category, in the library's order and its colour, each category lowest first.
+    assert [(bars['name'], bars['x'], numbers(bars['y'])) for bars in tags['data']] == [
+        ('Setup', ['Breakout', 'Pullback'], [46, 496]),
+        ('Execution', ['Chased Entry', 'Followed Plan'], [-104, 346]),
+        ('Mindset', ['FOMO', 'Calm'], [-104, 196])]
+    assert tags['data'][0]['marker']['color'] == '#65CA98' and tags['layout']['showlegend']
+
+
+def test_the_overview_calendar_counts_what_stats_counts_and_opens_a_days_report_card():
+    journal = three_trades()
+    journal.ingest([(Execution('motivewave', 'paper', 'NQZ6', side, 1, price, at, execution_id=at), {})
+                    for side, price, at in (('buy', 20000, '2026-10-13T14:00:00Z'),
+                                            ('sell', 20010, '2026-10-13T14:05:00Z'))])
+    app = open_app('Edge')
+    assert said(app.markdown, '### Trading Calendar')
+    cells = calendar_cells(app)
+    assert cells['9'][1:] == ('+$92', '2 trades') and cells['12'][1:] == ('+$496', '1 trade')
+    assert cells['13'][1:] == ('+$200', '1 trade')
+    # The Filters above Stats narrow it too.
+    widget(app.multiselect, 'Markets').set_value(['ES']).run()
+    assert not app.exception
+    cells = calendar_cells(app)
+    assert cells['13'] == (['mwj-cal'], None, None) and cells['Month'][1:] == ('+$588', '3 trades')
+    # A day opens its Daily Report Card on Trades.
+    next(b for b in app.button if b.key == 'overview-calendar-live-day-2026-10-12').click().run()
+    assert not app.exception and app.session_state[common.VIEW_KEY] == 'Trades'
+    assert widget(app.date_input, 'Trading day').value.isoformat() == '2026-10-12'
+
+
+def test_after_exit_reads_the_reviews_once_not_once_per_trade(monkeypatch):
+    """Each Stats row already knows its stop: comparing reads only each trade's own prices."""
+    tagged_trades()
+    app = open_tab(open_app('Edge'), 'After Exit')
+    reads = []
+    original = Journal.annotations
+    monkeypatch.setattr(Journal, 'annotations', lambda self: reads.append(self) or original(self))
+    press(app, 'Compare Runners')
+    assert said(app.caption, '3 trades · ')
+    assert len(reads) <= 1
 
 
 def test_the_period_above_stats_keeps_this_month_last_month_or_the_last_three_and_stays_chosen():

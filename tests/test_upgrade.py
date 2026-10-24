@@ -719,26 +719,34 @@ def test_the_migration_removes_a_watched_csv_and_keeps_the_default_connection(tm
     assert Journal(dataset='replay').upgrade_note() is None
 
 
-# ---------------------------------------------------------------- the Stats tab Runners is called After Exit
+# ---------------------------------------------------------------- Stats always shows every tab
 
-def test_a_saved_runners_tab_becomes_after_exit_once_and_needs_no_backup(tmp_path):
-    path = tmp_path / 'trades.sqlite3'
-    journal = Journal(path)
-    with journal.connect() as db:                  # Stats tabs as 0.4.17 saved them
+def as_0_4_17_tabs(journal, tabs):
+    """The Stats tabs Customize saved until 0.4.17, and a journal that has not taken the step yet."""
+    with journal.connect() as db:
         db.execute("INSERT OR REPLACE INTO journal_meta VALUES('display_settings', ?)",
-                   (json.dumps({'excursion_unit': 'r', 'dashboard_sections': ['Runners', 'Overview']}),))
-        db.execute("DELETE FROM journal_meta WHERE key='after_exit_tab'")
+                   (json.dumps({'excursion_unit': 'r', 'dashboard_sections': tabs}),))
+        db.execute("DELETE FROM journal_meta WHERE key='fixed_stats_tabs'")
+
+
+def test_a_saved_choice_of_stats_tabs_is_left_unread_and_said_once_with_no_backup(tmp_path):
+    path = tmp_path / 'trades.sqlite3'
+    as_0_4_17_tabs(Journal(path), ['Runners', 'Overview'])
     opened = Journal(path)
-    assert opened.display_settings()['dashboard_sections'] == ['After Exit', 'Overview']
-    assert opened.display_settings()['excursion_unit'] == 'r'
-    assert opened.unseen_notes() == {'after_exit': 'The Stats tab Runners is now called After Exit.'}
-    assert not backups(tmp_path) and meta(path, 'after_exit_tab') == '1'
-    # Twice: nothing left to rename, and the note stays as it was.
-    note = opened.upgrade_note()['after_exit']
+    assert opened.display_settings() == {'excursion_unit': 'r', 'tick_sizes': {}}        # the tabs are not read
+    note = 'Stats now always shows all of its tabs: Overview, Compare, MAE / MFE, After Exit and Dashboards.'
+    assert opened.unseen_notes() == {'stats_tabs': note}
+    assert not backups(tmp_path) and meta(path, 'fixed_stats_tabs') == '1'
+    with opened.connect() as db:                   # stored as it was, unread
+        stored = json.loads(db.execute("SELECT value FROM journal_meta WHERE key='display_settings'").fetchone()[0])
+    assert stored['dashboard_sections'] == ['Runners', 'Overview']
+    # Twice: the same note, once.
     with opened.connect() as db:
-        db.execute("DELETE FROM journal_meta WHERE key='after_exit_tab'")
+        db.execute("DELETE FROM journal_meta WHERE key='fixed_stats_tabs'")
     again = Journal(path)
-    assert again.display_settings() == opened.display_settings() and again.upgrade_note()['after_exit'] == note
-    assert meta(path, 'after_exit_tab') == '0'
-    # A journal that never saved its tabs has nothing to say.
+    assert again.unseen_notes() == {'stats_tabs': note} and meta(path, 'fixed_stats_tabs') == '1'
+    # Every tab already shown in this order, or no choice saved: nothing changes, so nothing to say.
+    every = tmp_path / 'every.sqlite3'
+    as_0_4_17_tabs(Journal(every), ['Overview', 'Compare', 'MAE / MFE', 'After Exit'])
+    assert Journal(every).upgrade_note() is None and meta(every, 'fixed_stats_tabs') == '0'
     assert Journal(tmp_path / 'new.sqlite3').upgrade_note() is None

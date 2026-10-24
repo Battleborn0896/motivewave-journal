@@ -18,6 +18,7 @@ from mwjournal.importers import apply_preview, preview_bridge
 from mwjournal.metrics import carry_on, excursions, measurements
 from mwjournal.model import instant
 from mwjournal.post_exit import best_post_exit
+from mwjournal.risk import plan_for
 from mwjournal.sync import SyncWorker
 
 DAY = '2026-10-21'
@@ -264,7 +265,7 @@ def everything(journal, *, now=dt.datetime(2026, 10, 21, 16, 25, tzinfo=dt.timez
             found[trade.id, source] = (measurements(trade, samples, source, now=now),
                                        excursions(trade, samples, source, now=now, max_path_points=None)['path'])
         if trade.closed:
-            found[trade.id, 'after exit'] = best_post_exit(journal, trade)
+            found[trade.id, 'after exit'] = best_post_exit(journal, trade, plan_for(journal, trade).stop)
         found[trade.id] = journal.metric_options(trade)
     return found
 

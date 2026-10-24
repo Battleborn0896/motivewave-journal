@@ -145,18 +145,16 @@ def test_day_tags_and_playbook_can_be_clicked_without_retyping_and_daily_notes_d
     assert table.iloc[0]['Playbook'] == 'Calm pullback'
 
 
-def test_dashboard_preferences_persist_per_environment_and_empty_selection_is_rejected(home):
+def test_stats_always_shows_every_tab_and_a_choice_saved_before_is_ignored(home):
     journal = seed_preview(home)
+    with journal.connect() as db:                  # the tabs Customize saved until 0.4.17
+        db.execute("INSERT OR REPLACE INTO journal_meta VALUES('display_settings', ?)",
+                   (json.dumps({'dashboard_sections': ['Compare', 'Overview']}),))
     app = open_app('Edge')
-    widget(app.multiselect, 'Tabs, in order').set_value(['Compare', 'Overview'])
-    press(app, 'Save Tabs')
-    assert [t.label for t in app.tabs] == ['Compare', 'Overview', 'Dashboards']        # Dashboards is always last
-    assert Journal().display_settings()['dashboard_sections'] == ['Compare', 'Overview']
-    assert Journal(dataset='replay').display_settings()['dashboard_sections'] == ['Overview', 'Compare', 'MAE / MFE', 'After Exit']
-    widget(app.multiselect, 'Tabs, in order').set_value([])
-    press(app, 'Save Tabs')
-    assert said(app.error, 'at least one')
-    assert journal.display_settings()['dashboard_sections'] == ['Compare', 'Overview']
+    assert [t.label for t in app.tabs] == ['Overview', 'Compare', 'MAE / MFE', 'After Exit', 'Dashboards']
+    assert not any(m.label == 'Tabs, in order' for m in app.multiselect)
+    assert 'Customize' not in [p.proto.popover.label for p in app.main.get('popover')]
+    assert 'dashboard_sections' not in journal.display_settings()
 
 
 def test_include_any_exclude_filters_and_renamed_aliases_keep_their_identity(home):
@@ -179,7 +177,7 @@ def test_include_any_exclude_filters_and_renamed_aliases_keep_their_identity(hom
 def test_after_exit_never_uses_candles(home):
     journal = seed_preview(home)
     trade = journal.trades()[0]
-    result = best_post_exit(journal, trade)
+    result = best_post_exit(journal, trade, None)
     assert result['precision'] == 'pending' and result['extra_mfe'] is None
 
 

@@ -128,10 +128,8 @@ def test_preferences_persist_independently_and_concurrent_changes_merge(tmp_path
         futures = [pool.submit(set_unit), pool.submit(set_tick)]
         for f in futures:
             f.result()
-    assert Journal(live.path).display_settings() == {'excursion_unit': 'ticks', 'tick_sizes': {'CUSTOM': .01},
-        'dashboard_sections': ['Overview', 'Compare', 'MAE / MFE', 'After Exit']}
-    assert replay.display_settings() == {'excursion_unit': 'currency', 'tick_sizes': {},
-        'dashboard_sections': ['Overview', 'Compare', 'MAE / MFE', 'After Exit']}
+    assert Journal(live.path).display_settings() == {'excursion_unit': 'ticks', 'tick_sizes': {'CUSTOM': .01}}
+    assert replay.display_settings() == {'excursion_unit': 'currency', 'tick_sizes': {}}
     with pytest.raises(ValueError):
         live.set_excursion_unit('made-up')
     with pytest.raises(ValueError):

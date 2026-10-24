@@ -24,6 +24,7 @@ from mwjournal import Execution, Journal, PriceSample, backup, paths, tagging, u
 from mwjournal.importers import apply_preview, preview_bridge
 from mwjournal.metrics import excursions, measurements
 from mwjournal.sync import DEFAULT_CONNECTION
+from mwjournal.workspace import GROUPS
 from test_capture import fill, lines, tick
 from test_chart import bar, round_trip, seed_preview, seed_ticks
 
@@ -392,25 +393,27 @@ def test_full_recorded_path_and_after_exit_render_without_claiming_missing_data(
     assert not any(s.label in ('Look after exit', 'Runner stop rule') for s in app.selectbox)
     assert not any(m.label.startswith(('Best extra', 'Extra after')) for m in app.metric)
     show(app, 'Edge')
-    assert not any(s.label == 'Compare runners by' for s in app.selectbox)    # drawn only when its tab is open
+    assert not any(s.label == 'Compare by' for s in app.selectbox)    # drawn only when its tab is open
     open_tab(app, 'After Exit')
     assert not app.exception and not said(app.info, 'None of these trades')   # not run until asked
     assert said(app.caption, 'The 15 minutes after each exit, from recorded ticks, held until your stop, or breakeven')
+    assert said(app.caption, 'An exit at or past the stop counts as 0, as there was nothing left to hold.')
     assert not any(s.label.startswith('Runner comparison') for s in app.selectbox)
     assert not any(c.label.startswith(('Only winning', 'Only exits near')) for c in app.checkbox)
     press(app, 'Compare Runners')
     assert said(app.info, 'None of these trades has all of the 15 minutes after its exit recorded')
-    assert said(app.caption, '1 trade · 1 left out')
-    assert widget(app.selectbox, 'Compare runners by').options == ['Individual tags', 'Tag categories']
+    assert said(app.caption, '1 trade · 1 left out · a trade counts under each of its tags')
+    assert widget(app.selectbox, 'Compare by').options == list(GROUPS)
     assert not any(b.label in ('Analyze recorded post-exit prices', 'Calculate post-exit tag analysis')
                    for b in app.checkbox)
-    # An exit at its stop left nothing to hold: Stats says that, not that prices were missing, which were never read.
+    # An exit at its stop left nothing to hold: it counts as 0 further your way, and its prices are never read.
     journal.update_annotation(journal.trades()[0].id, {'planned_stop': 5003})
     app.run()
+    widget(app.selectbox, 'Compare by').set_value('Direction')
     press(app, 'Compare Runners')
-    assert said(app.info, 'Each of these trades exited at or past its stop, or breakeven without one, so there was '
-                          'nothing left to hold.')
-    assert not said(app.info, 'None of these trades')
+    assert said(app.caption, '1 trade · 0 left out') and not said(app.info, 'None of these trades')
+    table = next(d.value for d in app.dataframe if 'Direction' in d.value.columns)
+    assert table.iloc[0][['Direction', 'Trades', 'Average extra peak (USD)']].tolist() == ['long', 1, 0]
 
 
 def test_measured_trade_risk_renders_from_the_traded_price_alone():
@@ -431,7 +434,7 @@ def test_measured_trade_risk_renders_from_the_traded_price_alone():
     open_tab(show(app, 'Edge'), 'Compare')
     # The stars have a table under Tags, and a setup is a Setup tag: neither is a Compare by choice of its own.
     assert widget(app.selectbox, 'Compare by').options == [
-        'Market', 'Exact contract', 'Entry hour', 'Weekday', 'Direction', 'Tags', 'Playbooks']
+        'Tags', 'Playbooks', 'Market', 'Exact contract', 'Direction', 'Entry hour', 'Weekday']
     widget(app.selectbox, 'Compare by').set_value('Direction').run()
     assert not app.exception
 
@@ -588,7 +591,7 @@ def test_rollover_filters_group_markets_but_keep_micro_contracts_separate(home):
     assert len(listed(app)) == 1
     open_tab(show(app, 'Edge'), 'Compare')
     assert widget(app.multiselect, 'Markets').value == ['MNQ']
-    assert widget(app.selectbox, 'Compare by').options[:2] == ['Market', 'Exact contract']
+    assert widget(app.selectbox, 'Compare by').options[2:4] == ['Market', 'Exact contract']
 
 
 def test_trade_rows_are_built_again_only_when_something_they_show_changed(home, monkeypatch):
@@ -648,15 +651,15 @@ def test_stats_choices_are_still_chosen_after_another_tab_was_open(home):
     assert widget(app.selectbox, 'Compare by').value == 'Tags'
     widget(app.selectbox, 'Compare by').set_value('Playbooks').run()
     open_tab(app, 'After Exit')
-    assert widget(app.selectbox, 'Compare runners by').value == 'tags'
+    assert widget(app.selectbox, 'Compare by').value == 'Tags'
     # A form sends its choices with the click, as a browser does: a run between them drops the choice (Streamlit 1.66).
-    widget(app.selectbox, 'Compare runners by').set_value('tag_categories')
+    widget(app.selectbox, 'Compare by').set_value('Weekday')
     press(app, 'Compare Runners')
     open_tab(app, 'Overview')
     open_tab(app, 'Compare')
     assert widget(app.selectbox, 'Compare by').value == 'Playbooks'
     open_tab(app, 'After Exit')
-    assert widget(app.selectbox, 'Compare runners by').value == 'tag_categories'
+    assert widget(app.selectbox, 'Compare by').value == 'Weekday'
 
 
 def test_simple_navigation_and_optional_controls_do_not_remove_reviews(home):
