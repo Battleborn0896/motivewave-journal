@@ -270,6 +270,22 @@ def test_fills_only_a_named_journal_held_are_added_and_counted(home):
         journal.unseen_notes()['journal_views'])
 
 
+def test_tags_waiting_in_both_journals_wait_for_the_next_trade_once(home):
+    env = seed_preview(home)
+    env.save_draft(provider='motivewave', account='paper', symbol='NQZ6', tags=['Patient'])
+    practice, _ = old_named(env, 'Practice', [('motivewave', 'paper')])
+    trade_on(practice, 'paper', 8, name='by-hand')        # traded before, and only the named journal held it
+    practice.save_draft(provider='motivewave', account='paper', symbol='NQZ6', tags=['Calm'])   # armed later
+    journal = Journal()
+    journal.reconcile_drafts()
+    # One contract keeps one waiting, the one armed last; the trade only the named journal held is not the next one.
+    assert sorted(d['state'] for d in journal.workspace()['drafts'].values()) == ['armed', 'cancelled']
+    following = trade_on(journal, 'paper', 21)
+    journal.reconcile_drafts()
+    used, = [d for d in journal.workspace()['drafts'].values() if d['state'] == 'attached']
+    assert used['trade_id'] == following.id and journal.annotations()[following.id]['tags'] == ['Calm']
+
+
 def test_an_archived_journal_is_not_a_view_and_its_reviews_stay(home):
     env = seed_preview(home)
     trade, = env.trades()

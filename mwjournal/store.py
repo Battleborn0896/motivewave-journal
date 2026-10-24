@@ -504,6 +504,19 @@ def _checklists_as_lists(db) -> None:
         _add_note(db, 'checklists', {'converted': converted, 'note': '; '.join(words) + '.'})
 
 
+def one_waiting(drafts: dict) -> int:
+    """Leaves one Tag My Next Trade waiting on each account and contract, the one armed last, as arming one replaces
+    the one waiting there (Workspace.save_draft): the others in `drafts` are cancelled. Returns how many."""
+    waiting, cancelled = {}, 0
+    for draft in sorted((d for d in drafts.values() if d['state'] == 'armed'), key=lambda d: instant(d['at'])):
+        scope = (draft['provider'], draft['account'], draft['symbol'])
+        if scope in waiting:
+            waiting[scope]['state'] = 'cancelled'
+            cancelled += 1
+        waiting[scope] = draft
+    return cancelled
+
+
 def _drafts_without_windows(db) -> None:
     """Once per journal, inside the caller's transaction. Until 0.4.17 a pre-trade draft had a name and waited for a
     trade inside a time window, and one that more than one trade or draft could match was 'ambiguous'; now Tag My
@@ -524,14 +537,7 @@ def _drafts_without_windows(db) -> None:
             cancelled += 1
         elif draft['state'] == 'ambiguous':
             draft['state'] = 'armed'
-    waiting = {}
-    armed = [draft for draft in state['drafts'].values() if draft['state'] == 'armed']
-    for draft in sorted(armed, key=lambda d: instant(d['at'])):
-        scope = (draft['provider'], draft['account'], draft['symbol'])
-        if scope in waiting:
-            waiting[scope]['state'] = 'cancelled'
-            cancelled += 1
-        waiting[scope] = draft
+    cancelled += one_waiting(state['drafts'])
     if encode(state['drafts']) != before:
         write_workspace(db, state)
         ended = (f'; {cancelled} that had not found their trade were cancelled' if cancelled > 1 else
