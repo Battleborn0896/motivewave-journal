@@ -380,8 +380,8 @@ LANDMARKS = {
     'Dashboard': lambda app: any(s.label == 'Dashboard page' for s in app.selectbox),
     'Daily review': lambda app: any(t.label.startswith('What I learned') for t in app.text_area),
     'Live session': lambda app: (any(b.key == 'session-timer-live-play' for b in app.button)
-                                 and [p.proto.popover.label for p in app.main.get('popover')][:3]
-                                 == ['Check-Ins', 'Drafts', 'Checklist']),
+                                 and [p.proto.popover.label for p in app.main.get('popover')][:2]
+                                 == ['Check-Ins', 'Drafts']),
     'Connection': lambda app: any(e.label == 'Troubleshooting' for e in app.expander),
     'Journals': lambda app: any(t.label == 'New journal name' for t in app.text_input),
     'Import': lambda app: any(u.label == 'Fills CSV or Bridge File' for u in app.file_uploader),

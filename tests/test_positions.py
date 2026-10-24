@@ -13,6 +13,7 @@ from mwjournal.metrics import excursions, measurements
 from mwjournal.model import ENTRY_MISSING, EXIT_MISSING, INCOMPLETE, NO_FILL_PRICE, digest, instant
 from mwjournal.post_exit import best_post_exit, post_exit
 from mwjournal.store import ImportConflict
+from mwjournal.workspace import question
 
 PROVIDER = 'motivewave-native:workspace:live'
 SCOPE = (PROVIDER, 'SIM-1', 'NQZ6', 'USD')
@@ -273,11 +274,9 @@ def test_trade_ids_are_what_they_were_and_change_only_with_the_first_fill(tmp_pa
     journal.annotate(round_trip.id, {'tags': ['patient']})
     journal.record_media('shot', lone_exit.id, {'kind': 'screenshot', 'state': 'ready'})
     journal.record_media('shot-2', round_trip.id, {'kind': 'screenshot', 'state': 'ready'})
-    checklist = journal.save_checklist('Plan', {'start': 'q', 'nodes': [
-        {'id': 'q', 'kind': 'question', 'text': 'Was it planned?', 'next': ['yes']},
-        {'id': 'yes', 'kind': 'answer', 'text': 'Yes', 'next': []}]})
+    checklist = journal.save_checklist('Plan', [question('Was it planned?')])
     journal.start_checklist(checklist, lone_exit.id)
-    journal.start_checklist(checklist)                        # a run that belongs to the session, not a trade
+    journal.start_checklist(checklist, day='2026-08-28')      # a run that belongs to a day, not a trade
     journal.record_checkin('Mindset', ['Patient'], trade_id=lone_exit.id)
     assert journal.detached_reviews() == {'annotations': [], 'media': [], 'checklist_runs': [], 'checkins': [], 'drafts': []}
     # The id changes in one case only: an earlier fill of the same position arrives and becomes its first fill.

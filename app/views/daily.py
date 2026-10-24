@@ -1,6 +1,6 @@
-"""The Daily Report Card: one day's tags, Rating and note beside that day's result. A day is a date in the journal's
-Time Zone (Settings), from midnight to midnight, as in the trade list and the calendar. Every box saves when it
-changes.
+"""The Daily Report Card: one day's tags, Rating and note beside that day's result, and each checklist that runs before
+the session, answered for that day. A day is a date in the journal's Time Zone (Settings), from midnight to midnight,
+as in the trade list and the calendar. Every box saves when it changes.
 
 It opens on Trades, in place of a trade, from a day's header in the trade list or a day in the calendar on Stats
 (Overview, or a Calendar widget). Its own date box picks any other day."""
@@ -16,6 +16,7 @@ import common
 import tag_controls
 import theme
 from common import money
+from views import checklists
 from mwjournal.analytics import summary
 
 
@@ -59,3 +60,6 @@ def render(journal, rows) -> None:
     tag_controls.stars(old.get('rating'), **box('rating'))
     st.text_area('What I learned / next session adjustment', old.get('notes', ''), help='Saves when you leave the box.',
                  **box('notes'))
+    if checklists.offered(journal, 'session'):
+        theme.section('Checklist')
+        checklists.run_panel(journal, day=saved)

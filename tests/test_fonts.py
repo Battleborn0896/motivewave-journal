@@ -232,7 +232,7 @@ def face_rules(html):
     return rules
 
 
-@pytest.mark.parametrize('component', ['tvchart', 'checklist'])
+@pytest.mark.parametrize('component', sorted(p.parent.name for p in COMPONENTS.glob('*/index.html')))
 def test_components_load_the_five_faces_from_the_apps_own_static_folder(component):
     """A component is <app>/component/<module>.<name>/index.html; the app serves app/static at <app>/app/static/."""
     html = (COMPONENTS / component / 'index.html').read_text(encoding='utf-8')

@@ -371,10 +371,10 @@ tags, categories and reviews are kept exactly as they are.
 ## Using the journal
 
 The sidebar has three pages: **Trades**, **Stats** and **Settings**. Trades holds the session tools (the bar
-at the top), the Daily Report Card (click a day's header) and each trade's checklist; Stats holds the
-dashboards (its last tab); Settings holds tags and checklists, and data (imports, backups, journals, the
-connection), each two clicks from the sidebar. Under the pages, the sidebar says whether the
-study is **Recording**, **Not recording** or **Needs attention** (see *Build and connect the study*); click it
+at the top), the Daily Report Card (click a day's header) and the checklists you answer, on each trade or on the
+Daily Report Card; Stats holds the dashboards (its last tab); Settings holds tags and checklists, and data
+(imports, backups, journals, the connection), each two clicks from the sidebar. Under the pages, the sidebar says
+whether the study is **Recording**, **Not recording** or **Needs attention** (see *Build and connect the study*); click it
 to open Settings.
 The trade list stays on the left while the selected trade stays on the right, as one page that scrolls.
 Click a row, or use Prev / Next; no separate opening/back-navigation step is needed. The trade's page, top to
@@ -385,7 +385,8 @@ bottom:
 - the chart, 30 minutes before entry to 30 minutes after exit with your stop always drawn, beside the tags and
   the Rating stars;
 - the note and the **Stop**;
-- the **Checklist**, once you have built one;
+- the **Checklist**, once a checklist runs on each trade: its questions in order, each answered with a Yes or No
+  click;
 - **Details**, closed until you open it: the fills, how your stop order moved, notes on the chart's candles,
   the MAE / MFE path and its CSV, the After Exit sentence, and the contract's dollars per point, which you can
   correct there. It stays open as you step through trades and while an open trade updates.
@@ -411,7 +412,8 @@ and day tags all use the same date for a trade. A new journal starts on this com
 taking the computer elsewhere moves no trade to another day; change it here when you want another.
 
 The **Daily Report Card** opens from a day's header in the trade list, or a day in the calendar on Stats. Beside
-that day's result it holds the day's **Day Tags**, its **Rating** (1 to 5 stars, as a trade has) and a note.
+that day's result it holds the day's **Day Tags**, its **Rating** (1 to 5 stars, as a trade has), a note, and
+each checklist that runs **Before the session**, answered for that day.
 The **Day** category comes with **Had a Plan**, **Kept Risk Limits** and **Respected My Stop**; any other tag
 made available on days is offered there too. Every trade opened that day wears the day's tags, so they show in
 the trade's chips, Stats → Compare and the filters; a choice made on the trade in the same one-choice category
@@ -550,14 +552,22 @@ trade's score is the sum of its selected tag scores, and a widget can restrict t
 score widget, measure and filter appear once a tag has a score; a widget saved before then still draws. These
 are process measures, not P&L, forecasts, or claims of Tradecraft's exact formula.
 
-**Settings → Tags, Playbooks & Checklists → Checklists** contains an offline drag-and-connect node canvas: questions, answers, pass-through
-and counter nodes; selection, duplication, color/text/tag edits, alignment, start-node choice,
-undo/redo, and explicit save. Questions may branch only to answers. Answer loops must reach a
-manual question; automatic endless loops are rejected. Definitions have JSON export/import and
-non-destructive local versions. Runs retain their definition
-snapshot, answers, counters and collected tags: a trade's run in its Checklist section, a session run from the
-Checklist menu above the trade list. Applying those tags is explicit; no checklist can
-place, modify or block an order. This editor is not pixel/shortcut/format compatible with CheckMate.
+**Settings → Tags, Playbooks & Checklists → Checklists** builds a checklist as a plain list: its name, **Runs on**
+(**Each trade** or **Before the session**), and numbered yes/no questions, each a text box with **Move Up**,
+**Move Down** and **Remove**, then **Add Question** and one **Save Checklist**. A question goes on to the next one
+whatever the answer, unless **Add a Branch** under it says otherwise: for Yes and for No, where it goes (the next
+question, another question by its number, or Finish), the tags it collects and **Count this answer**. A line under
+the question says what its branches do. **Delete Checklist** removes a checklist; answers already given keep their
+own copy of it, and **Back Up Journal** keeps checklists with everything else.
+
+A checklist that runs on each trade is the **Checklist** section of every trade's page; one that runs before the
+session is on the Daily Report Card, once for each day. Its questions are listed in order with Yes and No; only the
+question due takes a click, and a branch hides the questions it skips. **Undo Last Answer** takes an answer back.
+The tags the answers collect are listed under it and reach the trade, or the day, only with **Apply Collected
+Tags** (on a day, only tags available on days). Opening a journal from 0.4.17 or earlier once turns each checklist
+drawn on the old node canvas into this list, walked from its first question: an answer's pass and counter nodes
+fold into it, a third answer and an answer's own wording go, and a checklist only ever run from the old session
+menu runs before the session, its runs on the day they started. No checklist can place, modify or block an order.
 
 **Session tools**, the bar at the top of Trades, provide an optional repeating check-in timer (play, pause
 and stop; the minutes between check-ins and the groups are chosen under **Check-Ins**). When it runs out, one click

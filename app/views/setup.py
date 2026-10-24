@@ -33,7 +33,7 @@ HOME = 'Settings'
 PAGES = (HOME, 'Tags', 'Data')
 LABELS = {HOME: 'Settings', 'Tags': 'Tags, Playbooks & Checklists', 'Data': 'Data'}
 PAGE_HELP = {
-    'Tags': 'Tag categories, tags, playbooks and day tags, and the branching checklists you run on a trade.',
+    'Tags': 'Tag categories, tags, playbooks and day tags, and the yes/no checklists you answer on trades and days.',
     'Data': 'Import trades, export and back up, named journals and account names, and the connection to MotiveWave.',
 }
 # The tabs of each page, linked one by one from its tile so every one is two clicks from the sidebar.

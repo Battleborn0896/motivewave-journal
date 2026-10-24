@@ -229,6 +229,107 @@ def validate_graph(graph, library):
     return {'start': graph['start'], 'nodes': nodes}
 
 
+# Where a checklist runs: on every trade's page, or on the Daily Report Card, once a day.
+RUNS_ON = {'trade': 'Each trade', 'session': 'Before the session'}
+# What an answer does unless a branch says otherwise: go on to the next question, collect no tag, count nothing.
+BRANCH = {'go': 'next', 'tag_ids': [], 'count': False}
+ANSWERS = ('yes', 'no')
+MAX_QUESTIONS = 40                     # five nodes each at most: validate_graph's 200
+
+
+def question(text, yes=None, no=None) -> dict:
+    """One question of a checklist's list: its text and what its Yes and its No do, each a BRANCH. A branch's 'go' is
+    'next' (the next question; after the last one, Finish), 'finish', or the number of a question (1 is the first);
+    'tag_ids' are the tags the answer collects; 'count' is Count this answer."""
+    return {'text': text, 'yes': {**BRANCH, **(yes or {})}, 'no': {**BRANCH, **(no or {})}}
+
+
+def compile_checklist(questions) -> dict:
+    """The graph a list of yes/no questions (question) is stored and run as; checklist_questions is its inverse.
+    Question n is node 'qn', linked to its answer nodes 'qn-yes' and 'qn-no', which carry the tags they collect and link to
+    where they go (Finish: no link). Count this answer puts counter node 'qn-yes-count' between the answer and where
+    it goes. Raises ValueError, in plain words, on an empty question or a branch to no question."""
+    if not isinstance(questions, list) or not 1 <= len(questions) <= MAX_QUESTIONS:
+        raise ValueError(f'A checklist has 1 to {MAX_QUESTIONS} questions.')
+    nodes, last = [], len(questions)
+    for number, asked in enumerate(questions, 1):
+        text = str(asked.get('text') or '').strip()
+        if not text or len(text) > 400:
+            raise ValueError(f'Type question {number}, in at most 400 characters.')
+        id = f'q{number}'
+        nodes.append({'id': id, 'kind': 'question', 'text': text, 'next': [f'{id}-{answer}' for answer in ANSWERS]})
+        for answer in ANSWERS:
+            branch = {**BRANCH, **(asked.get(answer) or {})}
+            go = branch['go']
+            if go not in ('next', 'finish') and not (type(go) is int and 1 <= go <= last):
+                raise ValueError(f'Question {number} branches to a question this checklist does not have.')
+            if not isinstance(branch['tag_ids'], list) or not isinstance(branch['count'], bool):
+                raise ValueError('A branch collects a list of tags and counts or not.')
+            target = (None if go == 'finish' or go == 'next' and number == last
+                      else f'q{number + 1}' if go == 'next' else f'q{go}')
+            links = [target] if target else []
+            node = {'id': f'{id}-{answer}', 'kind': 'answer', 'text': answer.title(), 'next': links,
+                    'tag_ids': list(branch['tag_ids'])}
+            nodes.append(node)
+            if branch['count']:
+                counter = f'{id}-{answer}-count'
+                node['next'] = [counter]
+                nodes.append({'id': counter, 'kind': 'counter', 'text': f'{text[:390]} · {answer.title()}',
+                              'next': links})
+    return {'start': 'q1', 'nodes': nodes}
+
+
+def follow(nodes, id):
+    """What the chain of nodes from node `id` up to the next question does (`nodes` by id): the tags it collects
+    (sorted), whether it counts, and the question it reaches, None when it finishes."""
+    tags, count, seen = set(), False, set()
+    while id is not None and nodes[id]['kind'] != 'question' and id not in seen:
+        seen.add(id)
+        tags.update(nodes[id].get('tag_ids', []))
+        count = count or nodes[id]['kind'] == 'counter'
+        id = next(iter(nodes[id].get('next', [])), None)
+    return sorted(tags), count, id if id is not None and nodes[id]['kind'] == 'question' else None
+
+
+def checklist_questions(graph) -> list[dict]:
+    """The list of yes/no questions (question) a stored checklist graph is: compile_checklist's inverse. The questions
+    come in the graph's order, its start question first. A question's first answer is its Yes and its second its No;
+    a missing one goes on to the next question. The nodes after an answer up to the next question (pass and counter
+    nodes in a graph saved by 0.4.17 or earlier) fold into it: their tags join its tags, a counter is Count this
+    answer, and the question they lead to is where it goes."""
+    nodes = {node['id']: node for node in graph['nodes']}
+    start = follow(nodes, graph['start'])[2]
+    order = [id for id in [start, *nodes] if id is not None and nodes[id]['kind'] == 'question']
+    order = list(dict.fromkeys(order))
+    result = []
+    for place, id in enumerate(order):
+        following = order[place + 1] if place + 1 < len(order) else None
+        branches = {}
+        for answer, linked in zip(ANSWERS, [*nodes[id].get('next', [])[:2], None, None]):
+            if linked is None:
+                branches[answer] = dict(BRANCH)
+                continue
+            tags, count, reached = follow(nodes, linked)
+            go = 'next' if reached == following else 'finish' if reached is None else order.index(reached) + 1
+            branches[answer] = {'go': go, 'tag_ids': tags, 'count': count}
+        result.append(question(nodes[id]['text'], **branches))
+    return result
+
+
+def store_checklist(state, library, key, name, questions, runs_on) -> None:
+    """Saves checklist `key` in the workspace `state` as the graph of `questions` (compile_checklist), inside the
+    caller's transaction. A changed graph keeps the one it replaces in the checklist's backups; runs keep their own."""
+    if runs_on not in RUNS_ON:
+        raise ValueError('A checklist runs on each trade or before the session.')
+    graph = validate_graph(compile_checklist(questions), library)
+    previous = state['checklists'].get(key, {})
+    backups = previous.get('backups', [])
+    if previous.get('graph') and previous['graph'] != graph:
+        backups = [*backups, {'at': dt.datetime.now(dt.timezone.utc).isoformat(), 'graph': previous['graph']}]
+    state['checklists'][key] = {'id': key, 'name': label(name), 'runs_on': runs_on, 'graph': graph,
+                               'backups': backups, 'order': previous.get('order', len(state['checklists']))}
+
+
 def replay_run(graph, answers):
     nodes = {n['id']: n for n in graph['nodes']}
     current, trail, counts, chosen = graph['start'], [], {}, set()
@@ -331,32 +432,40 @@ class Workspace:
         self._workspace_edit(rename)
         return new
 
-    def save_checklist(self, name, graph, *, id=None, hidden=False):
+    def save_checklist(self, name, questions, *, runs_on='trade', id=None):
+        """Saves a checklist: its name, its list of yes/no questions (question) and where it runs (RUNS_ON), as a new
+        one or over checklist `id`, and returns its id."""
         def save(state, library):
             key = id or identifier()
             if id and id not in state['checklists']:
                 raise ValueError('Unknown checklist.')
-            previous = state['checklists'].get(key, {})
-            # Retain previous definitions as local backups, rather than deleting history.
-            backups = previous.get('backups', [])
-            if previous.get('graph') and previous['graph'] != graph:
-                backups = [*backups, {'at': dt.datetime.now(dt.timezone.utc).isoformat(), 'graph': previous['graph']}]
-            state['checklists'][key] = {'id': key, 'name': label(name), 'hidden': bool(hidden),
-                                       'graph': validate_graph(graph, library), 'backups': backups,
-                                       'order': previous.get('order', len(state['checklists']))}
+            store_checklist(state, library, key, name, questions, runs_on)
             return key
         return self._workspace_edit(save)
 
-    def start_checklist(self, id, trade_id=None):
+    def delete_checklist(self, id):
+        """Removes checklist `id`. Its runs stay stored, each with its own copy of the checklist it answered."""
+        def delete(state, library):
+            if id not in state['checklists']:
+                raise ValueError('Unknown checklist.')
+            del state['checklists'][id]
+        self._workspace_edit(delete)
+
+    def start_checklist(self, id, trade_id=None, *, day=None):
+        """Starts a run of checklist `id` on one trade, or on one day ('YYYY-MM-DD', a date in the Time Zone), and
+        returns its id. The run keeps its own copy of the checklist."""
+        if bool(trade_id) == (day is not None):
+            raise ValueError('Run a checklist on one trade or on one day.')
         if trade_id and trade_id not in {t.id for t in self.trades()}:
             raise ValueError('Choose a trade from this journal.')
+        target = {'trade_id': trade_id} if trade_id else {'day': dt.date.fromisoformat(str(day)).isoformat()}
         def start(state, library):
             if id not in state['checklists']:
                 raise ValueError('Unknown checklist.')
             graph = copy.deepcopy(state['checklists'][id]['graph'])
             key = identifier()
-            state['runs'][key] = {'id': key, 'checklist_id': id, 'name': state['checklists'][id]['name'],
-                                  'trade_id': trade_id, 'started': dt.datetime.now(dt.timezone.utc).isoformat(),
+            state['runs'][key] = {'id': key, 'checklist_id': id, 'name': state['checklists'][id]['name'], **target,
+                                  'started': dt.datetime.now(dt.timezone.utc).isoformat(),
                                   'graph': graph, 'answers': [], 'answer_events': [], **replay_run(graph, [])}
             return key
         return self._workspace_edit(start)

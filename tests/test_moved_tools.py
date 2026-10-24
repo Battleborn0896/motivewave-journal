@@ -9,6 +9,7 @@ import pytest
 import common
 import runtime
 from mwjournal import Execution, Journal, tagging
+from mwjournal.workspace import question
 from test_app import listed, open_app, open_tab, pick, press, said, show, widget
 from test_chart import seed_preview
 from views import checklists, edge, session
@@ -124,28 +125,53 @@ def test_the_report_card_opens_even_with_no_trades_yet():
 
 # ---------------------------------------------------------------- the checklist beside the trade
 
+def checklist_pills(app):
+    return [p for p in app.pills if p.label.startswith('1 · ')]
+
+
 def test_a_checklist_runs_in_the_selected_trades_checklist_section(home):
     journal = seed_preview(home)
     journal.save_checklist('Plan', checklists.starter())
     trade = journal.trades()[0]
     app = open_app()
     assert not app.tabs and said(app.main.markdown, '>Checklist<')     # a section of the trade's page
-    press(app, 'Start New Run')
-    press(app, 'Yes — continue my plan')
+    pills, = checklist_pills(app)
+    assert pills.label == '1 · ' + checklists.STARTER and pills.options == ['Yes', 'No']
+    pills.set_value('q1-yes').run()
     runs = list(journal.workspace()['runs'].values())
     assert len(runs) == 1 and runs[0]['trade_id'] == trade.id and runs[0]['complete']
 
 
-def test_with_no_checklist_a_trade_has_no_checklist_section_and_the_session_menu_links_to_the_editor(home):
-    seed_preview(home)
+def test_a_trade_has_no_checklist_section_until_a_checklist_runs_on_each_trade(home):
+    journal = seed_preview(home)
     app = open_app()
-    assert not said(app.main.markdown, '>Checklist<') and not any(s.label == 'Run checklist' for s in app.selectbox)
-    assert not any(b.label == 'Build a Checklist' for b in app.button)  # nothing on the trade asks for one
-    menu(app, 'Checklist')
-    press(app, 'Build a Checklist')
-    assert app.session_state[common.TOOL_KEY] == 'Tags'
-    assert app.session_state['tag-settings-tabs-live'] == 'Checklists'
-    assert any(s.label == 'Checklist' for s in app.selectbox)          # the editor's own picker
+    assert not said(app.main.markdown, '>Checklist<') and not checklist_pills(app)
+    journal.save_checklist('Morning', checklists.starter(), runs_on='session')
+    app.run()
+    assert not said(app.main.markdown, '>Checklist<') and not checklist_pills(app)   # it is on the day instead
+    journal.save_checklist('Plan', checklists.starter())
+    app.run()
+    assert said(app.main.markdown, '>Checklist<') and len(checklist_pills(app)) == 1
+
+
+def test_a_before_the_session_checklist_runs_on_the_daily_report_card_and_its_run_keeps_the_day(home):
+    Journal().tag_library()                    # a new journal's first read offers the starters, Day among them
+    journal = two_days(home)
+    day_tag = next(t for t in journal.tag_library()['tags'].values() if 'day' in t['levels'])
+    journal.save_checklist('Morning', [question('Slept well?', no={'tag_ids': [day_tag['id']]})], runs_on='session')
+    app = open_app()
+    day_header(app, '2026-10-07').click().run()
+    assert report_open(app) and said(app.main.markdown, '>Checklist<')
+    pills, = checklist_pills(app)
+    pills.set_value('q1-no').run()
+    assert not app.exception and said(app.success, 'Checklist complete')
+    run, = journal.workspace()['runs'].values()
+    assert run['day'] == '2026-10-07' and 'trade_id' not in run
+    press(app, 'Apply Collected Tags')
+    assert journal.get('sessions')['2026-10-07']['day_tag_ids'] == [day_tag['id']]
+    # The next day has its own run: none yet.
+    app.date_input(key='review-day-live').set_value(dt.date(2026, 10, 8)).run()
+    assert checklist_pills(app)[0].value is None and len(journal.workspace()['runs']) == 1
 
 
 # ---------------------------------------------------------------- the session tools above the list
@@ -207,21 +233,16 @@ def test_when_the_timer_runs_out_the_chosen_groups_check_in(home):
     assert any('Group' in d.value.columns for d in app.dataframe)
 
 
-def test_pre_trade_drafts_and_a_session_checklist_are_menus_in_the_same_row(home):
+def test_pre_trade_drafts_are_a_menu_in_the_same_row_and_no_menu_runs_a_checklist(home):
     journal = seed_preview(home)
-    journal.save_checklist('Plan', checklists.starter())
+    journal.save_checklist('Morning', checklists.starter(), runs_on='session')
     app = open_app()
     assert not any(b.label == 'Arm Draft' for b in app.button)                 # menus draw only when open
     menu(app, 'Drafts')
     assert any(b.label == 'Arm Draft' for b in app.button)
     assert widget(app.selectbox, 'Next-trade source').value == ('motivewave', 'paper', 'ESZ6')
-    menu(app, 'Checklist')
-    assert [b.label for b in app.button].count('Start New Run') == 2            # the session's and the trade's
-    session_run = app.button(key='session-checklist-start-' + next(iter(journal.workspace()['checklists'])) + '-live')
-    menu(app, 'Checklist', run=False)
-    session_run.click().run()
-    runs = list(journal.workspace()['runs'].values())
-    assert len(runs) == 1 and runs[0]['trade_id'] is None                     # for the session, not a trade
+    assert [p.proto.popover.label for p in app.main.get('popover')][:2] == ['Check-Ins', 'Drafts']
+    assert not any(p.proto.popover.label == 'Checklist' for p in app.main.get('popover'))   # it is on the day
 
 
 def test_the_session_tools_are_there_before_the_first_trade():

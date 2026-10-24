@@ -1,11 +1,11 @@
 """Trades: a day-by-day list on the left; the selected trade on the right, as one page that scrolls.
 
 The trade's page, top to bottom: its numbers, the chart beside its tags and Rating, its note and Stop, its
-checklist when there is one, and a closed Details fold with everything looked at now and then. One way to pick
-a trade: click its row, or step with Prev / Next. Click a day's header instead and its Daily Report Card takes
-the trade's place, until a trade is clicked or Back to Trades. Above both, the session tools (a check-in timer,
-check-ins, pre-trade drafts, a session checklist) share a row with Filters and Merge Trades. The list follows
-the background watcher by itself, without moving the selection, the Details fold or a note being typed.
+checklist when one runs on each trade, and a closed Details fold with everything looked at now and then. One way
+to pick a trade: click its row, or step with Prev / Next. Click a day's header instead and its Daily Report Card
+takes the trade's place, until a trade is clicked or Back to Trades. Above both, the session tools (a check-in
+timer, check-ins, pre-trade drafts) share a row with Filters and Merge Trades. The list follows the background
+watcher by itself, without moving the selection, the Details fold or a note being typed.
 """
 
 from __future__ import annotations
@@ -366,8 +366,8 @@ def merge_menu(journal, rows) -> None:
 
 def detail(journal, trade, ids, zone) -> None:
     """The selected trade as one page: its header and numbers, the chart beside its tags and Rating, its note and
-    Stop, its checklist when one exists, and the Details fold. At about 1440 x 900 the chart and tags are on
-    screen when the trade opens, and the note and Stop are one short scroll below them."""
+    Stop, its Checklist section when a checklist runs on each trade, and the Details fold. At about 1440 x 900 the
+    chart and tags are on screen when the trade opens, and the note and Stop are one short scroll below them."""
     selected = common.key(journal, 'selected-trade')
 
     def move(offset):
@@ -397,7 +397,7 @@ def detail(journal, trade, ids, zone) -> None:
     review_form(journal, trade, annotation)
     if checklists.offered(journal):
         theme.section('Checklist')
-        checklists.run_panel(journal, trade, prefix='trade-' + trade.id)
+        checklists.run_panel(journal, trade=trade)
     details(journal, trade, zone, notes or [])
 
 
