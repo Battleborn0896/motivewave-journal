@@ -451,11 +451,11 @@ def test_one_compare_list_for_stats_the_compare_widget_and_after_exit(home):
     assert hours['data'][0]['x'] == ['15:00', '10:00', '09:00'] and numbers(hours['data'][0]['y']) == [-104, 196, 496]
     assert not hours['layout'].get('showlegend')
     assert 'Category' not in hours['data'][0]['hovertemplate']                 # an hour has no tag category
-    # Tag bars stand together by category, in the library's order and its colour, each category lowest first.
+    # Tag bars keep the library's order: category by category in its colour, each category's tags as it lists them.
     assert [(bars['name'], bars['x'], numbers(bars['y'])) for bars in tags['data']] == [
         ('Setup', ['Breakout', 'Pullback'], [46, 496]),
-        ('Execution', ['Chased Entry', 'Followed Plan'], [-104, 346]),
-        ('Mindset', ['FOMO', 'Calm'], [-104, 196])]
+        ('Execution', ['Followed Plan', 'Chased Entry'], [346, -104]),
+        ('Mindset', ['Calm', 'FOMO'], [196, -104])]
     assert tags['data'][0]['marker']['color'] == '#65CA98' and tags['layout']['showlegend']
     assert tags['data'][0]['hovertemplate'].startswith('Category=')
 
@@ -488,7 +488,7 @@ def test_after_exit_reads_the_reviews_once_not_once_per_trade(monkeypatch):
     reads = []
     original = Journal.annotations
     monkeypatch.setattr(Journal, 'annotations', lambda self: reads.append(self) or original(self))
-    press(app, 'Compare Runners')
+    press(app, 'Compare')
     assert said(app.caption, '3 trades · ')
     assert len(reads) <= 1
 

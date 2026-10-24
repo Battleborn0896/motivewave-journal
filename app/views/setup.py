@@ -252,8 +252,7 @@ def pages() -> None:
 def about(link=None) -> None:
     """One line to quote in a bug report, then the chart library's credit and the independence notice."""
     version = getattr(link, 'version', '') or paths.STUDY_VERSION
-    st.caption(f'{paths.APP_NAME} {paths.VERSION} · study {version} · data folder {paths.data_home()}',
-               help='Quote this line in a bug report; your trades, reviews and settings are in the data folder it names.')
+    st.caption(f'{paths.APP_NAME} {paths.VERSION} · study {version}', help='Quote this line in a bug report.')
     with st.container(key='setup-fine-print', gap=None):
         st.caption(common.CREDIT)
         st.caption('MotiveWave Journal is an independent open-source project, not affiliated with or endorsed by '

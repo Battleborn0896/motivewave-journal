@@ -3,9 +3,9 @@ typed.
 
 The app starts reading the study's bridge file by itself (runtime.start), and always reads it. This tab says what it
 hears from the study (its state, when it was last heard from, the fills in this journal) and installs the study
-again. What helps when something is wrong waits under a closed Troubleshooting: the file being read, the journal's
-database, the study's own messages and the ticks it reported dropped. The first page of Settings shows the one step
-that is missing before the study records (views/setup.py).
+again. What helps when something is wrong waits under a closed Troubleshooting: the file being read, the data folder,
+the journal's database, the study's own messages and the ticks it reported dropped. The first page of Settings shows
+the one step that is missing before the study records (views/setup.py).
 """
 
 from __future__ import annotations
@@ -20,6 +20,7 @@ import streamlit as st
 
 import common
 import theme
+from mwjournal import paths
 
 JAR = Path(__file__).resolve().parents[2] / 'study' / 'build' / 'libs' / 'motivewave-journal.jar'
 
@@ -112,10 +113,12 @@ def status_card(dataset: str) -> None:
 
 
 def troubleshooting(journal) -> None:
-    """The file being read, the journal's database, what the study said, and the ticks it reported dropped."""
+    """The file being read, the data folder and the journal's database, what the study said, and the ticks it
+    reported dropped."""
     _, profile, status, _ = common.study_link(journal)
     st.caption('File being read')
     st.code(str((profile or {}).get('path', '')) or 'no file', language=None)
+    st.caption(f'Data folder, with your trades, reviews and settings: {paths.data_home()}')
     st.caption(f'Journal database: {journal.path}')
     theme.notes(study_messages(status))
     gaps = journal.capture_gaps()
@@ -135,7 +138,7 @@ def study_messages(status: dict) -> list[tuple[str, bool]]:
             # stop no position takes (MotiveWave's log says why, one line per stop). Not a warning: on a prop
             # account 'fills with an assumed currency' is said at every heartbeat, and nothing is wrong.
             + [(f'The study also says: {warned}.', False)] * bool(warned and not status.get('error'))
-            + [(f'{damaged} damaged lines in the bridge file were skipped. MotiveWave closing in the middle of a '
+            + [(f"{damaged} damaged lines in the study's file were skipped. MotiveWave closing in the middle of a "
                 'write leaves one; the events around it are unaffected.', True)] * bool(damaged)
             + [(f'Events of a kind this version does not read, skipped: {unknown}. A newer study wrote them; fills, '
                 'stops and prices are unaffected.', False)] * bool(unknown)

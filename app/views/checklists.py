@@ -216,7 +216,7 @@ def answer_panel(journal, state, definition, trade, day):
     """One checklist's questions in order, each with its answers as pills; only the question due takes a click, and a
     branch hides the questions it skipped. It shows the latest run on this trade or day; before its first answer,
     the checklist as it is now. Undo takes back the last answer, and the tags the answers collect are applied only
-    by Apply Collected Tags."""
+    by Apply Collected Tags, which a checklist with no answer that collects tags does not show."""
     mine = ((lambda r: r.get('trade_id') == trade.id) if trade
             else (lambda r: not r.get('trade_id') and r.get('day') == day))
     run = max((r for r in state['runs'].values() if r['checklist_id'] == definition['id'] and mine(r)),
@@ -262,11 +262,12 @@ def answer_panel(journal, state, definition, trade, day):
     if progress['complete']:
         st.success('Checklist complete')
     library = journal.tag_library()
+    collects = any(node.get('tag_ids') for node in graph['nodes'])
     with st.container(horizontal=True, vertical_alignment='center', gap='small'):
         if st.button('Undo Last Answer', key=prefix + '-undo', disabled=not (run and run['answers'])):
             journal.answer_checklist(run['id'], undo=True)
             st.rerun()
-        if st.button('Apply Collected Tags', key=prefix + '-apply', disabled=not progress['tag_ids']):
+        if collects and st.button('Apply Collected Tags', key=prefix + '-apply', disabled=not progress['tag_ids']):
             try:
                 if trade:
                     journal.update_annotation(trade.id, {}, add_tags=tagging.names(library, progress['tag_ids']))
@@ -275,7 +276,8 @@ def answer_panel(journal, state, definition, trade, day):
                 st.rerun()
             except ValueError as exc:
                 st.error(str(exc))
-    st.caption('Collected tags: ' + (', '.join(tagging.names(library, progress['tag_ids'])) or 'None'))
+    if collects:
+        st.caption('Collected tags: ' + (', '.join(tagging.names(library, progress['tag_ids'])) or 'None'))
     if not trade:
         off = tagging.names(library, [id for id in progress['tag_ids']
                                       if id in library['tags'] and 'day' not in library['tags'][id]['levels']])

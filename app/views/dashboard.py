@@ -238,7 +238,8 @@ def draw(journal, rows, widget, page_id):
 
 def compare_bars(journal, data, group, metric, zone):
     """A Compare widget's bars: the average of `metric` for each name of `group` (GROUPS), lowest first, or None when
-    no trade has one. Tags stand together by category, each category in the library's order and in its colour."""
+    no trade has one. Tags keep the trader's own order, as every tag table does: category by category in the library's
+    order and colour, and each category's tags as the library lists them."""
     library = journal.tag_library()
     tags = library['tags']
     pairs = [{'group': tags[id]['name'], 'category': tags[id]['group'], 'value': r['value']}
@@ -250,11 +251,13 @@ def compare_bars(journal, data, group, metric, zone):
              .agg(value=('value', 'mean'), count=('value', 'count')))
     if group == 'Tags':
         frame['place'] = frame.category.map(lambda name: library['groups'][name]['order'])
+        listed = {(tag['group'], tag['name']): tag['order'] for tag in tags.values()}
+        frame['rank'] = [listed[pair] for pair in zip(frame.category, frame.group)]
         colours = {name: tag_controls.group_colour(name, [t for t in tags.values() if t['group'] == name])
                    for name in frame.category.unique()}
     else:
-        frame['place'], colours = 0, {group: theme.SERIES[0]}
-    frame = frame.sort_values(['place', 'value', 'group'])
+        frame['place'], frame['rank'], colours = 0, frame.value, {group: theme.SERIES[0]}
+    frame = frame.sort_values(['place', 'rank', 'group'])
     return px.bar(frame, x='group', y='value', color='category', color_discrete_map=colours,
                   category_orders={'group': list(frame.group), 'category': list(dict.fromkeys(frame.category))},
                   # Only a tag has a category: other bars would read 'Category=Entry hour'.

@@ -24,7 +24,7 @@ from .model import (NATIVE, Execution, PriceSample, ProtectionEvent, digest, fin
 from .risk import stop_for_risk
 from .scope import event_mode, allows_source
 from .tags import DAY
-from .workspace import (MAX_QUESTIONS, SHARED, Workspace, checklist_questions, follow, question,
+from .workspace import (MAX_QUESTIONS, SHARED, Workspace, checklist_questions, contract, follow, question,
                         read as read_workspace, store_checklist, time_zone, write as write_workspace)
 
 SCHEMA_VERSION = 4
@@ -232,8 +232,8 @@ def _schema_4(db) -> dict:
     for key, payload in db.execute('SELECT key, payload FROM sessions').fetchall():
         date, _, held = key.partition(':')
         days.setdefault(date, []).append((held not in ('', zone), held, key, json.loads(payload)))
-    ticked = any(day.get(box) for found in days.values() for *_, day in found for box in DAY_BOXES)
-    library, day_tags = tagging.upgrade_library(db, needed=ticked)
+    ticked = sum(bool(day.get(box)) for found in days.values() for *_, day in found for box in DAY_BOXES)
+    library, day_tags = tagging.upgrade_library(db, needed=ticked > 0)
     moved = 0
     for date, found in days.items():
         found.sort(key=lambda held: held[:2])      # the day in the Time Zone first
@@ -259,10 +259,15 @@ def _schema_4(db) -> dict:
         if [key for *_, key, _ in found] != [date] or found[0][3] != merged:
             db.executemany('DELETE FROM sessions WHERE key=?', [(key,) for *_, key, _ in found])
             db.execute('INSERT INTO sessions VALUES(?,?)', (date, encode(merged)))
-            moved += 1
+            # Moved for the trader only when a review of this date was kept in another zone: one kept in the Time
+            # Zone loses only the zone from its key, and stays the day it was.
+            moved += any(elsewhere for elsewhere, *_ in found)
+    # Only what happened: a journal without a day stored in another zone, or a ticked box, is told just its zone.
+    done = [*(['day reviews moved to their dates'] if moved else []),
+            *(['the day checkboxes became Day tags'] if ticked else [])]
     return {'days': {'zone': zone, 'moved': moved,
-                     'note': f'Days now follow your Time Zone ({zone}); day reviews moved to their dates and the day '
-                             'checkboxes became Day tags.'}}
+                     'note': f'Days now follow your Time Zone ({zone})' + ('; ' + ' and '.join(done) if done else '')
+                             + '.'}}
 
 
 # Each schema step by the version it brings a journal to, run in this order inside one transaction (Journal).
@@ -509,9 +514,10 @@ def one_waiting(drafts: dict) -> int:
     the one waiting there (Workspace.save_draft): the others in `drafts` are cancelled. Returns how many."""
     waiting, cancelled = {}, 0
     for draft in sorted((d for d in drafts.values() if d['state'] == 'armed'), key=lambda d: instant(d['at'])):
-        scope = (draft['provider'], draft['account'], draft['symbol'])
+        scope = contract(draft['provider'], draft['account'], draft['symbol'])
         if scope in waiting:
             waiting[scope]['state'] = 'cancelled'
+            waiting[scope].pop('existing_trades', None)     # read only while a draft waits (Workspace.save_draft)
             cancelled += 1
         waiting[scope] = draft
     return cancelled

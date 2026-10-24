@@ -476,6 +476,27 @@ def test_a_schema_3_journal_keeps_one_day_per_date_in_its_time_zone_and_its_tick
     assert rows(path, 'SELECT rowid, key, symbol, source, ts, payload FROM prices ORDER BY rowid') == prices
 
 
+def test_the_note_of_one_time_zone_says_only_what_moved(tmp_path):
+    said = {}
+    # A review kept in the Time Zone itself stays the day it was: only its key loses the zone, and nothing moved.
+    for name, days in (('nothing', {}),
+                       ('in its zone', {f'2026-10-07:{LA}': {'date': '2026-10-07', 'timezone': LA,
+                                                            'notes': 'Waited for the open.'}}),
+                       ('ticked in its zone', {f'2026-10-07:{LA}': {'date': '2026-10-07', 'timezone': LA,
+                                                                   'planned': True}}),
+                       ('unticked', {f'2026-10-07:{NY}': {'date': '2026-10-07', 'timezone': NY, 'planned': False,
+                                                         'notes': 'Waited for the open.'}})):
+        path = tmp_path / name / 'trades.sqlite3'
+        path.parent.mkdir()
+        round_trip(Journal(path))
+        as_schema_3(path, days)
+        said[name] = Journal(path).upgrade_note()['days']['note']
+    assert said == {'nothing': f'Days now follow your Time Zone ({LA}).',
+                    'in its zone': f'Days now follow your Time Zone ({LA}).',
+                    'ticked in its zone': f'Days now follow your Time Zone ({LA}); the day checkboxes became Day tags.',
+                    'unticked': f'Days now follow your Time Zone ({LA}); day reviews moved to their dates.'}
+
+
 def test_a_schema_2_journal_takes_both_steps_and_gets_this_computers_time_zone(tmp_path, monkeypatch):
     monkeypatch.setattr(humanize, 'local_zone', lambda: 'Europe/Berlin')
     path, _ = journal_0_3_0(tmp_path / 'home')

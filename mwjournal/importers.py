@@ -164,7 +164,7 @@ def preview_bridge(text: str, *, timezone='UTC', allow_partial_tail=False, datas
                 continue
             mode = event_mode(event)
             if dataset is not None and mode != dataset:
-                raise ValueError('Bridge event belongs to the other trading environment; choose its matching file.')
+                raise ValueError('This file belongs to the other trading environment; import it there.')
             if kind == 'execution':
                 fields = {k: event[k] for k in Execution.__dataclass_fields__ if k in event}
                 fields['ts'] = timestamp(event['ts'], timezone)

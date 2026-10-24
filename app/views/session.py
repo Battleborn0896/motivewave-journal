@@ -16,6 +16,7 @@ import common
 import theme
 from mwjournal import tagging
 from mwjournal.model import instant
+from mwjournal.workspace import contract
 
 TIMER = 'session-timer'
 MENU = 'session-menu'
@@ -202,11 +203,12 @@ def next_trade(journal, rows) -> None:
     theme.subsection('Tag My Next Trade')
     st.caption('These go on the next trade you open on this contract, and replace any still waiting there. What you '
                'choose on the trade itself wins.')
-    # Each account and contract once, by the account's name ('SIM · NQZ6'), the most recently traded first: a
-    # replay run or another workspace is the same account to the trader, and the latest is where the next trade is.
+    # Each account and contract once, by the account's name ('SIM · NQZ6'), the most recently traded first. Every
+    # replay run of an account is that account (workspace.contract); of two workspaces shown by one name, the latest
+    # traded is where the next trade is.
     scopes = {}
     for r in sorted(rows, key=lambda r: r['opened'], reverse=True):
-        scopes.setdefault(f"{r['account_label']} · {r['symbol']}", (r['provider'], r['account'], r['symbol']))
+        scopes.setdefault(f"{r['account_label']} · {r['symbol']}", contract(r['provider'], r['account'], r['symbol']))
     labels = {scope: label for label, scope in scopes.items()}
     library = journal.tag_library()
     with st.form(common.key(journal, 'next-trade'), border=False):
@@ -238,13 +240,13 @@ def next_trade(journal, rows) -> None:
     zone = common.display_zone(journal)
     names = trade_names(journal, zone)
 
-    def contract(draft):
+    def contract_name(draft):
         return f"{common.account_name(journal, draft['provider'], draft['account'])} · {draft['symbol']}"
 
     def tag_names(draft):
         return ', '.join(tagging.names(library, draft['tag_ids']))
 
-    st.dataframe([{'Contract': contract(d), 'Tags': tag_names(d), 'Stop': d.get('stop'),
+    st.dataframe([{'Contract': contract_name(d), 'Tags': tag_names(d), 'Stop': d.get('stop'),
                    'Status': DRAFT_STATES[d['state']],
                    'Trade': names.get(d['trade_id'], 'A trade no longer listed') if d['trade_id'] else ''}
                   for d in drafts], hide_index=True)
@@ -253,7 +255,8 @@ def next_trade(journal, rows) -> None:
         with st.container(horizontal=True, vertical_alignment='bottom', gap='small'):
             id = st.selectbox('Tags to cancel', list(active), key=common.key(journal, 'next-trade-cancel'),
                               format_func=lambda id: ' · '.join(filter(None, [
-                                  contract(active[id]), DRAFT_STATES[active[id]['state']], tag_names(active[id])])))
+                                  contract_name(active[id]), DRAFT_STATES[active[id]['state']],
+                                  tag_names(active[id])])))
             if st.button('Cancel Tags', key=common.key(journal, 'cancel-draft')):
                 journal.cancel_draft(id)
                 st.rerun()

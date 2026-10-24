@@ -30,7 +30,7 @@ import tag_controls
 from views import checklists, daily, preferences, session
 from common import money
 from mwjournal.chart import STOP, chart_window, trade_chart
-from mwjournal.model import WHY_INCOMPLETE, finite, instant
+from mwjournal.model import WHY_INCOMPLETE, finite, instant, product
 from mwjournal.metrics import excursions
 from mwjournal.scope import LIVE_TICKS, provenance
 from mwjournal import humanize, risk, units
@@ -415,7 +415,7 @@ def details(journal, trade, zone, chart_notes) -> None:
             theme.subsection('After Exit')
             st.markdown(common.md(words))
         if trade.point_value is not None:          # a contract without one is asked for at the top of the trade
-            common.multiplier_form(journal, 'trade-multiplier', trade.symbol)
+            common.point_value_line(journal, trade)
 
 
 def numbers(journal, trade, annotation: dict, zone) -> None:
@@ -460,8 +460,8 @@ def numbers(journal, trade, annotation: dict, zone) -> None:
         st.caption(common.no_excursions(journal, trade))
     elif unit == 'r' and plan.risk is None and plan.why:
         st.caption(plan.why)                       # in R, why there is none: no stop reported, typed or found
-    elif unit == 'ticks' and units.tick_size(trade.symbol, journal.display_settings()['tick_sizes']) is None:
-        common.tick_size_menu(journal, trade)      # in ticks, the one thing missing, set once for the contract
+    elif unit == 'ticks' and product(trade.symbol) not in units.TICK_SIZES:
+        common.tick_size_menu(journal, trade)      # in ticks, set (or corrected) once for the contract
 
 
 def executions_panel(journal, trade, zone) -> None:
@@ -616,8 +616,8 @@ def excursions_panel(journal, trade, zone) -> None:
         return
     fig = go.Figure()
     times = common.wall_clock(path.ts, zone)
-    fig.add_scatter(x=times, y=high, name='Upper bound', line_color=theme.UP)
-    fig.add_scatter(x=times, y=low, name='Lower bound', line_color=theme.DOWN)
+    fig.add_scatter(x=times, y=high, name='Best move', line_color=theme.UP)
+    fig.add_scatter(x=times, y=low, name='Worst move', line_color=theme.DOWN)
     fig.add_hline(y=0, line_color=theme.MUTED)
     for fill in trade.fills:
         fig.add_vline(x=common.wall_clock([fill['ts']], zone)[0], line_width=1,

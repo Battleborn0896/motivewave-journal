@@ -132,6 +132,39 @@ def test_the_session_menu_names_a_trade_the_view_leaves_out(home):
     assert named.startswith('Oct 7, ') and named.endswith(' · ESZ6 Long 2')       # not 'A trade no longer listed'
 
 
+def test_every_replay_run_of_an_account_is_that_account(home):
+    """Each rewind or restarted replay starts a run of its own ('...:replay:<run>'). Tag My Next Trade armed in one
+    run goes on the next trade in a later run, and a view and an account's name made in one run cover the next."""
+    run_1, run_2 = 'motivewave-native:ws:replay:r1', 'motivewave-native:ws:replay:r2'
+    replay = Journal(dataset='replay')
+    first = trade_on(replay, 'SIM', 7, provider=run_1)
+    with replay.connect() as db:                          # a name given in run 1 by 0.4.17, stored with its run
+        db.execute("INSERT INTO journal_meta VALUES('journal_registry',?)",
+                   (json.dumps({'views': {}, 'account_aliases': {json.dumps([run_1, 'SIM']): 'Rewinds'}}),))
+    replay.save_draft(provider=run_1, account='SIM', symbol='NQZ6', tags=['Patient'])
+    id = journals.create(replay, 'Practice', [(run_1, 'SIM')])
+    second = trade_on(replay, 'SIM', 8, provider=run_2)
+    replay.reconcile_drafts()
+    draft, = replay.workspace()['drafts'].values()
+    assert (draft['state'], draft['trade_id']) == ('attached', second.id)
+    assert 'Patient' in replay.annotations()[second.id]['tags'] and first.id not in replay.annotations()
+    assert journals.alias(replay, (run_2, 'SIM')) == 'Rewinds'
+    app = open_app(environment='Replay')
+    widget(app.sidebar.selectbox, 'Journal').set_value(id).run()
+    assert not app.exception and set(listed(app, 'replay')) == {first.id, second.id}
+    app.session_state['session-menu-replay'] = True
+    app.run()
+    assert widget(app.selectbox, 'Contract').options == ['Rewinds · NQZ6']       # one account, not one per run
+    # Renamed in run 2, the account has one name, in every run.
+    journals.account_alias(replay, run_2, 'SIM', 'Replay')
+    assert [journals.alias(replay, (run, 'SIM')) for run in (run_1, run_2)] == ['Replay', 'Replay']
+    assert len(journals.registry(replay)['account_aliases']) == 1
+    # Armed again in run 2, it replaces the one waiting from run 1.
+    waiting = replay.save_draft(provider=run_1, account='SIM', symbol='NQZ6', notes='Wait for the pullback')
+    replay.save_draft(provider=run_2, account='SIM', symbol='NQZ6', notes='Only A setups')
+    assert replay.workspace()['drafts'][waiting]['state'] == 'cancelled'
+
+
 def show_trades(app):
     app.segmented_control(key=common.VIEW_KEY).set_value('Trades').run()
     assert not app.exception
@@ -297,6 +330,8 @@ def test_tags_waiting_in_both_journals_wait_for_the_next_trade_once(home):
     journal.reconcile_drafts()
     # One contract keeps one waiting, the one armed last; the trade only the named journal held is not the next one.
     assert sorted(d['state'] for d in journal.workspace()['drafts'].values()) == ['armed', 'cancelled']
+    # Like any cancelled one, it keeps no list of the trades held when it was armed: that is read only while waiting.
+    assert [d for d in journal.workspace()['drafts'].values() if 'existing_trades' in d and d['state'] != 'armed'] == []
     following = trade_on(journal, 'paper', 21)
     journal.reconcile_drafts()
     used, = [d for d in journal.workspace()['drafts'].values() if d['state'] == 'attached']
