@@ -389,8 +389,7 @@ def test_checkin_clock_groups_and_trade_scope_are_explicit(home):
 
 def test_scoped_draft_attaches_once_and_never_changes_raw_fills_or_existing_review(home):
     journal = Journal()
-    id = journal.save_draft('Plan', provider='motivewave', account='paper', symbol='ESZ6',
-                            start='2026-10-07T14:00:00Z', end='2026-10-07T14:05:00Z', tags=['Patient'],
+    id = journal.save_draft(provider='motivewave', account='paper', symbol='ESZ6', tags=['Patient'],
                             notes='Draft note', stop=4990)
     journal = seed_preview(home)
     trade = journal.trades()[0]
@@ -412,33 +411,78 @@ def test_draft_does_not_match_root_alias_or_other_account_provider(home, field, 
     trade = journal.trades()[0]
     args = {'provider': trade.provider, 'account': trade.account, 'symbol': trade.symbol}
     args[field] = value
-    id = journal.save_draft('Plan', **args, start='2026-10-07T14:00:00Z', end='2026-10-07T14:05:00Z', tags=['Patient'])
+    id = journal.save_draft(**args, tags=['Patient'])
+    # The next trade comes on the trade's own provider, account and contract: not the draft's.
+    journal.ingest([(Execution(trade.provider, trade.account, trade.symbol, side, 1, 5000, at,
+                               execution_id='next-' + side), {})
+                    for side, at in (('buy', '2026-10-08T14:00:00Z'), ('sell', '2026-10-08T14:01:00Z'))])
     journal.reconcile_drafts()
     assert journal.workspace()['drafts'][id]['state'] == 'armed'
-    assert 'Patient' not in journal.annotations()[trade.id]['tags']
+    assert not any('Patient' in review['tags'] for review in journal.annotations().values())
 
 
-def test_overlapping_drafts_are_ambiguous_and_cancellation_resolves_without_data_loss(home):
+def test_a_draft_attaches_to_the_next_new_trade_on_its_contract_not_to_one_already_there(home):
+    journal = seed_preview(home)
+    existing = journal.trades()[0]
+    where = dict(provider=existing.provider, account=existing.account, symbol=existing.symbol)
+    id = journal.save_draft(**where, tags=['Patient'])
+    journal.reconcile_drafts()
+    assert journal.workspace()['drafts'][id]['state'] == 'armed'           # no trade came yet
+    journal.ingest([(Execution(*where.values(), side, 1, 5000, at, execution_id='next-' + side), {})
+                    for side, at in (('buy', '2026-10-08T14:00:00Z'), ('sell', '2026-10-08T14:01:00Z'))])
+    new, = (t for t in journal.trades() if t.id != existing.id)
+    journal.reconcile_drafts()
+    draft = journal.workspace()['drafts'][id]
+    assert (draft['state'], draft['trade_id']) == ('attached', new.id)
+    assert 'Patient' in journal.annotations()[new.id]['tags']
+    assert 'Patient' not in journal.annotations()[existing.id]['tags']
+
+
+def test_arming_a_second_draft_on_a_contract_cancels_the_first(home):
     journal = Journal()
-    ids = [journal.save_draft('Plan ' + str(i), provider='motivewave', account='paper', symbol='ESZ6',
-                             start='2026-10-07T14:00:00Z', end='2026-10-07T14:05:00Z', tags=['Patient']) for i in range(2)]
+    first = journal.save_draft(provider='motivewave', account='paper', symbol='ESZ6', tags=['Patient'])
+    other = journal.save_draft(provider='motivewave', account='paper', symbol='NQZ6', tags=['Patient'])
+    second = journal.save_draft(provider='motivewave', account='paper', symbol='esz6', tags=['FOMO'])
+    drafts = journal.workspace()['drafts']
+    assert [drafts[id]['state'] for id in (first, other, second)] == ['cancelled', 'armed', 'armed']
     journal = seed_preview(home)
     journal.reconcile_drafts()
-    assert all(journal.workspace()['drafts'][id]['state'] == 'ambiguous' for id in ids)
-    journal.cancel_draft(ids[0])
+    drafts = journal.workspace()['drafts']
+    assert drafts[first]['state'] == 'cancelled' and drafts[second]['state'] == 'attached'
+    assert 'FOMO' in journal.annotations()[journal.trades()[0].id]['tags']
+    with pytest.raises(ValueError, match='Choose a tag, or type a Stop or a note'):
+        journal.save_draft(provider='motivewave', account='paper', symbol='ESZ6')
+    with pytest.raises(ValueError):
+        journal.cancel_draft(second)                                       # used: it stays on its trade
+
+
+def test_with_two_new_trades_in_one_poll_the_draft_goes_on_the_one_opened_first(home):
+    journal = Journal()
+    id = journal.save_draft(provider='motivewave', account='paper', symbol='ESZ6', tags=['Patient'])
+    # The later trade's fills arrive first: it is still the earlier opened that takes the draft.
+    journal.ingest([(Execution('motivewave', 'paper', 'ESZ6', side, 1, 5000, at, execution_id=name), {})
+                    for name, side, at in (('late-in', 'buy', '2026-10-07T15:00:00Z'),
+                                           ('late-out', 'sell', '2026-10-07T15:01:00Z'),
+                                           ('early-in', 'buy', '2026-10-07T14:00:00Z'),
+                                           ('early-out', 'sell', '2026-10-07T14:01:00Z'))])
+    early, late = sorted(journal.trades(), key=lambda t: t.opened)
     journal.reconcile_drafts()
-    assert journal.workspace()['drafts'][ids[1]]['state'] == 'attached'
-    assert journal.workspace()['drafts'][ids[0]]['state'] == 'cancelled'
+    assert journal.workspace()['drafts'][id]['trade_id'] == early.id
+    assert 'Patient' in journal.annotations()[early.id]['tags'] and late.id not in journal.annotations()
 
 
-def test_pretrade_draft_never_silently_retags_a_trade_already_in_the_journal(home):
+def test_a_draft_whose_tag_was_retired_since_needs_review_and_names_its_trade(home):
+    journal = Journal()
+    id = journal.save_draft(provider='motivewave', account='paper', symbol='ESZ6', tags=['Patient'], notes='Wait')
+    journal.edit_tag(next(iter(tagging.ids(journal.tag_library(), ['Patient']))), retired=True)
     journal = seed_preview(home)
     trade = journal.trades()[0]
-    id = journal.save_draft('Plan', provider=trade.provider, account=trade.account, symbol=trade.symbol,
-                            start='2026-10-07T14:00:00Z', end='2026-10-07T14:05:00Z', tags=['Patient'])
     journal.reconcile_drafts()
-    assert journal.workspace()['drafts'][id]['state'] == 'armed'
-    assert 'Patient' not in journal.annotations()[trade.id]['tags']
+    draft = journal.workspace()['drafts'][id]
+    assert (draft['state'], draft['trade_id']) == ('needs review', trade.id)
+    assert 'draft_id' not in journal.annotations()[trade.id]               # nothing of it went on the trade
+    journal.cancel_draft(id)
+    assert journal.workspace()['drafts'][id]['state'] == 'cancelled'
 
 
 @pytest.mark.parametrize('view', ['Dashboard', 'Checklists', 'Live session', 'Settings'])

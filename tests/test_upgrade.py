@@ -849,3 +849,70 @@ def test_a_checklist_with_no_question_or_too_many_still_converts(tmp_path):
     kept = workspace.checklist_questions(state['checklists']['long']['graph'])
     assert len(kept) == workspace.MAX_QUESTIONS and kept[-1]['yes']['go'] == 'next'     # its loop back is cut off
     assert meta(path, 'checklists_as_lists') == '2' and Journal(tmp_path / 'new.sqlite3').upgrade_note() is None
+
+
+# ---------------------------------------------------------------- drafts lose their time window
+
+def as_0_4_17_drafts(journal, drafts):
+    """The drafts as 0.4.17 stored them, each with a name and a time window, and a journal that has not taken the
+    step yet."""
+    with journal.connect() as db:
+        state = workspace.read(db)
+        state['drafts'] = drafts
+        workspace.write(db, state)
+        db.execute("DELETE FROM journal_meta WHERE key='drafts_without_windows'")
+
+
+def old_draft(id, state, start, end, *, symbol='ESZ6', trade_id=None):
+    return {'id': id, 'name': 'Plan ' + id, 'provider': 'motivewave', 'account': 'paper', 'symbol': symbol,
+            'start': start, 'end': end, 'tag_ids': [PATIENT], 'notes': '', 'stop': None, 'state': state,
+            'trade_id': trade_id, 'existing_trades': []}
+
+
+def test_drafts_whose_window_ended_are_cancelled_and_the_rest_wait_for_the_next_trade_with_no_backup(tmp_path):
+    path = tmp_path / 'trades.sqlite3'
+    journal = Journal(path)
+    past, future = ('2026-10-07T14:00:00+00:00', '2026-10-07T15:00:00+00:00'), '2099-01-01T00:00:00+00:00'
+    as_0_4_17_drafts(journal, {
+        'ended': old_draft('ended', 'armed', *past),
+        'puzzled': old_draft('puzzled', 'ambiguous', *past),
+        'review': old_draft('review', 'needs review', *past),
+        'used': old_draft('used', 'attached', *past, trade_id='some-trade'),
+        'dropped': old_draft('dropped', 'cancelled', *past),
+        'earlier': old_draft('earlier', 'armed', '2026-10-19T14:00:00+00:00', future),
+        'waiting': old_draft('waiting', 'armed', '2026-10-20T14:00:00+00:00', future),     # the later on ESZ6
+        'twin': old_draft('twin', 'ambiguous', '2026-10-20T14:00:00+00:00', future, symbol='NQZ6')})
+    opened = Journal(path)
+    drafts = opened.workspace()['drafts']
+    assert {id: d['state'] for id, d in drafts.items()} == {
+        'ended': 'cancelled', 'puzzled': 'cancelled', 'review': 'cancelled', 'used': 'attached', 'dropped': 'cancelled',
+        'earlier': 'cancelled', 'waiting': 'armed', 'twin': 'armed'}
+    assert drafts['waiting']['at'] == drafts['waiting']['start'] == '2026-10-20T14:00:00+00:00'   # kept, unread
+    assert drafts['waiting']['name'] == 'Plan waiting' and drafts['waiting']['end'] == future
+    note = ('Pre-trade drafts are now Tag My Next Trade, in the Session menu on Trades, and go on your next trade on '
+            'that contract with no time window; 4 that had not found their trade were cancelled.')
+    assert opened.unseen_notes() == {'drafts': note}
+    assert not backups(tmp_path) and meta(path, 'drafts_without_windows') == '4'
+    # Twice: nothing changes.
+    with opened.connect() as db:
+        db.execute("DELETE FROM journal_meta WHERE key='drafts_without_windows'")
+    again = Journal(path)
+    assert again.workspace()['drafts'] == drafts and meta(path, 'drafts_without_windows') == '0'
+    assert again.unseen_notes() == {'drafts': note}
+    # The one still inside its window goes on the next trade on its contract, whenever that comes.
+    again.ingest([(Execution('motivewave', 'paper', 'ESZ6', side, 1, 5000, at, execution_id='next-' + side), {})
+                  for side, at in (('buy', '2026-10-21T14:00:00Z'), ('sell', '2026-10-21T14:01:00Z'))])
+    again.reconcile_drafts()
+    trade, = again.trades()
+    assert again.workspace()['drafts']['waiting']['trade_id'] == trade.id
+    assert again.annotations()[trade.id]['tags'] == ['Patient']
+    # A journal with no drafts has nothing to say.
+    new = tmp_path / 'new.sqlite3'
+    assert Journal(new).upgrade_note() is None and meta(new, 'drafts_without_windows') == '0'
+
+
+def test_one_draft_cancelled_is_said_as_one(tmp_path):
+    path = tmp_path / 'trades.sqlite3'
+    as_0_4_17_drafts(Journal(path), {'ended': old_draft('ended', 'armed', '2026-10-07T14:00:00+00:00',
+                                                        '2026-10-07T15:00:00+00:00')})
+    assert Journal(path).unseen_notes()['drafts'].endswith('; one that had not found its trade was cancelled.')

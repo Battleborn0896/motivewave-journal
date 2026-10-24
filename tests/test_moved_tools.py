@@ -176,47 +176,58 @@ def test_a_before_the_session_checklist_runs_on_the_daily_report_card_and_its_ru
 
 # ---------------------------------------------------------------- the session tools above the list
 
-def menu(app, label, *, run=True):
-    """Open one of the session menus. AppTest cannot click one open, so it is opened the way a click does; and
-    as AppTest does not send a menu's state back, a click inside one opens it again first (run=False)."""
-    app.session_state[f'session-menu-{label.lower()}-live'] = True
+def menu(app, *, run=True):
+    """Open the Session menu. AppTest cannot click one open, so it is opened the way a click does; and as AppTest
+    does not send a menu's state back, a click inside one opens it again first (run=False)."""
+    app.session_state['session-menu-live'] = True
     if run:
         app.run()
         assert not app.exception
     return app
 
 
-def test_the_session_timer_sits_above_the_list_with_play_pause_stop_and_its_minutes_under_check_ins(home):
+def timer_buttons(app):
+    """The timer's buttons in the bar, by what they do: none while it is stopped."""
+    prefix = 'session-timer-live-'
+    return [b.key.removeprefix(prefix) for b in app.button if b.key and b.key.startswith(prefix)]
+
+
+def test_the_check_in_timer_starts_from_the_session_menu_and_its_count_is_in_the_bar_only_while_it_runs(home):
     journal = seed_preview(home)
     app = open_app()
-    play, pause, stop = (app.button(key=f'session-timer-live-{name}') for name in ('play', 'pause', 'stop'))
-    assert not play.disabled and pause.disabled and stop.disabled
-    assert said(app.main.markdown, "class='mwj-timer off'") and said(app.main.markdown, '>05:00<')
-    assert not any(n.key == 'timer-minutes-live' for n in app.number_input)   # the row holds the count and buttons
-    menu(app, 'Check-Ins')
+    assert not timer_buttons(app) and not said(app.main.markdown, "class='mwj-timer")   # stopped: nothing in the bar
+    assert [p.proto.popover.label for p in app.main.get('popover')][:3] == ['Session', 'Filters', 'Merge Trades']
+    assert not any(n.key == 'timer-minutes-live' for n in app.number_input)      # the menu draws only when open
+    menu(app)
     duration = app.number_input(key='timer-minutes-live')
     assert duration.value == session.DEFAULT_MINUTES and duration.label == 'Minutes Between Check-Ins'
-    menu(app, 'Check-Ins', run=False)
+    menu(app, run=False)
     duration.set_value(2).run()
-    assert journal.workspace()['preferences']['timer_minutes'] == 2 and said(app.main.markdown, '>02:00<')
-    app.button(key='session-timer-live-play').click().run()
+    assert journal.workspace()['preferences']['timer_minutes'] == 2
+    menu(app, run=False)
+    press(app, 'Start Check-In Timer')
     running = app.session_state['session-timer-live']
     assert not running.get('paused') and 110 < running['next'] - time.monotonic() <= 120
-    assert said(app.main.markdown, "class='mwj-timer on'") and app.button(key='session-timer-live-play').disabled
+    assert app.session_state['session-menu-live'] is False                       # the menu closes on the count
+    assert said(app.main.markdown, "class='mwj-timer on'") and timer_buttons(app) == ['pause', 'stop']
+    menu(app)
+    assert widget(app.button, 'Start Check-In Timer').disabled                   # it is running
     app.button(key='session-timer-live-pause').click().run()
     assert app.session_state['session-timer-live']['paused'] and said(app.main.markdown, "class='mwj-timer paused'")
+    assert timer_buttons(app) == ['play', 'stop']
     app.button(key='session-timer-live-play').click().run()                      # resumes where it was
     assert not app.session_state['session-timer-live'].get('paused')
     app.button(key='session-timer-live-stop').click().run()
-    assert 'session-timer-live' not in app.session_state and said(app.main.markdown, '>02:00<')
-    assert listed(app)                                                           # the list is still there
+    assert 'session-timer-live' not in app.session_state and not timer_buttons(app)
+    assert not said(app.main.markdown, "class='mwj-timer") and listed(app)              # the list is still there
 
 
-def test_when_the_timer_runs_out_the_chosen_groups_check_in(home):
+def test_when_the_timer_runs_out_the_chosen_categories_check_in(home):
     journal = seed_preview(home)
     journal.save_preferences(timer_groups=['Mindset'])
     app = open_app()
-    app.button(key='session-timer-live-play').click().run()
+    menu(app)
+    press(app, 'Start Check-In Timer')
     app.session_state['session-timer-live']['next'] = time.monotonic() - 1     # the interval is over
     app.run()
     assert any(p.label == 'Check In · Mindset' for p in app.pills) and said(app.main.markdown, "class='mwj-timer due'")
@@ -228,29 +239,32 @@ def test_when_the_timer_runs_out_the_chosen_groups_check_in(home):
     assert 50 < app.session_state['session-timer-live']['next'] - time.monotonic() <= 300
     app.run()                                                                   # the click arrives again
     assert len(journal.workspace()['checkins']) == 1
-    menu(app, 'Check-Ins')
-    assert widget(app.multiselect, 'Check-In Tag Groups').value == ['Mindset']
-    assert any('Group' in d.value.columns for d in app.dataframe)
+    menu(app)
+    assert widget(app.multiselect, 'Check-In Categories').value == ['Mindset']
+    assert any('Category' in d.value.columns for d in app.dataframe)
 
 
-def test_pre_trade_drafts_are_a_menu_in_the_same_row_and_no_menu_runs_a_checklist(home):
+def test_tag_my_next_trade_is_in_the_session_menu_and_no_menu_runs_a_checklist(home):
     journal = seed_preview(home)
     journal.save_checklist('Morning', checklists.starter(), runs_on='session')
     app = open_app()
-    assert not any(b.label == 'Arm Draft' for b in app.button)                 # menus draw only when open
-    menu(app, 'Drafts')
-    assert any(b.label == 'Arm Draft' for b in app.button)
-    assert widget(app.selectbox, 'Next-trade source').value == ('motivewave', 'paper', 'ESZ6')
-    assert [p.proto.popover.label for p in app.main.get('popover')][:2] == ['Check-Ins', 'Drafts']
+    assert not any(b.label == 'Tag My Next Trade' for b in app.button)         # the menu draws only when open
+    menu(app)
+    assert any(b.label == 'Tag My Next Trade' for b in app.button)
+    assert widget(app.selectbox, 'Contract').value == ('motivewave', 'paper', 'ESZ6')
+    assert not any(w.label.endswith(('date', 'time', 'time zone')) for w in [*app.date_input, *app.time_input,
+                                                                            *app.selectbox])     # no window
+    assert not any(t.label == 'Draft name' for t in app.text_input)
     assert not any(p.proto.popover.label == 'Checklist' for p in app.main.get('popover'))   # it is on the day
 
 
-def test_the_session_tools_are_there_before_the_first_trade():
+def test_an_empty_journal_shows_no_session_bar():
     app = open_app()
     assert said(app.info, 'No trades yet')
-    assert any(b.key == 'session-timer-live-play' for b in app.button)
-    menu(app, 'Drafts')
-    assert said(app.info, 'Capture a trade first')
+    assert not app.main.get('popover') and not timer_buttons(app)                 # no Session, Filters or Merge
+    app.session_state[common.REPORT_KEY] = True                                  # a calendar day asks for its card
+    app.run()
+    assert not app.exception and report_open(app) and not timer_buttons(app)
 
 
 # ---------------------------------------------------------------- the dashboards on Stats

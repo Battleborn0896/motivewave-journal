@@ -3,9 +3,10 @@
 The trade's page, top to bottom: its numbers, the chart beside its tags and Rating, its note and Stop, its
 checklist when one runs on each trade, and a closed Details fold with everything looked at now and then. One way
 to pick a trade: click its row, or step with Prev / Next. Click a day's header instead and its Daily Report Card
-takes the trade's place, until a trade is clicked or Back to Trades. Above both, the session tools (a check-in
-timer, check-ins, pre-trade drafts) share a row with Filters and Merge Trades. The list follows the background
-watcher by itself, without moving the selection, the Details fold or a note being typed.
+takes the trade's place, until a trade is clicked or Back to Trades. Above both, one row holds the Session menu (the
+check-in timer, check-ins and Tag My Next Trade), Filters and Merge Trades, and the timer's count while it runs; a
+journal with no trades has no row. The list follows the background watcher by itself, without moving the
+selection, the Details fold or a note being typed.
 """
 
 from __future__ import annotations
@@ -108,14 +109,13 @@ CSS = f"""
 .mwj-legend .mwj-dot {{ display:inline-block; width:8px; height:8px; border-radius:50%; margin:0 5px 1px 0;
     vertical-align:middle; }}
 .st-key-trade-review-workspace [data-testid="stMetricValue"] {{ font-size:21px; }}
-/* The session bar: a large count, small square buttons, a narrow duration box. */
+/* The session bar: the timer's large count with small square buttons, while it runs, then the menus. */
 .st-key-session-timer {{ gap:6px !important; }}
 .st-key-session-timer .stButton button {{ min-height:32px; height:32px; width:34px; padding:0; }}
-.st-key-session-timer [data-testid="stNumberInputContainer"] {{ height:32px; }}
 .st-key-session-bar [data-testid="stPopover"] button {{ padding-left:8px; padding-right:8px; }}
 .mwj-timer {{ font-family:{theme.FONT}; font-size:26px; font-weight:600; line-height:32px; color:{theme.INK};
     font-variant-numeric:tabular-nums; letter-spacing:.01em; min-width:3.1em; }}
-.mwj-timer.off, .mwj-timer.paused {{ color:{theme.MUTED}; }}
+.mwj-timer.paused {{ color:{theme.MUTED}; }}
 .mwj-timer.due {{ color:{theme.ACCENT}; }}
 [class*="st-key-session-check-in-"] [data-testid="stWidgetLabel"] p {{ color:{theme.ACCENT} !important;
     font-weight:650; }}
@@ -197,9 +197,7 @@ def render(journal, rows, *, every=None) -> None:
     report_key = common.key(journal, REPORT)
     if st.session_state.pop(common.REPORT_KEY, False):         # asked for from elsewhere, such as a calendar day
         st.session_state[report_key] = True
-    open_rows = [r for r in every if r['status'] == 'open']
-    if not every:
-        top_row(journal, every, open_rows)
+    if not every:                              # no trades: no session row, Filters or Merge Trades either
         if st.session_state.get(report_key):
             report_card(journal, rows)
         else:
@@ -209,7 +207,7 @@ def render(journal, rows, *, every=None) -> None:
     capture = getattr(journal, 'capture_journal', journal)
     seen = common.changes(capture)
     selected = common.key(journal, 'selected-trade')
-    shown = top_row(journal, every, open_rows, rows)
+    shown = top_row(journal, every, rows)
     filter_state = {k: st.session_state[k] for k in common.filter_keys(journal)}
     signature = json.dumps(filter_state, sort_keys=True, default=str)
     signature_key = common.key(journal, 'review-filter-signature')
@@ -244,18 +242,16 @@ def render(journal, rows, *, every=None) -> None:
     follow(capture, seen)
 
 
-def top_row(journal, every, open_rows, rows=None):
-    """The session tools, then Filters and Merge Trades: one row above the list. Returns the trades the filters
-    keep."""
+def top_row(journal, every, rows):
+    """The check-in timer's count while it runs, then the Session menu, Filters and Merge Trades: one row above the
+    list. Returns the trades the filters keep."""
     # The timer takes the width it needs and the menus the rest; on a narrow window the menus move below it
     # together rather than one by one.
     bar = st.container(horizontal=True, vertical_alignment='top', gap='small', key='session-bar')
     with bar.container(width='content'):
-        session.timer(journal, open_rows)
+        session.timer(journal, [r for r in every if r['status'] == 'open'])
     with bar.container(horizontal=True, horizontal_alignment='right', vertical_alignment='center', gap='small'):
-        session.menus(journal, every)
-        if rows is None:
-            return []
+        session.menu(journal, every)
         with st.popover(preferences.filters_label(journal, rows), key=common.key(journal, 'filters-menu'),
                         help='Narrow the list by market, date, account, tag, playbook or rating; the saved filter '
                              'here applies to every page.'):

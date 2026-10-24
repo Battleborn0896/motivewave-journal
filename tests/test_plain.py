@@ -272,43 +272,57 @@ def test_accounts_are_shown_by_their_name_never_the_provider_code(home):
                                execution_id='s-out'), {})])
     journals.account_alias(capture, 'motivewave', 'paper', 'Practice')
     app = open_app()
-    menu(app, 'Drafts')
-    assert widget(app.selectbox, 'Next-trade source').options == ['SIM · NQZ6', 'Practice · ESZ6']   # newest first
-    widget(app.selectbox, 'Next-trade source').set_value(('motivewave', 'paper', 'ESZ6'))
-    menu(app, 'Drafts', run=False)
-    press(app, 'Arm Draft')
-    menu(app, 'Drafts')
-    drafts = next(d.value for d in app.dataframe if 'Plan' in d.value.columns)
-    assert list(drafts['Account']) == ['Practice'] and list(drafts['Status']) == ['Waiting']
+    menu(app)
+    assert widget(app.selectbox, 'Contract').options == ['SIM · NQZ6', 'Practice · ESZ6']   # newest first
+    widget(app.selectbox, 'Contract').set_value(('motivewave', 'paper', 'ESZ6'))
+    widget(app.text_area, 'Note').set_value('Wait for the pullback.')
+    menu(app, run=False)
+    press(app, 'Tag My Next Trade')
+    menu(app)
+    drafts = next(d.value for d in app.dataframe if 'Contract' in d.value.columns)
+    assert list(drafts['Contract']) == ['Practice · ESZ6'] and list(drafts['Status']) == ['Waiting']
     show(app, 'Journals')
     assert widget(app.multiselect, 'Capture accounts').options == ['Practice', 'SIM']
     assert widget(app.selectbox, 'Account to rename').options == ['Practice', 'SIM']
     assert not any('motivewave-native' in text for text in [*cells(app), everything(app)])
 
 
-def test_drafts_say_waiting_used_cancelled_or_needs_review_and_name_the_trade(home):
+def test_tags_for_the_next_trade_say_waiting_used_cancelled_or_needs_review_and_name_the_trade(home):
     journal = Journal()
     journal.ingest([fill('a-in', 'buy', 5000, '2026-10-07T14:00:00Z'), fill('a-out', 'sell', 5002, '2026-10-07T14:03:00Z')])
     where = dict(provider='motivewave', account='paper')
-    used = journal.save_draft('Opening drive', symbol='ESZ6', start='2026-10-07T15:00:00Z', end='2026-10-07T16:00:00Z', **where)
-    journal.save_draft('Later', symbol='ESZ6', start='2026-10-07T20:00:00Z', end='2026-10-07T21:00:00Z', **where)
-    for name in ('Twin one', 'Twin two'):                 # two drafts for one trade: neither attaches
-        journal.save_draft(name, symbol='NQZ6', start='2026-10-07T15:00:00Z', end='2026-10-07T16:00:00Z', **where)
-    dropped = journal.save_draft('Dropped', symbol='ESZ6', start='2026-10-07T22:00:00Z', end='2026-10-07T23:00:00Z', **where)
-    journal.cancel_draft(dropped)
+    library = journal.tag_library()
+    journal.save_draft(symbol='ESZ6', tags=['FOMO'], **where)                 # replaced by the next: Cancelled
+    used = journal.save_draft(symbol='ESZ6', tags=['Patient'], stop=4995, **where)
+    journal.save_draft(symbol='NQZ6', tags=['Calm'], **where)
+    journal.edit_tag(next(iter(tagging.ids(library, ['Calm']))), retired=True)  # retired since: Needs review
     journal.ingest([fill('b-in', 'buy', 5000, '2026-10-07T15:10:00Z'), fill('b-out', 'sell', 5003, '2026-10-07T15:12:00Z'),
                     fill('n-in', 'buy', 20000, '2026-10-07T15:20:00Z', symbol='NQZ6'),
                     fill('n-out', 'sell', 20001, '2026-10-07T15:22:00Z', symbol='NQZ6')])
     journal.reconcile_drafts()
+    journal.save_draft(symbol='ESZ6', notes='Only A setups', **where)          # nothing yet: Waiting
     attached = journal.workspace()['drafts'][used]['trade_id']
     app = open_app()
-    menu(app, 'Drafts')
-    drafts = next(d.value for d in app.dataframe if 'Plan' in d.value.columns).set_index('Plan')
-    assert dict(drafts['Status']) == {'Opening drive': 'Used', 'Later': 'Waiting', 'Twin one': 'Needs review',
-                                      'Twin two': 'Needs review', 'Dropped': 'Cancelled'}
-    assert drafts.loc['Opening drive', 'Trade'] == 'Oct 7, 11:10 AM · ESZ6 Long 1'
+    menu(app)
+    drafts = next(d.value for d in app.dataframe if 'Contract' in d.value.columns)
+    assert list(drafts.columns) == ['Contract', 'Tags', 'Stop', 'Status', 'Trade']
+    assert [tuple(row) for row in drafts[['Contract', 'Tags', 'Status', 'Trade']].to_numpy()] == [   # the latest first
+        ('paper · ESZ6', '', 'Waiting', ''),
+        ('paper · NQZ6', 'Calm', 'Needs review', 'Oct 7, 11:20 AM · NQZ6 Long 1'),
+        ('paper · ESZ6', 'Patient', 'Used', 'Oct 7, 11:10 AM · ESZ6 Long 1'),
+        ('paper · ESZ6', 'FOMO', 'Cancelled', '')]
+    assert widget(app.selectbox, 'Tags to cancel').options == ['paper · ESZ6 · Waiting',
+                                                               'paper · NQZ6 · Needs review · Calm']
     assert not any(attached in text for text in cells(app))
     assert not any(state in cells(app) for state in ('armed', 'ambiguous', 'attached', 'cancelled'))
+    session = next(p for p in app.main.get('popover') if p.proto.popover.label == 'Session')
+    words = ' '.join([*(e.value for kind in ('markdown', 'caption') for e in getattr(session, kind)),
+                      *(w.label + ' ' + (w.help or '') for kind in ('button', 'selectbox', 'text_input', 'text_area')
+                        for w in getattr(session, kind))])
+    assert 'Tag My Next Trade' in words and not any(word in words.lower() for word in ('window', 'draft'))
+    menu(app, run=False)
+    press(app, 'Cancel Tags')
+    assert [d['state'] for d in journal.workspace()['drafts'].values()].count('armed') == 0
 
 
 def test_check_ins_name_their_trade_and_checklist_settings_show_no_ids(home):
@@ -321,8 +335,8 @@ def test_check_ins_name_their_trade_and_checklist_settings_show_no_ids(home):
     definition = journal.save_checklist('Plan', [question('Patient?', yes={'go': 'finish', 'tag_ids': ['Patient']})])
     journal.start_checklist(definition, trade.id)
     app = open_app()
-    menu(app, 'Check-Ins')
-    checkins = next(d.value for d in app.dataframe if 'Group' in d.value.columns)
+    menu(app)
+    checkins = next(d.value for d in app.dataframe if 'Category' in d.value.columns)
     assert sorted(checkins['Trade']) == ['Oct 7, 10:00 AM · ESZ6 Short 2', 'Session']
     show(app, 'Checklists')
     assert not app.dataframe                                    # no run history: each run is on its trade or day

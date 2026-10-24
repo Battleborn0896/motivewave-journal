@@ -370,8 +370,8 @@ tags, categories and reviews are kept exactly as they are.
 
 ## Using the journal
 
-The sidebar has three pages: **Trades**, **Stats** and **Settings**. Trades holds the session tools (the bar
-at the top), the Daily Report Card (click a day's header) and the checklists you answer, on each trade or on the
+The sidebar has three pages: **Trades**, **Stats** and **Settings**. Trades holds the **Session** menu (at the top,
+beside Filters), the Daily Report Card (click a day's header) and the checklists you answer, on each trade or on the
 Daily Report Card; Stats holds the dashboards (its last tab); Settings holds tags and checklists, and data
 (imports, backups, journals, the connection), each two clicks from the sidebar. Under the pages, the sidebar says
 whether the study is **Recording**, **Not recording** or **Needs attention** (see *Build and connect the study*); click it
@@ -569,15 +569,23 @@ drawn on the old node canvas into this list, walked from its first question: an 
 fold into it, a third answer and an answer's own wording go, and a checklist only ever run from the old session
 menu runs before the session, its runs on the day they started. No checklist can place, modify or block an order.
 
-**Session tools**, the bar at the top of Trades, provide an optional repeating check-in timer (play, pause
-and stop; the minutes between check-ins and the groups are chosen under **Check-Ins**). When it runs out, one click
-on a tag is the check-in, logged to the session or an explicitly selected open position. Timer state is not
-persisted or restarted automatically, and there are no background notifications or sounds.
-Pre-trade drafts (the **Drafts** menu) are not fake executions. A draft (Waiting until its trade comes) needs an
-account and exact contract and a market-clock window, at most 24 hours. Only newly captured trades qualify. When
-more than one trade or draft could match, nothing attaches and the draft says Needs review; a draft that attached
-says Used, and cancelling (Cancelled) preserves the draft record. Existing reviewed groups, notes
-and a stop already saved take precedence. Reconciliation runs after bridge polling, not during a read-only render.
+**Session tools** stay out of the way until you want them: one **Session** menu at the top of Trades, beside
+Filters and Merge Trades (a journal with no trades yet has none of these). **Start Check-In Timer** starts an
+optional repeating check-in timer, after the minutes between check-ins and the categories that ask, set just above
+it. Only while the timer runs or is paused is its count in the bar, with pause and stop. When it runs out, one click
+on a tag is the check-in, logged to the session or an explicitly selected open position; the menu lists the latest
+check-ins. Timer state is not persisted or restarted automatically, and there are no background notifications or
+sounds.
+**Tag My Next Trade**, in the same menu, takes a contract (account · contract, the most recently traded first),
+tags by category, an optional Stop and a note, with one button. They go on the next trade opened on that account
+and contract that was not in the journal yet when you clicked, whenever it comes; when two new trades arrive at
+once, the one opened first. Tagging that contract again replaces what is waiting. Categories, a note and a stop
+already chosen on the trade take precedence. The list below says **Waiting**, **Used** (naming the trade),
+**Cancelled**, or **Needs review** when a tag was retired, or two came to share a one-choice category, since you
+clicked; **Cancel Tags** cancels one waiting or needing review. Nothing here is a fake execution, and the tags go on
+after the watcher reads new fills, never during a read-only render. Opening a journal from 0.4.17 or earlier once
+cancels each pre-trade draft whose time window had ended; one still inside its window waits for its next trade the
+same way.
 
 Custom-statistics scripts require an explicit **Run Local Script** click for each changed code or
 trade sample. Code runs in a two-second Web Worker inheriting a restrictive CSP, with no DOM,
