@@ -666,7 +666,7 @@ def compare_table(grouped_rows, field, currency):
     columns = {'group': field.rstrip('s') if field in ('Tags', 'Playbooks') else field, 'count': 'Trades',
                'net': 'Net P&L', 'win_rate': 'Win Rate', 'expectancy': 'Average Trade',
                'avg_win': 'Average Winner', 'avg_loss': 'Average Loser', 'expectancy_r': 'Average R',
-               'risk_recorded': 'Trades With Risk'}
+               'risk_recorded': 'Trades with a stop'}
     table = pd.DataFrame(grouped_rows, columns=list(columns)).rename(columns=columns)
     table['Average R'] = pd.to_numeric(table['Average R'], errors='coerce')
     styled = common.money_table(table, currency, results=('Net P&L', 'Average Trade', 'Average Winner', 'Average Loser'))

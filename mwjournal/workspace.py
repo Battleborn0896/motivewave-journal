@@ -20,6 +20,7 @@ from zoneinfo import ZoneInfo
 from . import humanize, paths, tagging
 from .model import finite, instant, product, timestamp
 from .risk import stop_for_risk
+from .scope import account_key
 
 WIDGETS = ('Summary', 'Equity', 'Drawdown', 'Calendar', 'Compare', 'Distribution',
            'MAE / MFE', 'Tag score', 'Rating', 'Radar', 'Trades', 'Script')
@@ -44,6 +45,12 @@ def group_labels(row, group, zone) -> list[str]:
 
 def identifier():
     return uuid.uuid4().hex
+
+
+def contract(provider, account, symbol) -> tuple[str, str, str]:
+    """The account and exact contract Tag My Next Trade waits on: every replay run of an account is that account
+    (scope.account_key)."""
+    return (*account_key(provider, account), symbol)
 
 
 def label(value, limit=80):
@@ -583,8 +590,9 @@ class Workspace:
 
     def save_draft(self, *, provider, account, symbol, tags=(), notes='', stop=None):
         """Tag My Next Trade: tags, a note and the stop price R will use (risk.py) for the next trade on one account
-        and exact contract, whenever it comes (reconcile_drafts). It waits for a trade the journal does not hold yet
-        (existing_trades, kept only while it waits), and replaces one still waiting on that account and contract.
+        and exact contract (contract: in any replay run of it), whenever it comes (reconcile_drafts). It waits for a
+        trade the journal does not hold yet (existing_trades, kept only while it waits), and replaces one still waiting
+        on that account and contract.
         Drafts saved before 0.4.7 carry a dollar 'risk' instead of a stop; drafts saved by 0.4.17 and earlier also keep
         a name and a time window, no longer read."""
         existing = [t.id for t in self.trades()]
@@ -597,9 +605,10 @@ class Workspace:
                     raise ValueError(f'Choose one tag in {group}.')
             if not choices and not str(notes).strip() and stop is None:
                 raise ValueError('Choose a tag, or type a Stop or a note.')
-            scope = (label(provider), label(account), label(symbol).upper())
+            scope = contract(label(provider), label(account), label(symbol).upper())
             for draft in state['drafts'].values():
-                if draft['state'] == 'armed' and (draft['provider'], draft['account'], draft['symbol']) == scope:
+                if draft['state'] == 'armed' and scope == contract(draft['provider'], draft['account'],
+                                                                   draft['symbol']):
                     draft['state'] = 'cancelled'
                     del draft['existing_trades']
             key = identifier()
@@ -632,8 +641,9 @@ class Workspace:
                 library, zone = self._library(shared), time_zone(shared)
             changed = False
             for draft in (d for d in state['drafts'].values() if d['state'] == 'armed'):
-                scope, existing = (draft['provider'], draft['account'], draft['symbol']), set(draft['existing_trades'])
-                new = [t for t in trades if (t.provider, t.account, t.symbol) == scope and t.id not in existing]
+                scope = contract(draft['provider'], draft['account'], draft['symbol'])
+                existing = set(draft['existing_trades'])
+                new = [t for t in trades if contract(t.provider, t.account, t.symbol) == scope and t.id not in existing]
                 if not new:
                     continue
                 trade = min(new, key=lambda t: instant(t.opened))

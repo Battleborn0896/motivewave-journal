@@ -378,9 +378,10 @@ def test_check_this_combination_says_which_earlier_trades_it_counts(home):
 APP = Path(__file__).resolve().parents[1] / 'app'
 PAGES = sorted([*APP.glob('*.py'), *(APP / 'views').glob('*.py')])
 # Words the screen no longer uses: record, Contracts, Minutes held, Win Rate, Category, Rating and Setup tags
-# took their place.
+# took their place; so did Trades with a stop, further your way, the path's Best and Worst move, the study's file
+# (or a file the study wrote) and After Exit's Compare.
 RETIRED = ('captur', 'Peak size', 'Qty', 'Quantity', 'Duration', 'Win %', 'tag group', 'Process rating', 'Setup →',
-           '(Setup)')
+           '(Setup)', 'Trades With Risk', 'extra peak', 'Upper bound', 'Lower bound', 'Bridge File', 'Compare Runners')
 LONGEST_HELP = 25          # words in a ?, which says in one sentence what its control does
 
 

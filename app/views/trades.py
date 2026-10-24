@@ -415,7 +415,7 @@ def details(journal, trade, zone, chart_notes) -> None:
             theme.subsection('After Exit')
             st.markdown(common.md(words))
         if trade.point_value is not None:          # a contract without one is asked for at the top of the trade
-            common.multiplier_form(journal, 'trade-multiplier', trade.symbol)
+            common.point_value_line(journal, trade)
 
 
 def numbers(journal, trade, annotation: dict, zone) -> None:
@@ -616,8 +616,8 @@ def excursions_panel(journal, trade, zone) -> None:
         return
     fig = go.Figure()
     times = common.wall_clock(path.ts, zone)
-    fig.add_scatter(x=times, y=high, name='Upper bound', line_color=theme.UP)
-    fig.add_scatter(x=times, y=low, name='Lower bound', line_color=theme.DOWN)
+    fig.add_scatter(x=times, y=high, name='Best move', line_color=theme.UP)
+    fig.add_scatter(x=times, y=low, name='Worst move', line_color=theme.DOWN)
     fig.add_hline(y=0, line_color=theme.MUTED)
     for fill in trade.fills:
         fig.add_vline(x=common.wall_clock([fill['ts']], zone)[0], line_width=1,

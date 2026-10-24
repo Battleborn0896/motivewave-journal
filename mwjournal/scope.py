@@ -27,6 +27,14 @@ def replay_run(provider: str) -> str | None:
     return provider.rsplit(':replay:', 1)[1] if ':replay:' in provider else None
 
 
+def account_key(provider: str, account: str) -> tuple[str, str]:
+    """An account as the trader knows it, whichever replay run it traded in: every rewind or restarted replay starts
+    a run ('motivewave-native:<workspace>:replay:<run>'), and they are one account. Tag My Next Trade, views, account
+    names and the Session menu's Contract compare accounts by it; trades and their prices stay per run
+    (allows_source)."""
+    return (provider.rsplit(':replay:', 1)[0] + ':replay' if ':replay:' in provider else provider), account
+
+
 def allows_source(trade, source):
     """Whether a price stream may measure a trade. A replay stream ('motivewave-replay:<run>:...', recorded
     or backfilled from history) measures only the trades of its own run, and never a live trade."""

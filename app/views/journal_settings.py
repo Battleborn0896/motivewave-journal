@@ -4,11 +4,12 @@ import streamlit as st
 import common
 import theme
 from mwjournal import journals
+from mwjournal.scope import account_key
 
 
 def render(journal, rows):
     views = journals.registry(journal)['views']
-    known = sorted({(fill.provider, fill.account) for fill in journal.executions()})
+    known = sorted({account_key(fill.provider, fill.account) for fill in journal.executions()})
     theme.section('Journals & Accounts', help='A view shows only the accounts you choose, with the same reviews, tags '
                                               'and settings as All accounts.')
     theme.subsection('New View')

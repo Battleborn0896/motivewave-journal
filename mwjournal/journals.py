@@ -20,6 +20,7 @@ from pathlib import Path
 
 from . import merging, tagging
 from .model import Execution
+from .scope import account_key
 from .store import Journal, _add_note, encode, merge_settings, one_waiting
 from .workspace import OWN, label, read as read_workspace
 
@@ -37,11 +38,21 @@ def _stored(db) -> dict:
     return {'views': {}, 'account_aliases': {}, **(json.loads(row[0]) if row else {})}
 
 
+def account_id(provider, account) -> str:
+    """How the registry's account names hold an account: every replay run of it is one (scope.account_key)."""
+    return encode(list(account_key(provider, account)))
+
+
 def registry(journal) -> dict:
     """The registry (_stored), its views in the order of their names, as the Journal menu lists them: stored by id,
-    they would come in no order a trader could follow."""
+    they would come in no order a trader could follow. A view's accounts and the names given to accounts come by
+    scope.account_key, whichever replay run they were stored with."""
     with journal.connect() as db:
         state = _stored(db)
+    for view in state['views'].values():
+        view['accounts'] = [list(each) for each in sorted({account_key(*account) for account in view['accounts']})]
+    state['account_aliases'] = {account_id(*json.loads(scope)): name
+                                for scope, name in state['account_aliases'].items()}
     state['views'] = dict(sorted(state['views'].items(), key=lambda item: (item[1]['name'].casefold(), item[0])))
     return state
 
@@ -69,6 +80,7 @@ def create(journal, name, accounts) -> str:
     if not accounts or len(accounts) > 100 or any(
             len(account) != 2 or any(not isinstance(v, str) or not v.strip() for v in account) for account in accounts):
         raise ValueError('Choose at least one account.')
+    accounts = sorted({account_key(*account) for account in accounts})
     id = uuid.uuid4().hex
 
     def add(state):
@@ -99,13 +111,18 @@ def delete(journal, id) -> None:
 
 
 def account_alias(journal, provider, account, name):
-    key = encode([provider, account])
-    name = label(name)
-    edit(journal, lambda state: state['account_aliases'].update({key: name}))
+    """Names an account, in every replay run of it: the name replaces any it was stored with in one run."""
+    name, named = label(name), account_id(provider, account)
+
+    def apply(state):
+        state['account_aliases'] = {scope: given for scope, given in state['account_aliases'].items()
+                                    if account_id(*json.loads(scope)) != named}
+        state['account_aliases'][named] = name
+    edit(journal, apply)
 
 
 def alias(journal, scope):
-    return registry(journal)['account_aliases'].get(encode(list(scope)), scope[1])
+    return registry(journal)['account_aliases'].get(account_id(*scope), scope[1])
 
 
 # ---------------------------------------------------------------- named journals of 0.4.17 and earlier become views
@@ -185,7 +202,7 @@ def fold(journal) -> None:
             continue                               # another window folded it and removed its folder meanwhile
         try:
             each = Journal(path, dataset=journal.dataset)
-            accounts[id] = {(fill.provider, fill.account) for fill in each.executions()}
+            accounts[id] = {account_key(fill.provider, fill.account) for fill in each.executions()}
             if id not in pending.get('folded', []):
                 _fold_one(journal, each, id, old[id]['name'])
         except (ValueError, OSError, sqlite3.Error) as exc:
@@ -199,7 +216,7 @@ def fold(journal) -> None:
         state, pending = _stored(db), _pending(db)
         views, listed = state['views'], False
         for id, definition in state.pop('journals', {}).items():
-            chosen = sorted({*(tuple(scope) for scope in definition.get('scopes', [])), *accounts.get(id, ())})
+            chosen = sorted({*(account_key(*scope) for scope in definition.get('scopes', [])), *accounts.get(id, ())})
             if chosen and not definition.get('archived'):
                 name = definition['name']
                 if name.casefold() == ALL.casefold():

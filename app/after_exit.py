@@ -46,7 +46,7 @@ def stats(journal, rows):
     """Which trades left room after the exit: the minutes and stop of the trade's sentence (line), averaged by any of
     the groups Compare uses (GROUPS), the most further your way first; tags keep your own order, each under its
     category. Each row already knows its stop, so a trade reads only its own prices. They are read after every exit,
-    so the table is built only when Compare Runners is pressed: the choice sits in a form."""
+    so the table is built only when Compare is pressed: the choice sits in a form."""
     st.caption(f'The {AFTER_EXIT_MINUTES} minutes after each exit, from recorded ticks, held until your stop, or '
                'breakeven when the trade had none. An exit at or past the stop counts as 0, as there was nothing '
                'left to hold.')
@@ -54,7 +54,7 @@ def stats(journal, rows):
     remember = common.keep({common.key(journal, 'runner-group'): GROUPS[0]})
     with st.form(common.key(journal, 'runner-edge'), border=False):
         group = st.selectbox('Compare by', GROUPS, key=common.key(journal, 'runner-group'))
-        asked = st.form_submit_button('Compare Runners', on_click=remember,
+        asked = st.form_submit_button('Compare', on_click=remember,
                                       help='Reads the prices after every exit in your filters.')
     if not asked:
         return
@@ -87,8 +87,9 @@ def stats(journal, rows):
             groups = tag_order(library, groups)
         table = pd.DataFrame(groups).rename(columns={
             'category': 'Category', 'group': name, 'trades': 'Trades',
-            'avg_extra_peak': f'Average extra peak ({label})', 'avg_adverse_after_exit': f'Average move against ({label})',
-            'avg_extra_peak_R': 'Extra peak in R', 'additional_1R_reached_pct': '1R more reached (%)',
+            'avg_extra_peak': f'Average further your way ({label})',
+            'avg_adverse_after_exit': f'Average move against ({label})', 'avg_extra_peak_R': 'Further your way in R',
+            'additional_1R_reached_pct': '1R more reached (%)',
             'trades_with_r': 'Trades with a stop'})
         money = {column: common.money_column(column, results[0]['currency']) for column in table.columns
                  if unit == 'currency' and column.startswith('Average')}

@@ -557,6 +557,16 @@ def test_checklist_ui_run_branch_undo_and_apply_tags(home):
     assert len(runs) == 1 and runs[0]['trade_id'] == trade.id and runs[0]['answers'] == ['q1-no', 'q3-yes']
 
 
+def test_a_checklist_whose_answers_collect_no_tags_offers_no_tags_to_apply(home):
+    journal = seed_preview(home)
+    journal.save_checklist('Plan', [question('Setup valid?'), question('Stop placed?')])
+    app = open_app()
+    answer(app, '1 · Setup valid?', 'q1-yes')
+    assert any(b.label == 'Undo Last Answer' and not b.disabled for b in app.button)
+    assert not any(b.label == 'Apply Collected Tags' for b in app.button)
+    assert not said(app.caption, 'Collected tags')
+
+
 def editing(app):
     """The checklist editor's boxes, by what they say."""
     return {w.label: w for w in [*app.text_input, *app.selectbox, *app.multiselect, *app.checkbox, *app.radio]}

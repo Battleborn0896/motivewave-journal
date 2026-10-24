@@ -462,7 +462,6 @@ def rows_for(journal) -> list[dict]:
     from mwjournal.workspace import tag_score
     from mwjournal import journals
     aliases = journals.registry(journal)['account_aliases']
-    import json
     zone = display_zone(journal)
     unit, sizes = excursion_unit(journal), journal.display_settings()['tick_sizes']
     rows = []
@@ -480,7 +479,7 @@ def rows_for(journal) -> list[dict]:
         rows.append({**trade.row(), **a, **shown, 'initial_risk': at_risk, 'stop': plans[trade.id].stop,
                      'market': instrument_market(trade.symbol),
                      'merge_leg_ids': getattr(trade, 'merge_leg_ids', []),
-                     'account_label': aliases.get(json.dumps([trade.provider, trade.account], sort_keys=True), trade.account),
+                     'account_label': aliases.get(journals.account_id(trade.provider, trade.account), trade.account),
                      'tags': tagging.names(library, tag_ids), 'tag_ids': sorted(tag_ids),
                      'playbooks': tagging.matched_playbooks(library, tag_ids), 'metric': m,
                      # Every playbook this trade's tags complete, retired ones too: what a filter's playbook asks.
@@ -507,13 +506,12 @@ def recalculate(journal) -> None:
 
 
 def show_result(result: dict) -> None:
-    """What an import added: its new fills, and the prices and stop order updates a bridge file brings."""
+    """What an import added, in fills: the new ones and those the journal already held. A file the study wrote also
+    brings prices and stops, which go with its trades uncounted, as when the study records them."""
     def count(n, word):
         return f'{n:,} {word}' + ('' if n == 1 else 's')
-    added = [count(result['executions'], 'new fill'), *([count(result['prices'], 'price')] if result['prices'] else []),
-             *([count(result['protection'], 'stop order update')] if result.get('protection') else [])]
-    st.success(f"Imported {', '.join(added)}." + (f" Skipped {count(result['duplicates'], 'existing fill')}."
-                                                   if result['duplicates'] else ''))
+    st.success(f"Imported {count(result['executions'], 'new fill')}." + (
+        f" Skipped {count(result['duplicates'], 'existing fill')}." if result['duplicates'] else ''))
     if result['gaps']:
         st.warning('The file reports dropped ticks: the trades they fall in show no MAE / MFE, and say why.')
 
@@ -692,7 +690,8 @@ def filter_rule(journal, rows: list[dict], prefix='filter', start=None) -> dict:
 def multiplier_form(journal, form_key: str, symbol: str) -> None:
     """Dollars per full price point per contract: asked at the top of a trade whose contract has none (known futures
     roots come with one; anything else stays without P&L until it is set), and changed under the trade's Details
-    when it is wrong. Saving measures every trade again, so that contract's trades follow it."""
+    when it is wrong (point_value_line). Saving measures every trade again, so that contract's trades follow it. A
+    tick size is set in one place, under the trade's MAE and MFE when they are shown in ticks (tick_size_menu)."""
     in_use = next((t.point_value for t in journal.trades() if t.symbol == symbol and t.point_value), None)
     with st.form(key(journal, form_key)):
         st.caption('Contract: ' + symbol)
@@ -701,17 +700,21 @@ def multiplier_form(journal, form_key: str, symbol: str) -> None:
                              key=key(journal, form_key + '-value-' + symbol),
                              help='What one point is worth on one contract (ES 50, NQ 20, MNQ 2); saving '
                                   "recalculates this contract's trades.")
-        tick = st.number_input('Tick size · optional', min_value=0.,
-                               value=float(units.tick_size(symbol, journal.display_settings()['tick_sizes']) or 0.),
-                               format='%.6f', key=key(journal, form_key + '-tick-' + symbol),
-                               help='The smallest price step of this contract, not its dollar value; zero leaves it '
-                                    'unchanged.')
         if st.form_submit_button('Save and Recalculate'):
             journal.set_instrument(symbol, pv)
-            if tick > 0:
-                journal.set_tick_size(symbol, tick)
             recalculate(journal)
             st.rerun()
+
+
+def point_value_line(journal, trade) -> None:
+    """Under a trade's Details, what one point of its contract is worth, as a line ('NQZ6: $20 per point'), with the
+    form that changes it behind Change."""
+    worth = money(trade.point_value, trade.currency, signed=False,
+                  decimals=0 if float(trade.point_value).is_integer() else 2)
+    with st.container(horizontal=True, vertical_alignment='center', gap='small'):
+        st.caption(md(f'{trade.symbol}: {worth} per point'))
+        with st.popover('Change'):
+            multiplier_form(journal, 'trade-multiplier', trade.symbol)
 
 
 # ---------------------------------------------------------------- the study connection
@@ -794,11 +797,9 @@ def link_state(profile: dict | None, status: dict | None, *, worker_error: str |
         exists = Path(profile.get('path') or '').expanduser().is_file()
     except OSError:
         exists = False
-    if status.get('status') == 'waiting for study' or not exists:
-        return Link(NOT_RECORDING, 'neutral', 'The bridge file has not appeared yet. It is created when the study is '
-                    'added to a chart in MotiveWave.', **known)
-    if not status:
-        return Link(NOT_RECORDING, 'neutral', 'The bridge file is there but holds no events yet.', **known)
+    if status.get('status') == 'waiting for study' or not exists or not status:
+        return Link(NOT_RECORDING, 'neutral', 'The study has not written anything yet. Add it to a chart in '
+                    'MotiveWave.', **known)
     if heard is None:
         return Link(ATTENTION, 'critical', 'Events are being read, but the study has not reported in: an older study '
                     'or another program writes this file. Install the study again under Study below.', **known)

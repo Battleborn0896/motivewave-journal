@@ -25,9 +25,9 @@ from mwjournal.model import timestamp
 
 def render(journal, rows) -> None:
     theme.section('Import Trades')
-    st.caption('A CSV with one row per fill, or a bridge file, for trades the study did not record: fills it '
-               'recorded would count twice.')
-    upload = st.file_uploader('Fills CSV or Bridge File', type=['csv', 'txt', 'jsonl', 'ndjson'],
+    st.caption('For trades the study did not record: fills it recorded would count twice.')
+    upload = st.file_uploader('Fills File', type=['csv', 'txt', 'jsonl', 'ndjson'],
+                              help='Takes a CSV with one row per fill, or a file the study wrote.',
                               key=common.key(journal, 'import-file'))
     if upload:
         try:

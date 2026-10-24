@@ -53,10 +53,11 @@ Any older version updates straight to the newest; there is no need to install th
 
 ### Import trades
 
-For trades the study did not record, open **Settings → Data → Import Trades** and drop the file in its one box: a
-CSV with one row per fill, or a bridge file the study wrote. The app tells which it is and refuses a bridge file from
-the other environment. **Column Mapping** opens only when a column it needs is not found. Never import fills the
-study already recorded: they would count twice. **Add One Fill by Hand** takes a date and a time in your Time Zone.
+For trades the study did not record, open **Settings → Data → Import Trades** and drop the file in its one box,
+**Fills File**: a CSV with one row per fill, or a file the study wrote. The app tells which it is and refuses a file
+the study wrote in the other environment. **Column Mapping** opens only when a column it needs is not found. Never
+import fills the study already recorded: they would count twice. **Add One Fill by Hand** takes a date and a time in
+your Time Zone.
 
 ### Back up and restore
 
@@ -129,7 +130,8 @@ because nothing was left to hold.
 - Live simulation or Replay, plus whether Replay used real tick data
 - Exact contract (for example `NQZ6`) and the chart type/timeframe
 - Steps to reproduce and what was expected
-- A screenshot of the error, if useful, and of **Settings → Data → Connection → Troubleshooting**
+- A screenshot of the error, if useful, and of **Settings → Data → Connection → Troubleshooting**, which names the
+  data folder
 - The app's `desktop/backend.log`, after checking it for anything the tester does not want to share
 
 Never include broker passwords, API keys or unrelated account data. A tester may redact account IDs

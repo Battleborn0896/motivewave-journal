@@ -26,6 +26,7 @@ import theme
 from mwjournal import paths
 from views import data, edge, preferences, setup, tag_settings, trades
 from mwjournal import journals, merging
+from mwjournal.scope import account_key
 from mwjournal.workspace import filter_sample
 
 SETUP_PAGES = {'Tags': tag_settings, 'Data': data}
@@ -107,7 +108,7 @@ if journal is not None:
     rows = common.rows(journal)
     if chosen:                             # before the saved filter, which then filters the view's trades
         accounts = {tuple(account) for account in chosen['accounts']}
-        rows = [r for r in rows if (r['provider'], r['account']) in accounts]
+        rows = [r for r in rows if account_key(r['provider'], r['account']) in accounts]
     for warning in journal.merge_warnings:
         st.warning(warning)
     currencies = sorted({r['currency'] for r in rows})

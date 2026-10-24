@@ -382,7 +382,7 @@ LANDMARKS = {
     'Live session': lambda app: [p.proto.popover.label for p in app.main.get('popover')][:1] == ['Session'],
     'Connection': lambda app: any(e.label == 'Troubleshooting' for e in app.expander),
     'Journals': lambda app: any(t.label == 'View name' for t in app.text_input),
-    'Import': lambda app: any(u.label == 'Fills CSV or Bridge File' for u in app.file_uploader),
+    'Import': lambda app: any(u.label == 'Fills File' for u in app.file_uploader),
     'Export': lambda app: backup_controls(app),
     'Settings': lambda app: any(s.label == 'Time Zone' for s in app.selectbox),
 }
@@ -856,10 +856,10 @@ def test_what_an_upgrade_did_is_said_once_at_the_top_of_settings_until_ok():
     assert not app.exception and not any(b.key == 'setup-upgrade-notes-ok' for b in app.button)
 
 
-def test_about_is_one_line_with_both_versions_and_the_data_folder_then_the_fine_print():
+def test_about_is_one_line_with_both_versions_then_the_fine_print():
     app = open_app('Settings')
     captions = [c.value for c in app.main.caption]
-    assert captions[-3] == (f'{paths.APP_NAME} {paths.VERSION} · study {paths.STUDY_VERSION} · data folder '
-                            f'{paths.data_home()}')
+    assert captions[-3] == f'{paths.APP_NAME} {paths.VERSION} · study {paths.STUDY_VERSION}'
+    assert not said(app.main.caption, str(paths.data_home()))      # the data folder is under Troubleshooting
     assert CREDIT in captions[-2] and 'not affiliated with or endorsed by MotiveWave' in captions[-1]
     assert not said(app.main.markdown, '>About<')

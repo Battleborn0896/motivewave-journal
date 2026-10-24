@@ -34,7 +34,7 @@ CREDIT = 'TradingView Lightweight Charts™, Copyright (c) 2025 TradingView, Inc
 FILLS_CSV = ('Account,Instrument,Side,Quantity,Avg Price,Date,Time,Trade ID,Commission\n'
              'paper,ESZ6,Buy,1,5000,2026-10-07,10:00:23,entry,2\n'
              'paper,ESZ6,Sell,1,5002,2026-10-07,10:03:00,exit,2\n')
-IMPORT_BOX = 'Fills CSV or Bridge File'
+IMPORT_BOX = 'Fills File'
 
 
 @pytest.fixture(autouse=True)
@@ -264,12 +264,14 @@ def test_the_sidebar_holds_only_the_switch_the_pages_and_the_badge_on_every_view
     assert states(app.sidebar) and [b.key for b in app.sidebar.button] == ['connection-badge-open']
 
 
-def test_chart_library_notice_data_folder_and_independence_are_on_settings():
+def test_chart_library_notice_and_independence_are_on_settings_and_the_data_folder_under_troubleshooting():
     app = open_app('Settings')
     notice = [c.value for c in app.main.caption if CREDIT in c.value]
     assert len(notice) == 1 and '(https://www.tradingview.com/)' in notice[0]
     assert said(app.main.caption, 'not affiliated with or endorsed by MotiveWave')
-    assert said(app.main.caption, str(paths.data_home()))
+    assert not said(app.main.caption, str(paths.data_home()))
+    app = open_app('Connection')
+    assert said(widget(app.expander, 'Troubleshooting').caption, str(paths.data_home()))
 
 
 @pytest.mark.parametrize('view', VIEWS)
@@ -401,7 +403,7 @@ def test_full_recorded_path_and_after_exit_render_without_claiming_missing_data(
     assert said(app.caption, 'An exit at or past the stop counts as 0, as there was nothing left to hold.')
     assert not any(s.label.startswith('Runner comparison') for s in app.selectbox)
     assert not any(c.label.startswith(('Only winning', 'Only exits near')) for c in app.checkbox)
-    press(app, 'Compare Runners')
+    press(app, 'Compare')
     assert said(app.info, 'None of these trades has all of the 15 minutes after its exit recorded')
     assert said(app.caption, '1 trade · 1 left out · a trade counts under each of its tags')
     assert widget(app.selectbox, 'Compare by').options == list(GROUPS)
@@ -411,10 +413,10 @@ def test_full_recorded_path_and_after_exit_render_without_claiming_missing_data(
     journal.update_annotation(journal.trades()[0].id, {'planned_stop': 5003})
     app.run()
     widget(app.selectbox, 'Compare by').set_value('Direction')
-    press(app, 'Compare Runners')
+    press(app, 'Compare')
     assert said(app.caption, '1 trade · 0 left out') and not said(app.info, 'None of these trades')
     table = next(d.value for d in app.dataframe if 'Direction' in d.value.columns)
-    assert table.iloc[0][['Direction', 'Trades', 'Average extra peak (USD)']].tolist() == ['long', 1, 0]
+    assert table.iloc[0][['Direction', 'Trades', 'Average further your way (USD)']].tolist() == ['long', 1, 0]
 
 
 def test_measured_trade_risk_renders_from_the_traded_price_alone():
@@ -476,8 +478,11 @@ def test_a_closed_trade_is_one_page_with_its_fills_once_under_a_closed_details(h
     fills = [d.value for d in app.dataframe if 'Role' in d.value.columns]
     assert len(fills) == 1 and list(fills[0]['Contracts']) == [2, 1, 1]
     assert said(details(app).markdown, 'After Exit')
+    # The contract's dollars per point is a line, changed behind Change; its tick size is set in one place only.
+    assert said(details(app).caption, 'ESZ6: \\$50 per point')
     assert widget(details(app).number_input, 'Dollars per point').value == 50.            # correctable here
     assert any(b.label == 'Save and Recalculate' for b in details(app).button)
+    assert not any(n.label.startswith('Tick size') for n in app.number_input)
 
 
 def test_r_shows_a_dash_and_why_without_a_stop(home):
@@ -655,7 +660,7 @@ def test_stats_choices_are_still_chosen_after_another_tab_was_open(home):
     assert widget(app.selectbox, 'Compare by').value == 'Tags'
     # A form sends its choices with the click, as a browser does: a run between them drops the choice (Streamlit 1.66).
     widget(app.selectbox, 'Compare by').set_value('Weekday')
-    press(app, 'Compare Runners')
+    press(app, 'Compare')
     open_tab(app, 'Overview')
     open_tab(app, 'Compare')
     assert widget(app.selectbox, 'Compare by').value == 'Playbooks'
@@ -973,7 +978,7 @@ def test_connection_turns_to_recording_once_the_study_writes_a_fresh_heartbeat()
     assert said(app.main.markdown, f'Recording · study {paths.STUDY_VERSION}')
     assert not said(app.sidebar.markdown, 'study ' + paths.STUDY_VERSION)   # too wide for the sidebar badge; Settings shows it
     assert said(app.main.markdown, 'The study says: Read-only capture · workspace paper')
-    assert not said(app.sidebar.markdown, 'has not appeared yet')
+    assert not said(app.sidebar.markdown, 'has not written anything yet')
     connected = shape(app)
     show(app, 'Settings')                           # one green line and no step
     assert states(app.main) == ['Recording'] and said(app.main.markdown, f'Recording · study {paths.STUDY_VERSION}')
@@ -1302,7 +1307,7 @@ def test_link_state_reads_the_stored_status_and_the_heartbeat_age(tmp_path):
     assert words(old) == quiet and old.label == 'Not recording' and '1 min ago' in old.detail
     assert old.heard == NOW - dt.timedelta(seconds=61) and old.version == '0.3.10'      # heard from before
     assert words(state(missing, {})) == quiet and words(state(on, {'status': 'waiting for study'})) == quiet
-    assert words(state(on, {})) == quiet and 'no events' in state(on, {}).detail
+    assert words(state(on, {})) == quiet and 'not written anything' in state(on, {}).detail
     # Needs attention: no study connection, a reader error, the study's own error, events with no heartbeat at all.
     assert words(state(None, {})) == attention
     assert words(state(on, {'status': 'synced', 'heartbeat': beat(1)}, worker_error='OperationalError')) == attention
