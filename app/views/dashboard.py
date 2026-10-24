@@ -256,8 +256,9 @@ def compare_bars(journal, data, group, metric, zone):
     frame = frame.sort_values(['place', 'value', 'group'])
     return px.bar(frame, x='group', y='value', color='category', color_discrete_map=colours,
                   category_orders={'group': list(frame.group), 'category': list(dict.fromkeys(frame.category))},
-                  hover_data=['count'], labels={'value': 'Average ' + metric, 'group': group, 'count': 'Trades',
-                                                'category': 'Category'})
+                  # Only a tag has a category: other bars would read 'Category=Entry hour'.
+                  hover_data={'count': True, 'category': group == 'Tags'},
+                  labels={'value': 'Average ' + metric, 'group': group, 'count': 'Trades', 'category': 'Category'})
 
 
 def formatter(metric, currency):

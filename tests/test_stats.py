@@ -450,12 +450,14 @@ def test_one_compare_list_for_stats_the_compare_widget_and_after_exit(home):
     # The bars, lowest first.
     assert hours['data'][0]['x'] == ['15:00', '10:00', '09:00'] and numbers(hours['data'][0]['y']) == [-104, 196, 496]
     assert not hours['layout'].get('showlegend')
+    assert 'Category' not in hours['data'][0]['hovertemplate']                 # an hour has no tag category
     # Tag bars stand together by category, in the library's order and its colour, each category lowest first.
     assert [(bars['name'], bars['x'], numbers(bars['y'])) for bars in tags['data']] == [
         ('Setup', ['Breakout', 'Pullback'], [46, 496]),
         ('Execution', ['Chased Entry', 'Followed Plan'], [-104, 346]),
         ('Mindset', ['FOMO', 'Calm'], [-104, 196])]
     assert tags['data'][0]['marker']['color'] == '#65CA98' and tags['layout']['showlegend']
+    assert tags['data'][0]['hovertemplate'].startswith('Category=')
 
 
 def test_the_overview_calendar_counts_what_stats_counts_and_opens_a_days_report_card():
@@ -513,9 +515,13 @@ def test_the_period_above_stats_keeps_this_month_last_month_or_the_last_three_an
     assert said(app.markdown, '4 closed trades')
     expected = {'This Month': '1 of 4 closed trades', 'Last Month': '1 of 4 closed trades',
                 'Last 3 Months': '3 of 4 closed trades'}
+    shown = {'This Month': months[:1], 'Last Month': months[1:2], 'Last 3 Months': months[:3]}
     for choice, line in expected.items():
         app.get('button_group')[0].set_value(choice).run()
         assert not app.exception and said(app.markdown, line), choice
+        # The calendar on Overview counts the same trades: only the months of the period.
+        assert app.selectbox(key='overview-calendar-live-month').options == [
+            month.strftime('%B %Y') for month in shown[choice]], choice
     show(app, 'Trades')
     show(app, 'Edge')
     assert app.get('button_group')[0].value == 'Last 3 Months'                      # still chosen

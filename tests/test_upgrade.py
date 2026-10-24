@@ -745,8 +745,8 @@ def test_a_saved_choice_of_stats_tabs_is_left_unread_and_said_once_with_no_backu
         db.execute("DELETE FROM journal_meta WHERE key='fixed_stats_tabs'")
     again = Journal(path)
     assert again.unseen_notes() == {'stats_tabs': note} and meta(path, 'fixed_stats_tabs') == '1'
-    # Every tab already shown in this order, or no choice saved: nothing changes, so nothing to say.
+    # Every tab already shown in this order, as 0.4.17 named them, or no choice saved: nothing to say.
     every = tmp_path / 'every.sqlite3'
-    as_0_4_17_tabs(Journal(every), ['Overview', 'Compare', 'MAE / MFE', 'After Exit'])
+    as_0_4_17_tabs(Journal(every), ['Overview', 'Compare', 'MAE / MFE', 'Runners'])
     assert Journal(every).upgrade_note() is None and meta(every, 'fixed_stats_tabs') == '0'
     assert Journal(tmp_path / 'new.sqlite3').upgrade_note() is None

@@ -8,7 +8,7 @@ import pytest
 import common
 import runtime
 import theme
-from mwjournal import Journal, PriceSample
+from mwjournal import PriceSample
 from mwjournal import tagging
 from mwjournal.metrics import measurements
 from mwjournal.model import instant

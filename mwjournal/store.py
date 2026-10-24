@@ -450,10 +450,11 @@ def _one_connection(db) -> None:
 def _fixed_stats_tabs(db) -> None:
     """Once per journal, inside the caller's transaction. Until 0.4.17 Customize on Stats chose which tabs it showed,
     in which order; now it always shows all of them, in one order. The saved choice stays stored, unread, so this
-    needs no backup; when it hid or moved a tab, the upgrade note says so under 'stats_tabs'."""
+    needs no backup; when it hid or moved a tab, the upgrade note says so under 'stats_tabs'. Every tab in order was
+    saved under the names 0.4.17 and earlier used, where After Exit was Runners."""
     row = db.execute("SELECT value FROM journal_meta WHERE key='display_settings'").fetchone()
     chosen = (json.loads(row[0]) if row else {}).get('dashboard_sections')
-    changed = chosen is not None and chosen != ['Overview', 'Compare', 'MAE / MFE', 'After Exit']
+    changed = chosen is not None and chosen != ['Overview', 'Compare', 'MAE / MFE', 'Runners']
     if changed:
         _add_note(db, 'stats_tabs', {'note': 'Stats now always shows all of its tabs: Overview, Compare, MAE / MFE, '
                                              'After Exit and Dashboards.'})
