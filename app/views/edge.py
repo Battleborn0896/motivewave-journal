@@ -508,7 +508,7 @@ def tag_tables(narrowed, groups, currency) -> None:
     trades, then the trades with none of them; Rating from 5 stars to 1, then Not rated. A trade with
     two tags of a category counts in both. Side by side on a wide window, fewer to a row on a narrow one."""
     if not groups:
-        st.info('None of these trades has a tag or a rating yet. Tag and rate trades on Trades, then compare them here.')
+        st.info('None of these trades has a tag or a Rating yet. Tag and rate trades on Trades, then compare them here.')
         return
     tables = [('Totals', theme.INK, [line('All trades', None, narrowed),
                                      line('Wins', theme.UP, [r for r in narrowed if r['net'] > 0]),

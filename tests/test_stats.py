@@ -400,7 +400,7 @@ def test_save_as_playbook_keeps_the_kept_tags_with_a_name_and_colour():
 def test_compare_says_so_when_no_trade_has_a_tag():
     three_trades()
     app = open_tab(open_app('Edge'), 'Compare')
-    assert not chips(app) and said(app.info, 'None of these trades has a tag or a rating yet')
+    assert not chips(app) and said(app.info, 'None of these trades has a tag or a Rating yet')
     assert listed_trades(app)                                 # the trades and their curve are still there
     widget(app.selectbox, 'Compare by').set_value('Weekday').run()
     assert next(d.value for d in app.dataframe if 'Weekday' in d.value.columns)['Trades'].sum() == 3
