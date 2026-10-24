@@ -485,6 +485,31 @@ def test_a_draft_whose_tag_was_retired_since_needs_review_and_names_its_trade(ho
     assert journal.workspace()['drafts'][id]['state'] == 'cancelled'
 
 
+def test_only_a_draft_still_waiting_keeps_the_trades_the_journal_held_when_it_was_armed(home):
+    """Tag My Next Trade before every trade for years: each one used or cancelled keeps no copy of the journal's
+    trade list, so the saved workspace stays small."""
+    journal = seed_preview(home)
+    where = dict(provider='motivewave', account='paper')
+    replaced = journal.save_draft(symbol='ESZ6', tags=['FOMO'], **where)
+    used = journal.save_draft(symbol='ESZ6', tags=['Patient'], **where)
+    review = journal.save_draft(symbol='NQZ6', tags=['Hesitant'], **where)
+    cancelled = journal.save_draft(symbol='CLZ6', notes='Skip it', **where)
+    journal.cancel_draft(cancelled)
+    journal.edit_tag(next(iter(tagging.ids(journal.tag_library(), ['Hesitant']))), retired=True)
+    journal.ingest([(Execution('motivewave', 'paper', symbol, side, 1, price, at, execution_id=f'{symbol}-{side}'), {})
+                    for symbol, price in (('ESZ6', 5000), ('NQZ6', 20000))
+                    for side, at in (('buy', '2026-10-08T14:00:00Z'), ('sell', '2026-10-08T14:01:00Z'))])
+    journal.reconcile_drafts()
+    waiting = journal.save_draft(symbol='ESZ6', notes='The next one', **where)
+    drafts = journal.workspace()['drafts']
+    assert {drafts[id]['state']: 'existing_trades' in drafts[id] for id in (replaced, used, review, waiting)} == {
+        'cancelled': False, 'attached': False, 'needs review': False, 'armed': True}
+    assert 'existing_trades' not in drafts[cancelled]
+    assert len(drafts[waiting]['existing_trades']) == len(journal.trades())
+    journal.cancel_draft(review)
+    assert journal.workspace()['drafts'][review]['state'] == 'cancelled'
+
+
 @pytest.mark.parametrize('view', ['Dashboard', 'Checklists', 'Live session', 'Settings'])
 def test_new_views_render_without_recording_orders_or_raw_trade_changes(home, view):
     journal = seed_preview(home)

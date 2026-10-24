@@ -258,6 +258,23 @@ def test_tag_my_next_trade_is_in_the_session_menu_and_no_menu_runs_a_checklist(h
     assert not any(p.proto.popover.label == 'Checklist' for p in app.main.get('popover'))   # it is on the day
 
 
+def test_tags_still_waiting_stay_listed_and_cancellable_however_many_came_after(home):
+    seed_preview(home)
+    journal = Journal()
+    waiting = journal.save_draft(provider='motivewave', account='other', symbol='CLZ6', notes='Only the open')
+    for n in range(30):                              # each replaces the one before it on ESZ6
+        journal.save_draft(provider='motivewave', account='paper', symbol='ESZ6', notes=f'Plan {n}')
+    app = menu(open_app())
+    table = next(d.value for d in app.dataframe if 'Contract' in d.value.columns)
+    assert len(table) == 31 and list(table['Contract'])[-1] == 'other · CLZ6'
+    assert list(table['Status']).count('Waiting') == 2
+    assert widget(app.selectbox, 'Tags to cancel').options == ['paper · ESZ6 · Waiting', 'other · CLZ6 · Waiting']
+    widget(app.selectbox, 'Tags to cancel').set_value(waiting)
+    menu(app, run=False)
+    press(app, 'Cancel Tags')
+    assert journal.workspace()['drafts'][waiting]['state'] == 'cancelled'
+
+
 def test_an_empty_journal_shows_no_session_bar():
     app = open_app()
     assert said(app.info, 'No trades yet')

@@ -519,9 +519,10 @@ class Workspace:
 
     def save_draft(self, *, provider, account, symbol, tags=(), notes='', stop=None):
         """Tag My Next Trade: tags, a note and the stop price R will use (risk.py) for the next trade on one account
-        and exact contract, whenever it comes (reconcile_drafts). It waits for a trade the journal does not hold yet,
-        and replaces one still waiting on that account and contract. Drafts saved before 0.4.7 carry a dollar 'risk'
-        instead of a stop; drafts saved by 0.4.17 and earlier also keep a name and a time window, no longer read."""
+        and exact contract, whenever it comes (reconcile_drafts). It waits for a trade the journal does not hold yet
+        (existing_trades, kept only while it waits), and replaces one still waiting on that account and contract.
+        Drafts saved before 0.4.7 carry a dollar 'risk' instead of a stop; drafts saved by 0.4.17 and earlier also keep
+        a name and a time window, no longer read."""
         existing = [t.id for t in self.trades()]
         def save(state, library):
             choices = tagging.ids(library, tags)
@@ -536,6 +537,7 @@ class Workspace:
             for draft in state['drafts'].values():
                 if draft['state'] == 'armed' and (draft['provider'], draft['account'], draft['symbol']) == scope:
                     draft['state'] = 'cancelled'
+                    del draft['existing_trades']
             key = identifier()
             state['drafts'][key] = {'id': key, 'provider': scope[0], 'account': scope[1], 'symbol': scope[2],
                                     'tag_ids': sorted(choices), 'notes': str(notes)[:20000],
@@ -569,6 +571,9 @@ class Workspace:
                 trade = min(new, key=lambda t: instant(t.opened))
                 changed = True
                 draft['trade_id'] = trade.id
+                # Only a draft that waits needs every trade held when it was armed: one used before each trade for
+                # years would otherwise keep a copy of the whole journal's list each.
+                del draft['existing_trades']
                 tags = [library['tags'].get(id) for id in draft['tag_ids']]
                 retired = any(tag is None or tag['retired'] or 'trade' not in tag['levels'] for tag in tags)
                 conflicting = any(settings['exclusive'] and sum(tag['group'] == group for tag in tags if tag) > 1
@@ -607,4 +612,5 @@ class Workspace:
             if id not in state['drafts'] or state['drafts'][id]['state'] not in ('armed', 'needs review'):
                 raise ValueError('Choose tags that are waiting or need review. Used tags stay on their trade.')
             state['drafts'][id]['state'] = 'cancelled'
+            state['drafts'][id].pop('existing_trades', None)        # read only while a draft waits
         return self._workspace_edit(cancel)

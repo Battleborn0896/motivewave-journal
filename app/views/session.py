@@ -173,7 +173,7 @@ def check_ins(journal, rows) -> None:
     running = bool(st.session_state.get(common.key(journal, TIMER)))
     st.button('Start Check-In Timer', type='primary', key=common.key(journal, 'timer-start'), on_click=start,
               args=(journal,), disabled=running,
-              help='The timer is running: pause or stop it in the bar.' if running else
+              help='The timer is on: pause, resume or stop it in the bar.' if running else
                    'Counts down in the bar beside this menu, then asks each chosen category how you are doing.')
     theme.subsection('Latest Check-Ins')
     events = sorted(journal.workspace()['checkins'].values(), key=lambda e: e['at'], reverse=True)[:30]
@@ -190,7 +190,7 @@ def check_ins(journal, rows) -> None:
 
 def next_trade(journal, rows) -> None:
     """Tag My Next Trade: tags, a Stop and a note for the next trade opened on one account and contract
-    (Workspace.save_draft), then what was saved so, the latest first, with Cancel."""
+    (Workspace.save_draft), then what was saved so, the latest first and every one still waiting, with Cancel."""
     theme.subsection('Tag My Next Trade')
     st.caption('These go on the next trade you open on this contract, and replace any still waiting there. What you '
                'choose on the trade itself wins.')
@@ -222,7 +222,9 @@ def next_trade(journal, rows) -> None:
                 st.rerun()
             except ValueError as exc:
                 st.error(str(exc))
-    drafts = sorted(journal.workspace()['drafts'].values(), key=lambda d: instant(d['at']), reverse=True)[:30]
+    # The latest 30, and every one still waiting however old: what will go on a next trade stays in sight.
+    drafts = sorted(journal.workspace()['drafts'].values(), key=lambda d: instant(d['at']), reverse=True)
+    drafts = [d for i, d in enumerate(drafts) if i < 30 or d['state'] == 'armed']
     if not drafts:
         return
     zone = common.display_zone(journal)

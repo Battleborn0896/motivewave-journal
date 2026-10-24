@@ -280,7 +280,7 @@ def test_a_tag_or_category_only_a_rating_system_of_0_4_16_names_can_be_deleted(t
         state['ratings'] = old
         workspace.write(db, state)
     journal.save_filter('Calm', {'tags_all': [calm]})
-    with pytest.raises(ValueError, match='Calm is named in a filter, checklist or draft'):
+    with pytest.raises(ValueError, match='Calm is named in a filter, a checklist or Tag My Next Trade'):
         journal.delete_tag(calm)                                         # a filter still uses it
     for id, tag in list(journal.tag_library()['tags'].items()):
         if tag['group'] == 'Execution':
