@@ -182,8 +182,8 @@ def restore(file, home=None) -> dict:
     """Puts a backup back in `home` (the data folder by default): read()'s summary, with 'previous', the zip the
     journal as it was is saved to first (<home>/backups/before-restore-<UTC time>.zip). Each database is copied
     into its existing file; named journals in the data folder that the backup does not hold stay as they are.
-    Each environment is then opened once, so a backup from an older version is brought up to date. The caller
-    stops the watchers first."""
+    Each environment is then opened once, Replay with the Live journal it shares settings with, so a backup from an
+    older version is brought up to date. The caller stops the watchers first."""
     home = _home(home)
     summary = read(file)
     stamp = dt.datetime.now(dt.timezone.utc).strftime('%Y%m%dT%H%M%SZ')
@@ -197,6 +197,6 @@ def restore(file, home=None) -> dict:
             target = _place(home, member)
             target.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
             _copy(copy, target)
-    for member, dataset in SLOTS.items():
-        store.Journal(_place(home, member), dataset=dataset)
+    live = store.Journal(_place(home, 'live.sqlite3'))
+    store.Journal(_place(home, 'replay.sqlite3'), dataset='replay', shared=live)
     return {**summary, 'previous': previous}

@@ -96,7 +96,7 @@ def test_a_saved_filter_is_renamed_to_a_free_name_and_deleted(home):
     assert set(journal.workspace()['filters']) == {'Long trades'}
     with pytest.raises(ValueError, match='no saved filter'):
         journal.delete_filter('Shorts')
-    assert Journal(dataset='replay').workspace()['filters'] == {}
+    assert set(Journal(dataset='replay').workspace()['filters']) == {'Long trades'}       # one set for Live and Replay
 
 
 def test_mae_and_mfe_limits_are_read_in_the_chosen_units(home):
@@ -241,7 +241,7 @@ def test_filters_saved_before_playbooks_and_process_ratings_still_load_combine_a
     assert not app.exception and menu_label(app) == 'Filters · 1'
 
 
-def test_dashboard_pages_widgets_clone_and_partial_writes_are_dataset_local(home):
+def test_dashboard_pages_widgets_clone_and_partial_writes_are_shared_by_live_and_replay(home):
     journal = Journal()
     id = journal.save_dashboard('Overview', [{'kind': 'Equity', 'metric': 'R'}, {'kind': 'Calendar'}], columns=2)
     page = journal.workspace()['dashboards'][id]
@@ -249,7 +249,10 @@ def test_dashboard_pages_widgets_clone_and_partial_writes_are_dataset_local(home
     journal.save_filter('Longs', {'directions': ['long']})
     journal.save_dashboard('Renamed', page['widgets'][::-1], id=id, columns=1)
     assert journal.workspace()['filters']['Longs']['directions'] == ['long']
-    assert Journal(dataset='replay').workspace()['dashboards'] == {}
+    replay = Journal(dataset='replay')
+    assert replay.workspace()['dashboards'] == journal.workspace()['dashboards']
+    replay.save_dashboard('From Replay', [{'kind': 'Summary'}])                  # saved where Live reads it too
+    assert {p['name'] for p in journal.workspace()['dashboards'].values()} == {'Renamed', 'From Replay'}
     before = journal.workspace()
     with pytest.raises(ValueError):
         journal.save_dashboard('Bad', [{'kind': 'eval arbitrary code'}])

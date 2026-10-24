@@ -1,4 +1,5 @@
-"""Transactional SQLite storage in the user's own data folder; live and replay are separate files."""
+"""Transactional SQLite storage in the user's own data folder; live and replay are separate files, and the Live
+file also keeps the tags and settings both use (Journal.shared)."""
 
 from __future__ import annotations
 
@@ -23,8 +24,8 @@ from .model import (NATIVE, Execution, PriceSample, ProtectionEvent, digest, fin
 from .risk import stop_for_risk
 from .scope import event_mode, allows_source
 from .tags import DAY
-from .workspace import (MAX_QUESTIONS, Workspace, checklist_questions, follow, question, read as read_workspace,
-                        store_checklist, time_zone, write as write_workspace)
+from .workspace import (MAX_QUESTIONS, SHARED, Workspace, checklist_questions, follow, question,
+                        read as read_workspace, store_checklist, time_zone, write as write_workspace)
 
 SCHEMA_VERSION = 4
 # The one connection a journal reads, the study's bridge file (sync.py): its row in 'profiles' and 'sync_status'.
@@ -562,6 +563,115 @@ def _drafts_without_windows(db) -> None:
     db.execute("INSERT OR REPLACE INTO journal_meta VALUES('drafts_without_windows',?)", (str(cancelled),))
 
 
+# What a journal keeps in journal_meta of the settings shared from it (Journal.shared), besides the workspace's
+# shared parts (workspace.SHARED): the tag library with its playbooks, the tag catalog of 0.4.0 and earlier, and MAE /
+# MFE Units with the tick sizes.
+SHARED_KEYS = ('tag_library', 'tag_catalog', 'display_settings')
+# What the move to one set of settings for Live and Replay says once, on Settings in Live (Journal._share_settings).
+SHARED_NOTE = ('Live and Replay now share one set of tags, playbooks, filters, dashboards, checklists, Time Zone and '
+               'MAE / MFE Units, and each keeps its own trades and reviews')
+
+
+def _own_settings(db) -> tuple[bool, bool]:
+    """(whether journal `db` holds settings of its own: a tag library, the tag catalog, display settings or a shared
+    part of its workspace, empty or not; whether it holds one worth a backup before it goes: any of those but its
+    preferences, which every journal has had since schema 4 and which give way to the shared journal's)."""
+    stored = db.execute('SELECT 1 FROM journal_meta WHERE key IN (?,?,?)', SHARED_KEYS).fetchone() is not None
+    row = db.execute("SELECT value FROM journal_meta WHERE key='workspace'").fetchone()
+    state = json.loads(row[0]) if row else {}
+    return (stored or any(part in state for part in SHARED),
+            stored or any(state.get(part) for part in SHARED if part != 'preferences'))
+
+
+def _free_name(name: str, rule: dict, held: dict, word: str) -> str | None:
+    """Where the saved filter `name` of another journal goes among the filters `held`: its own name, else 'name (word)',
+    'name (word 2)' and on, the first that is free or already holds `rule` (None: nothing to save)."""
+    for number in range(1000):
+        suffix = '' if number == 0 else f' ({word})' if number == 1 else f' ({word} {number})'
+        candidate = name[:80 - len(suffix)] + suffix
+        if candidate not in held:
+            return candidate
+        if held[candidate] == rule:
+            return None
+    raise ValueError(f'The saved filter {name} has no free name.')
+
+
+def merge_settings(db, other, word: str = 'Replay') -> tuple[dict, dict]:
+    """Joins the settings journal `other` holds of its own into those journal `db` keeps, and stores them in `db`,
+    inside both callers' transactions; `other` is only read. What `db` keeps wins:
+
+    - tags, categories and playbooks as tagging.merge joins them, with every tag name on either journal's reviews
+      kept in the library (tagging.held), and without the starters `db` deleted that nothing in `other` uses;
+    - dashboards and checklists, whose ids are their own, are added after `db`'s, each tag and playbook id in them
+      as it became;
+    - a saved filter goes under its own name, or under '<name> (<word>)' when `db` has another filter of that name;
+    - preferences (the Time Zone, the check-in timer's) and MAE / MFE Units stay those of `db`, any `db` has never
+      chosen taken from `other`, and the tick sizes of both are kept.
+
+    Returns ({id: the id it became} for each tag and playbook of `other` that went into one of `db`'s, {filter name:
+    the name it is saved under} for each filter saved under another name). Harmless to run again: what it added
+    once is found and not added twice."""
+    ours, theirs = tagging.held(db), tagging.held(other)
+    folds = {}
+    if theirs is not None:
+        if ours is None:
+            ours = theirs
+        else:
+            # A starter `db` deleted stays deleted, unless `other` uses it.
+            unused = {id for id in theirs['tags'] if id in tagging.GIVEN and not tagging.tag_uses(other, theirs, id)}
+            ours, folds = tagging.merge(ours, theirs, unused)
+    if ours is not None:
+        row = db.execute("SELECT value FROM journal_meta WHERE key='tag_library'").fetchone()
+        if not row or json.loads(row[0]) != ours:
+            tagging.save(db, ours)
+    kept, given = read_workspace(db), read_workspace(other)
+    before, renamed = encode(kept), {}
+    for part in ('dashboards', 'checklists'):
+        order = max((item.get('order', 0) for item in kept[part].values()), default=-1)
+        for id, item in sorted(given[part].items(), key=lambda pair: pair[1].get('order', 0)):
+            if id not in kept[part]:
+                order += 1
+                kept[part][id] = {**tagging.refold(item, folds), 'order': order}
+    for name, rule in given['filters'].items():
+        rule = tagging.refold(rule, folds)
+        target = _free_name(name, rule, kept['filters'], word)
+        if target is not None:
+            kept['filters'][target] = rule
+            if target != name:
+                renamed[name] = target
+    kept['preferences'] = {**given['preferences'], **kept['preferences']}
+    if encode(kept) != before:
+        write_workspace(db, kept)
+    def units(each):
+        row = each.execute("SELECT value FROM journal_meta WHERE key='display_settings'").fetchone()
+        return json.loads(row[0]) if row else {}
+    mine, sent = units(db), units(other)
+    joined = {**sent, **mine, 'tick_sizes': {**sent.get('tick_sizes', {}), **mine.get('tick_sizes', {})}}
+    if sent and joined != mine:
+        db.execute("INSERT OR REPLACE INTO journal_meta VALUES('display_settings',?)", (encode(joined),))
+    return folds, renamed
+
+
+def drop_settings(db, folds: dict) -> None:
+    """After merge_settings, journal `db` keeps no settings of its own, inside the caller's transaction: each id that
+    went into another (`folds`) becomes that id wherever `db`'s own rows name it (its reviews, days, checklist runs,
+    check-ins and drafts), and its copies go: tag library, tag catalog, display settings and the shared parts of its
+    workspace. Harmless to run again."""
+    if folds:
+        for table, key in (('annotations', 'trade_id'), ('sessions', 'key')):
+            for name, payload in db.execute(f'SELECT {key}, payload FROM {table}').fetchall():
+                data = json.loads(payload)
+                if (moved := tagging.refold(data, folds)) != data:
+                    db.execute(f'UPDATE {table} SET payload=? WHERE {key}=?', (encode(moved), name))
+    row = db.execute("SELECT value FROM journal_meta WHERE key='workspace'").fetchone()
+    if row:
+        state = json.loads(row[0])
+        own = tagging.refold({part: value for part, value in state.items() if part not in SHARED}, folds)
+        if own != state:
+            write_workspace(db, own)
+    db.execute('DELETE FROM journal_meta WHERE key IN (?,?,?)', SHARED_KEYS)
+
+
 def _add_note(db, name: str, data: dict):
     """Records what a one-time step did in the upgrade note (Journal.upgrade_note) under `name`, inside the caller's
     transaction."""
@@ -575,14 +685,24 @@ class ImportConflict(ValueError):
 
 
 class Journal(Workspace):
-    def __init__(self, path: Path | None = None, *, dataset='live'):
+    """One environment's journal. `shared` is the journal keeping the tags, playbooks, filters, dashboards, checklists,
+    preferences and Units it uses: itself for Live and for a journal opened by its path, the Live journal for the Replay
+    journal of the data folder (made first when only Replay is used), and the journal given as shared= (a Live one).
+    A Replay journal first opened with a shared one gives its own settings to it (merge_settings)."""
+
+    def __init__(self, path: Path | None = None, *, dataset='live', shared: Journal | None = None):
         if dataset not in ('live', 'replay'):
             raise ValueError('Journal dataset must be live or replay.')
         self.dataset = dataset
         personal_folder = path is None
         if path is None:
             path = paths.database(dataset)
+            if dataset == 'replay' and shared is None:
+                shared = Journal()
         self.path = Path(path)
+        if shared is not None and shared.dataset != 'live':
+            raise ValueError('A journal shares the settings of a Live journal.')
+        self.shared = self if shared is None or Path(shared.path).resolve() == self.path.resolve() else shared
         self.path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
         newer = ('This journal was written by a newer version of MotiveWave Journal. '
                  'Update the app to open it.')
@@ -637,6 +757,8 @@ class Journal(Workspace):
                 _checklists_as_lists(db)
             if not db.execute("SELECT 1 FROM journal_meta WHERE key='drafts_without_windows'").fetchone():
                 _drafts_without_windows(db)
+            if self.shared is not self:            # last: every step above runs on this journal's own settings
+                self._share_settings(db, existed=bool(existing))
             trim = not db.execute("SELECT 1 FROM journal_meta WHERE key='prices_trimmed'").fetchone()
         if trim:
             self._trim_prices()
@@ -669,6 +791,42 @@ class Journal(Workspace):
             raise ValueError('This database belongs to the other trading environment.')
         if not stored and self.dataset == 'replay' and db.execute('SELECT 1 FROM executions LIMIT 1').fetchone():
             raise ValueError('An existing live journal cannot be relabelled as replay.')
+
+    def _share_settings(self, db, *, existed: bool) -> None:
+        """Until 0.4.17 Live and Replay each kept their own tags, playbooks, filters, dashboards, checklists,
+        preferences and Units. Inside this journal's write lock, on `db`, and then the shared journal's: this journal's
+        own settings join the shared journal's (merge_settings), stored there first, and then go from here
+        (drop_settings). The first time (journal_meta 'shared_settings' in the shared journal), when this journal
+        existed with settings of its own worth keeping (_own_settings), the data folder is backed up first
+        (backup.write, to <home>/backups/before-shared-settings-<UTC time>.zip) and the shared journal's upgrade note
+        says so once. Two files cannot commit as one, so every step is harmless to run again: one cut short is
+        finished at the next open, as long as this journal holds anything of its own."""
+        holds, keeps = _own_settings(db)
+        with self.shared.connect() as shared:
+            flag = "SELECT 1 FROM journal_meta WHERE key='shared_settings'"
+            if not holds and shared.execute(flag).fetchone():
+                return
+            shared.execute('BEGIN IMMEDIATE')
+            first = not shared.execute(flag).fetchone()
+            copy = None
+            if first and existed and keeps:
+                from . import backup
+                home = self.shared.path.parent
+                stamp = dt.datetime.now(dt.timezone.utc).strftime('%Y%m%dT%H%M%SZ')
+                copy, n = home / 'backups' / f'before-shared-settings-{stamp}.zip', 1
+                while copy.exists():
+                    n += 1
+                    copy = copy.with_name(f'before-shared-settings-{stamp}-{n}.zip')
+                copy = backup.write(copy, home)
+            folds, renamed = merge_settings(shared, db)
+            if first:
+                shared.execute("INSERT INTO journal_meta VALUES('shared_settings',?)",
+                               (encode({'folded': len(folds), 'renamed': renamed}),))
+                if copy is not None:
+                    names = '; '.join(f"Replay's filter {old} is now {new}" for old, new in renamed.items())
+                    _add_note(shared, 'shared_settings', {'backup': str(copy), 'renamed': renamed,
+                                                          'note': SHARED_NOTE + ('; ' + names if names else '') + '.'})
+        drop_settings(db, folds)
 
     def _backup_before_upgrade(self, db, version: int) -> Path | None:
         """SQLite's online backup of the journal as an older version left it, complete before the
@@ -769,9 +927,10 @@ class Journal(Workspace):
         'connections', the watched files that were removed (_one_connection); under 'stats_tabs', a saved choice of
         Stats tabs that is no longer used (_fixed_stats_tabs); under 'checklists', the checklists that became lists of
         yes/no questions (_checklists_as_lists); under 'drafts', the pre-trade drafts that lost their time window and
-        those cancelled with it (_drafts_without_windows); and under 'measurement_rules_3', every trade measured
-        again under MEASUREMENT_RULES 3 (recalculation_done). Each one-time step has a note in plain words, which
-        Settings shows once (unseen_notes)."""
+        those cancelled with it (_drafts_without_windows); under 'shared_settings', in the Live journal, Replay's
+        settings joining Live's and the backup taken first (_share_settings); and under 'measurement_rules_3', every
+        trade measured again under MEASUREMENT_RULES 3 (recalculation_done). Each one-time step has a note in plain
+        words, which Settings shows once (unseen_notes)."""
         with self.connect() as db:
             row = db.execute("SELECT value FROM journal_meta WHERE key='schema_upgrade'").fetchone()
         return json.loads(row[0]) if row else None
@@ -1066,11 +1225,17 @@ class Journal(Workspace):
                 data[key] = finite(data[key], key.replace('_', ' ').title())
         with self.connect() as db:
             db.execute('INSERT OR REPLACE INTO annotations VALUES(?,?)', (trade_id, encode(data)))
+        if tags:
+            # A review that names its tags only by name: each name no tag has is a tag in Other tags, as
+            # update_annotation makes one. Asked after the review is stored, so a first review is no new journal.
+            with self._settings(write=True) as db:
+                state = self._library(db)
+                if tagging.ensure_names(state, tags):
+                    tagging.save(db, state)
 
     def annotations(self) -> dict:
-        from . import tagging
+        state = self.tag_library()
         with self.connect() as db:
-            state = tagging.library(db)
             result = {}
             for row in db.execute('SELECT * FROM annotations'):
                 annotation = tagging.project(state, json.loads(row['payload']))
@@ -1079,29 +1244,32 @@ class Journal(Workspace):
             return result
 
     def update_annotation(self, trade_id: str, changes: dict, *, add_tags=(), remove_tags=()):
-        """Atomic partial edits for autosave: a tag click cannot overwrite notes or another group's tags."""
+        """Atomic partial edits for autosave: a tag click cannot overwrite notes or another group's tags. A new tag
+        name becomes a tag of the shared library, saved before the review."""
         with self.connect() as db:
             db.execute('BEGIN IMMEDIATE')
             previous = db.execute('SELECT payload FROM annotations WHERE trade_id=?', (trade_id,)).fetchone()
-            from . import tagging
-            state = tagging.library(db)
-            data = {**tagging.project(state, json.loads(previous[0]) if previous else {}), **changes}
-            tags = {str(t).strip() for t in data.get('tags', []) if str(t).strip()}
-            tags.difference_update(str(t).strip() for t in remove_tags)
-            tags.update(str(t).strip() for t in add_tags if str(t).strip())
-            data['tags'] = sorted(tags)
-            tagging.ensure_names(state, tags)
-            incoming = tagging.ids(state, add_tags)
-            for group, settings in state['groups'].items():
-                choices = [id for id in incoming if state['tags'][id]['group'] == group]
-                if settings['exclusive'] and choices:
-                    if len(choices) > 1:
-                        raise ValueError('Copied tags contain multiple choices in an exclusive group.')
-                    tags = {name for name in tags if state['tags'][next(iter(tagging.ids(state, [name])))]['group'] != group}
-                    tags.update(tagging.names(state, choices))
-            data['tags'] = sorted(tags)
-            data['tag_ids'] = sorted(tagging.ids(state, tags))
-            tagging.save(db, state)
+            with self._settings(db, write=True) as shared:
+                state = self._library(shared)
+                data = {**tagging.project(state, json.loads(previous[0]) if previous else {}), **changes}
+                tags = {str(t).strip() for t in data.get('tags', []) if str(t).strip()}
+                tags.difference_update(str(t).strip() for t in remove_tags)
+                tags.update(str(t).strip() for t in add_tags if str(t).strip())
+                data['tags'] = sorted(tags)
+                added = tagging.ensure_names(state, tags)
+                incoming = tagging.ids(state, add_tags)
+                for group, settings in state['groups'].items():
+                    choices = [id for id in incoming if state['tags'][id]['group'] == group]
+                    if settings['exclusive'] and choices:
+                        if len(choices) > 1:
+                            raise ValueError('Copied tags contain multiple choices in an exclusive group.')
+                        tags = {name for name in tags
+                                if state['tags'][next(iter(tagging.ids(state, [name])))]['group'] != group}
+                        tags.update(tagging.names(state, choices))
+                data['tags'] = sorted(tags)
+                data['tag_ids'] = sorted(tagging.ids(state, tags))
+                if added:
+                    tagging.save(shared, state)
             if data.get('initial_risk') is not None:
                 data['initial_risk'] = finite(data['initial_risk'], 'Initial risk', True)
             for name in ('planned_stop', 'planned_target'):
@@ -1114,19 +1282,17 @@ class Journal(Workspace):
         return {t['name']: t['group'] for t in self.tag_library()['tags'].values() if not t['retired']}
 
     def tag_library(self):
-        from . import tagging
-        with self.connect() as db:
-            return tagging.library(db)
+        """The one tag library of Live and Replay, kept with the shared settings (shared)."""
+        with self._settings() as db:
+            return self._library(db)
 
     def add_tag(self, name: str, group: str):
         """Create a reusable tag; no existing trade is retagged or deleted."""
-        from . import tagging
         name, group = name.strip(), group.strip()
         if not name or not group or len(name) > 64 or len(group) > 40:
             raise ValueError('Give the tag a name (up to 64 characters) and group (up to 40).')
-        with self.connect() as db:
-            db.execute('BEGIN IMMEDIATE')
-            state = tagging.library(db)
+        with self._settings(write=True) as db:
+            state = self._library(db)
             existing = tagging.ids(state, [name])
             if existing and state['tags'][next(iter(existing))]['group'] != group:
                 raise ValueError('That tag already belongs to another group. Use a different name.')
@@ -1137,56 +1303,47 @@ class Journal(Workspace):
 
     def add_tag_group(self, name: str):
         """Create an empty reusable tag category without inventing a placeholder tag."""
-        from . import tagging
         name = str(name).strip()
         if not name or len(name) > 40:
             raise ValueError('Give the category a name, up to 40 characters.')
-        with self.connect() as db:
-            db.execute('BEGIN IMMEDIATE')
-            state = tagging.library(db)
+        with self._settings(write=True) as db:
+            state = self._library(db)
             if name in state['groups']:
                 raise ValueError('That category already exists.')
             state['groups'][name] = {'exclusive': False, 'order': len(state['groups'])}
             tagging.save(db, state)
 
     def delete_tag(self, id):
-        """Remove a tag nothing uses. A used tag is refused: retire it, so its history keeps its name."""
-        from . import tagging
-        with self.connect() as db:
-            db.execute('BEGIN IMMEDIATE')
-            state = tagging.library(db)
+        """Remove a tag nothing uses, in Live or Replay. A used tag is refused: retire it, so its history keeps its
+        name."""
+        with self._settings(write=True) as db:
+            state = self._library(db)
             if id not in state['tags']:
                 raise ValueError('Unknown tag.')
-            uses = tagging.tag_uses(db, state, id)
+            uses = tagging.tag_uses(db, state, id, self._sharing())
             if uses:
                 raise ValueError(f"{state['tags'][id]['name']} {' and '.join(uses)}. "
                                  'Retire it instead: it leaves the tag panel and keeps its history.')
             tagging.save(db, tagging.delete_tag(state, id))
 
     def delete_tag_group(self, group):
-        """Remove an empty category that nothing names."""
-        from . import tagging
-        with self.connect() as db:
-            db.execute('BEGIN IMMEDIATE')
-            state = tagging.library(db)
+        """Remove an empty category that nothing names, in Live or Replay."""
+        with self._settings(write=True) as db:
+            state = self._library(db)
             if group not in state['groups']:
                 raise ValueError('Unknown category.')
-            uses = tagging.group_uses(db, state, group)
+            uses = tagging.group_uses(db, state, group, self._sharing())
             if uses:
                 raise ValueError(f"{group} {' and '.join(uses)}. Move or delete its tags first.")
             tagging.save(db, tagging.delete_group(state, group))
 
     def edit_tag(self, id, **changes):
-        from . import tagging
-        with self.connect() as db:
-            db.execute('BEGIN IMMEDIATE')
-            tagging.save(db, tagging.edit_tag(tagging.library(db), id, **changes))
+        with self._settings(write=True) as db:
+            tagging.save(db, tagging.edit_tag(self._library(db), id, **changes))
 
     def edit_tag_group(self, group, *, name=None, exclusive=None, move=0):
-        from . import tagging
-        with self.connect() as db:
-            db.execute('BEGIN IMMEDIATE')
-            state = tagging.library(db)
+        with self._settings(write=True) as db:
+            state = self._library(db)
             if group not in state['groups']:
                 raise ValueError('Unknown group.')
             if exclusive is not None:
@@ -1211,10 +1368,8 @@ class Journal(Workspace):
             tagging.save(db, state)
 
     def move_tag(self, id, offset):
-        from . import tagging
-        with self.connect() as db:
-            db.execute('BEGIN IMMEDIATE')
-            state = tagging.library(db)
+        with self._settings(write=True) as db:
+            state = self._library(db)
             tag = state['tags'][id]
             ordered = sorted((t for t in state['tags'].values() if t['group'] == tag['group']), key=lambda t: t['order'])
             position = next(i for i, t in enumerate(ordered) if t['id'] == id)
@@ -1223,15 +1378,20 @@ class Journal(Workspace):
                 item['order'] = index
             tagging.save(db, state)
 
+    def _tag_rows(self, db) -> tuple[dict, str]:
+        """(the tag library, the Time Zone), read from the shared settings while this journal's write lock is held on
+        `db`: what a change to a trade's or a day's tags here is checked against."""
+        with self._settings(db) as shared:
+            return self._library(shared), time_zone(shared)
+
     def set_trade_tag_group(self, trade, group, chosen):
-        from . import tagging
         with self.connect() as db:
             db.execute('BEGIN IMMEDIATE')
-            state = tagging.library(db)
+            state, zone = self._tag_rows(db)
             row = db.execute('SELECT payload FROM annotations WHERE trade_id=?', (trade.id,)).fetchone()
             old = json.loads(row[0]) if row else {}
             session = db.execute('SELECT payload FROM sessions WHERE key=?',
-                                 (tagging.day_key(trade.opened, time_zone(db)),)).fetchone()
+                                 (tagging.day_key(trade.opened, zone),)).fetchone()
             data = tagging.set_group(state, old, group, chosen, json.loads(session[0]) if session else {})
             db.execute('INSERT OR REPLACE INTO annotations VALUES(?,?)', (trade.id, encode(data)))
 
@@ -1239,7 +1399,7 @@ class Journal(Workspace):
         """Chooses a day's tags in one category. The day is a date in the journal's Time Zone (tagging.day_key)."""
         with self.connect() as db:
             db.execute('BEGIN IMMEDIATE')
-            state = tagging.library(db)
+            state, _ = self._tag_rows(db)
             key = dt.date.fromisoformat(str(date)).isoformat()
             row = db.execute('SELECT payload FROM sessions WHERE key=?', (key,)).fetchone()
             old = json.loads(row[0]) if row else {}
@@ -1258,13 +1418,11 @@ class Journal(Workspace):
     def save_playbook(self, name, rules, *, id=None, retired=False, color=None):
         """`color` is the playbook's own colour, six-digit hex; None keeps the one it has, if any."""
         import re
-        from . import tagging
         name = name.strip()
         if not name or len(name) > 64:
             raise ValueError('Give this playbook a name (up to 64 characters).')
-        with self.connect() as db:
-            db.execute('BEGIN IMMEDIATE')
-            state = tagging.library(db)
+        with self._settings(write=True) as db:
+            state = self._library(db)
             if id is not None and id not in state['playbooks']:
                 raise ValueError('Unknown playbook.')
             if any(group not in state['groups'] or len(tagging.ids(state, tags)) != len(set(tags))
@@ -1287,16 +1445,15 @@ class Journal(Workspace):
         return id
 
     def apply_playbook(self, trade, id):
-        from . import tagging
         with self.connect() as db:
             db.execute('BEGIN IMMEDIATE')
-            state = tagging.library(db)
+            state, zone = self._tag_rows(db)
             if id not in state['playbooks'] or state['playbooks'][id].get('retired'):
                 raise ValueError('Choose an active playbook.')
             row = db.execute('SELECT payload FROM annotations WHERE trade_id=?', (trade.id,)).fetchone()
             data = json.loads(row[0]) if row else {}
             row = db.execute('SELECT payload FROM sessions WHERE key=?',
-                             (tagging.day_key(trade.opened, time_zone(db)),)).fetchone()
+                             (tagging.day_key(trade.opened, zone),)).fetchone()
             session = json.loads(row[0]) if row else {}
             for group, choices in state['playbooks'][id]['rules'].items():
                 active = [i for i in choices if not state['tags'][i]['retired'] and 'trade' in state['tags'][i]['levels']]
@@ -1313,7 +1470,7 @@ class Journal(Workspace):
         does, and returns the names added. In a one-choice category the new tag replaces the day's."""
         with self.connect() as db:
             db.execute('BEGIN IMMEDIATE')
-            state = tagging.library(db)
+            state, _ = self._tag_rows(db)
             key = dt.date.fromisoformat(str(date)).isoformat()
             row = db.execute('SELECT payload FROM sessions WHERE key=?', (key,)).fetchone()
             old = json.loads(row[0]) if row else {}
@@ -1339,9 +1496,9 @@ class Journal(Workspace):
             data = {**(json.loads(row[0]) if row else {}), **changes}
             db.execute('INSERT OR REPLACE INTO sessions VALUES(?,?)', (key, encode(data)))
 
-
     def display_settings(self):
-        with self.connect() as db:
+        """MAE / MFE Units and the tick sizes, one choice for Live and Replay (shared)."""
+        with self._settings() as db:
             stored = db.execute("SELECT value FROM journal_meta WHERE key='display_settings'").fetchone()
         settings = {'excursion_unit': 'currency', 'tick_sizes': {}, **(json.loads(stored[0]) if stored else {})}
         settings.pop('excursion_policy', None)     # MAE / MFE Accuracy, until 0.4.7: only recorded ticks measure now
@@ -1362,8 +1519,7 @@ class Journal(Workspace):
         self._update_display_settings({}, tick=(symbol, value))
 
     def _update_display_settings(self, changes, *, tick=None):
-        with self.connect() as db:
-            db.execute('BEGIN IMMEDIATE')
+        with self._settings(write=True) as db:
             stored = db.execute("SELECT value FROM journal_meta WHERE key='display_settings'").fetchone()
             settings = {**(json.loads(stored[0]) if stored else {}), **changes}
             if tick is not None:

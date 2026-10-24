@@ -38,14 +38,14 @@ def test_two_simultaneous_autosaves_merge_instead_of_losing_a_field_or_tag(tmp_p
 
 def test_reusable_tags_and_legacy_tags_remain_available_without_auto_tagging(tmp_path):
     live = Journal(tmp_path / 'live.sqlite3')
-    replay = Journal(tmp_path / 'replay.sqlite3', dataset='replay')
+    replay = Journal(tmp_path / 'replay.sqlite3', dataset='replay', shared=live)
     live.annotate('a', {'tags': ['My old tag']})
     groups = tag_groups(live.tag_catalog(), live.annotations())
     assert groups['Other tags'] == ['My old tag']
     assert 'Breakout' in groups['Setup']
     live.add_tag('VWAP reclaim', 'My setups')
     assert live.tag_catalog()['VWAP reclaim'] == 'My setups'
-    assert 'VWAP reclaim' not in replay.tag_catalog()
+    assert replay.tag_catalog()['VWAP reclaim'] == 'My setups' and not replay.annotations()   # one library, own reviews
     assert live.annotations()['a']['tags'] == ['My old tag']
     assert Journal(live.path).tag_catalog()['VWAP reclaim'] == 'My setups'
     with pytest.raises(ValueError, match='another group'):
