@@ -120,7 +120,8 @@ def tag_editor(journal, library, ordered):
         journal.move_tag(id, 1)
         st.rerun()
     if delete.button('Delete Tag', key=common.key(journal, 'tag-delete'),
-                     help='Only a tag no trade, day, playbook, filter, checklist or draft uses; retire a used one instead.'):
+                     help='Only a tag no trade, day, playbook, filter, checklist or Tag My Next Trade uses; retire a '
+                          'used one instead.'):
         try:
             journal.delete_tag(id)
             st.rerun()

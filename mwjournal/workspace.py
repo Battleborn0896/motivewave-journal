@@ -517,12 +517,12 @@ class Workspace:
             state['preferences'].update(changes)
         return self._workspace_edit(save)
 
-    def save_draft(self, name, *, provider, account, symbol, start, end, tags=(), notes='', stop=None):
-        """A plan for the next trade on one account and contract inside a time window: its tags, a note and the
-        stop price R will use (risk.py). Drafts saved before 0.4.7 carry a dollar 'risk' instead."""
-        start, end = timestamp(start), timestamp(end)
-        if instant(end) <= instant(start) or (instant(end) - instant(start)).total_seconds() > 86400:
-            raise ValueError('A draft window must be positive and at most 24 hours, on the platform clock.')
+    def save_draft(self, *, provider, account, symbol, tags=(), notes='', stop=None):
+        """Tag My Next Trade: tags, a note and the stop price R will use (risk.py) for the next trade on one account
+        and exact contract, whenever it comes (reconcile_drafts). It waits for a trade the journal does not hold yet
+        (existing_trades, kept only while it waits), and replaces one still waiting on that account and contract.
+        Drafts saved before 0.4.7 carry a dollar 'risk' instead of a stop; drafts saved by 0.4.17 and earlier also keep
+        a name and a time window, no longer read."""
         existing = [t.id for t in self.trades()]
         def save(state, library):
             choices = tagging.ids(library, tags)
@@ -530,59 +530,68 @@ class Workspace:
                 raise ValueError('Choose active trade-level tags.')
             for group, settings in library['groups'].items():
                 if settings['exclusive'] and sum(library['tags'][id]['group'] == group for id in choices) > 1:
-                    raise ValueError('A draft has conflicting exclusive tags.')
+                    raise ValueError(f'Choose one tag in {group}.')
+            if not choices and not str(notes).strip() and stop is None:
+                raise ValueError('Choose a tag, or type a Stop or a note.')
+            scope = (label(provider), label(account), label(symbol).upper())
+            for draft in state['drafts'].values():
+                if draft['state'] == 'armed' and (draft['provider'], draft['account'], draft['symbol']) == scope:
+                    draft['state'] = 'cancelled'
+                    del draft['existing_trades']
             key = identifier()
-            state['drafts'][key] = {'id': key, 'name': label(name), 'provider': label(provider), 'account': label(account),
-                                    'symbol': label(symbol).upper(), 'start': start, 'end': end, 'tag_ids': sorted(choices),
-                                    'notes': str(notes)[:20000], 'stop': None if stop is None else finite(stop, 'Stop'),
-                                    'state': 'armed', 'trade_id': None, 'existing_trades': existing}
+            state['drafts'][key] = {'id': key, 'provider': scope[0], 'account': scope[1], 'symbol': scope[2],
+                                    'tag_ids': sorted(choices), 'notes': str(notes)[:20000],
+                                    'stop': None if stop is None else finite(stop, 'Stop'), 'state': 'armed',
+                                    'trade_id': None, 'existing_trades': existing,
+                                    'at': timestamp(dt.datetime.now(dt.timezone.utc).isoformat())}
             return key
         return self._workspace_edit(save)
 
     def reconcile_drafts(self, trades=None):
-        """Only explicit account/provider/exact-contract/time windows; ambiguity attaches nothing.
+        """Each waiting draft goes on the next trade on its account and exact contract: of the trades there that were
+        not in the journal when it was armed (existing_trades), the one opened first. Its tags fill the categories
+        nothing is chosen in yet, and its note and stop go on only where the trade has none. A tag retired since, or
+        two tags now in a one-choice category, attach nothing: the draft says Needs review and names that trade.
 
-        A consumed draft stays consumed after restart. No placeholder fill, P&L or price is invented.
-        Called after bridge import, not by a read-only render. Replay uses the user's market clock.
+        A used draft stays used after a restart. No placeholder fill, P&L or price is invented. Called after the
+        watcher's poll, not by a read-only render.
         """
-        if not any(d['state'] in ('armed', 'ambiguous') for d in self.workspace()['drafts'].values()):
+        if not any(d['state'] == 'armed' for d in self.workspace()['drafts'].values()):
             return
         trades = self.trades() if trades is None else trades
         with self.connect() as db:
             db.execute('BEGIN IMMEDIATE')
             state, library, zone = read(db), tagging.library(db), time_zone(db)
-            armed = [d for d in state['drafts'].values() if d['state'] in ('armed', 'ambiguous')]
-            before = [(d['state'], d.get('trade_id')) for d in armed]
-            candidates = {d['id']: [t for t in trades if (t.provider, t.account, t.symbol) ==
-                                   (d['provider'], d['account'], d['symbol']) and d['start'] <= t.opened < d['end']
-                                   and t.id not in d.get('existing_trades', [])]
-                          for d in armed}
-            for draft in armed:
-                possible = candidates[draft['id']]
-                overlap = any(t.id in {p.id for p in candidates[other['id']]} for t in possible
-                              for other in armed if other['id'] != draft['id'])
-                if len(possible) != 1 or overlap:
-                    draft['state'] = 'ambiguous' if possible else 'armed'
+            changed = False
+            for draft in (d for d in state['drafts'].values() if d['state'] == 'armed'):
+                scope, existing = (draft['provider'], draft['account'], draft['symbol']), set(draft['existing_trades'])
+                new = [t for t in trades if (t.provider, t.account, t.symbol) == scope and t.id not in existing]
+                if not new:
                     continue
-                trade = possible[0]
+                trade = min(new, key=lambda t: instant(t.opened))
+                changed = True
+                draft['trade_id'] = trade.id
+                # Only a draft that waits needs every trade held when it was armed: one used before each trade for
+                # years would otherwise keep a copy of the whole journal's list each.
+                del draft['existing_trades']
+                tags = [library['tags'].get(id) for id in draft['tag_ids']]
+                retired = any(tag is None or tag['retired'] or 'trade' not in tag['levels'] for tag in tags)
+                conflicting = any(settings['exclusive'] and sum(tag['group'] == group for tag in tags if tag) > 1
+                                  for group, settings in library['groups'].items())
+                if retired or conflicting:
+                    draft['state'] = 'needs review'
+                    continue
                 previous = db.execute('SELECT payload FROM annotations WHERE trade_id=?', (trade.id,)).fetchone()
                 review = tagging.project(library, json.loads(previous[0]) if previous else {})
+                # The trade's day in the Time Zone: in a category the draft chooses, that day's tags give way on it.
                 session = db.execute('SELECT payload FROM sessions WHERE key=?',
                                      (tagging.day_key(trade.opened, zone),)).fetchone()
                 session = json.loads(session[0]) if session else {}
-                # Existing manually chosen groups take precedence over a pre-trade draft.
-                existing = tagging.selected(library, review)
-                if any(id not in library['tags'] or library['tags'][id]['retired'] or 'trade' not in library['tags'][id]['levels']
-                       for id in draft['tag_ids']):
-                    draft['state'] = 'needs review'
-                    continue
-                if any(settings['exclusive'] and sum(library['tags'][id]['group'] == group for id in draft['tag_ids']) > 1
-                       for group, settings in library['groups'].items()):
-                    draft['state'] = 'needs review'
-                    continue
+                # A category already chosen on the trade keeps its choice.
+                chosen = tagging.selected(library, review)
                 for group in library['groups']:
                     choice = [id for id in draft['tag_ids'] if library['tags'][id]['group'] == group]
-                    if choice and not any(library['tags'][id]['group'] == group for id in existing):
+                    if choice and not any(library['tags'][id]['group'] == group for id in chosen):
                         review = tagging.set_group(library, review, group, choice, session)
                 if not review.get('notes') and draft['notes']:
                     review['notes'] = draft['notes']
@@ -593,14 +602,15 @@ class Workspace:
                         review['planned_stop'] = stop
                 review['draft_id'] = draft['id']
                 db.execute('INSERT OR REPLACE INTO annotations VALUES(?,?)', (trade.id, json.dumps(review, allow_nan=False)))
-                draft.update(state='attached', trade_id=trade.id)
-            # The watcher asks every second, and a draft can wait armed for hours: write only what changed.
-            if [(d['state'], d.get('trade_id')) for d in armed] != before:
+                draft['state'] = 'attached'
+            # The watcher asks every second, and a draft can wait for hours: write only when one found its trade.
+            if changed:
                 write(db, state)
 
     def cancel_draft(self, id):
         def cancel(state, library):
-            if id not in state['drafts'] or state['drafts'][id]['state'] == 'attached':
-                raise ValueError('Choose an unconsumed draft. Attached history is preserved.')
+            if id not in state['drafts'] or state['drafts'][id]['state'] not in ('armed', 'needs review'):
+                raise ValueError('Choose tags that are waiting or need review. Used tags stay on their trade.')
             state['drafts'][id]['state'] = 'cancelled'
+            state['drafts'][id].pop('existing_trades', None)        # read only while a draft waits
         return self._workspace_edit(cancel)

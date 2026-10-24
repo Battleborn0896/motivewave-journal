@@ -523,6 +523,45 @@ def _checklists_as_lists(db) -> None:
         _add_note(db, 'checklists', {'converted': converted, 'note': '; '.join(words) + '.'})
 
 
+def _drafts_without_windows(db) -> None:
+    """Once per journal, inside the caller's transaction. Until 0.4.17 a pre-trade draft had a name and waited for a
+    trade inside a time window, and one that more than one trade or draft could match was 'ambiguous'; now Tag My
+    Next Trade goes on the next trade on its account and contract, whenever it comes (Workspace.reconcile_drafts). A
+    draft waiting, ambiguous or needing review whose window has ended is cancelled. One still inside its window waits
+    for its trade under the new rule, the one starting last on each account and contract, as arming one now replaces
+    the one waiting there. Each takes its window's start as the time it was armed, which orders the Session menu's
+    list. Its name, start and end stay stored, unread, so this needs no backup."""
+    state = read_workspace(db)
+    before = encode(state['drafts'])
+    drafts = [draft for draft in state['drafts'].values() if 'end' in draft]       # saved with a window
+    now = dt.datetime.now(dt.timezone.utc)
+    cancelled = 0
+    for draft in drafts:
+        draft.setdefault('at', draft['start'])
+        if draft['state'] in ('armed', 'ambiguous', 'needs review') and instant(draft['end']) <= now:
+            draft['state'] = 'cancelled'
+            cancelled += 1
+        elif draft['state'] == 'ambiguous':
+            draft['state'] = 'armed'
+    waiting = {}
+    armed = [draft for draft in state['drafts'].values() if draft['state'] == 'armed']
+    for draft in sorted(armed, key=lambda d: instant(d['at'])):
+        scope = (draft['provider'], draft['account'], draft['symbol'])
+        if scope in waiting:
+            waiting[scope]['state'] = 'cancelled'
+            cancelled += 1
+        waiting[scope] = draft
+    if encode(state['drafts']) != before:
+        write_workspace(db, state)
+        ended = (f'; {cancelled} that had not found their trade were cancelled' if cancelled > 1 else
+                 '; one that had not found its trade was cancelled' if cancelled else '')
+        _add_note(db, 'drafts', {'cancelled': cancelled,
+                                 'note': 'Pre-trade drafts are now Tag My Next Trade, in the Session menu on Trades, '
+                                         'and go on your next trade on that contract with no time window'
+                                         + ended + '.'})
+    db.execute("INSERT OR REPLACE INTO journal_meta VALUES('drafts_without_windows',?)", (str(cancelled),))
+
+
 def _add_note(db, name: str, data: dict):
     """Records what a one-time step did in the upgrade note (Journal.upgrade_note) under `name`, inside the caller's
     transaction."""
@@ -596,6 +635,8 @@ class Journal(Workspace):
                 _fixed_stats_tabs(db)
             if not db.execute("SELECT 1 FROM journal_meta WHERE key='checklists_as_lists'").fetchone():
                 _checklists_as_lists(db)
+            if not db.execute("SELECT 1 FROM journal_meta WHERE key='drafts_without_windows'").fetchone():
+                _drafts_without_windows(db)
             trim = not db.execute("SELECT 1 FROM journal_meta WHERE key='prices_trimmed'").fetchone()
         if trim:
             self._trim_prices()
@@ -727,7 +768,8 @@ class Journal(Workspace):
         'answers', the typed setups and 'Followed my plan' answers that became tags (_answers_to_tags); under
         'connections', the watched files that were removed (_one_connection); under 'stats_tabs', a saved choice of
         Stats tabs that is no longer used (_fixed_stats_tabs); under 'checklists', the checklists that became lists of
-        yes/no questions (_checklists_as_lists); and under 'measurement_rules_3', every trade measured
+        yes/no questions (_checklists_as_lists); under 'drafts', the pre-trade drafts that lost their time window and
+        those cancelled with it (_drafts_without_windows); and under 'measurement_rules_3', every trade measured
         again under MEASUREMENT_RULES 3 (recalculation_done). Each one-time step has a note in plain words, which
         Settings shows once (unseen_notes)."""
         with self.connect() as db:

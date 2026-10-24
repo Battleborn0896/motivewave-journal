@@ -72,8 +72,7 @@ def test_a_draft_a_tag_click_and_a_merge_read_the_evenings_day_in_the_time_zone(
     journal.edit_tag(patient, levels=['trade', 'day'])
     journal.edit_tag_group('Mindset', exclusive=True)
     journal.set_day_tag_group('2026-10-07', 'Mindset', ['Patient'])
-    draft = journal.save_draft('Plan', provider='motivewave', account='paper', symbol='ESZ6',
-                               start='2026-10-08T05:00:00Z', end='2026-10-08T05:01:00Z', tags=['FOMO'])
+    draft = journal.save_draft(provider='motivewave', account='paper', symbol='ESZ6', tags=['FOMO'])
     first = evening(journal)
     journal.reconcile_drafts()
     # The draft's FOMO wins over its day's Patient in that one-choice category: the day it read is Oct 7.

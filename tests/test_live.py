@@ -318,29 +318,36 @@ def test_minutes_motivewaves_history_did_not_have_are_drawn_from_the_prints():
     assert any('Minutes with no platform candle' in n for n in chart['notes'])
 
 
-def test_cancelling_one_of_two_overlapping_drafts_lets_the_other_attach_at_the_next_poll(tmp_path):
+def test_the_watcher_puts_a_draft_on_the_trade_its_poll_finds_and_the_next_draft_waits_for_the_next(tmp_path):
     journal, bridge = watched(tmp_path)
-    ids = [journal.save_draft(f'Plan {i}', provider='motivewave-native:ws:live', account='SIM', symbol='NQZ6',
-                              start='2026-10-07T14:00:00Z', end='2026-10-07T14:05:00Z', notes=f'note {i}')
-           for i in range(2)]
+    first = journal.save_draft(provider='motivewave-native:ws:live', account='SIM', symbol='NQZ6', notes='first')
     write(bridge, [fill('buy', 'in', 20000, '2026-10-07T14:00:10Z')])
     worker = SyncWorker(journal)
     worker.poll()
-    assert {journal.workspace()['drafts'][id]['state'] for id in ids} == {'ambiguous'}
-    journal.cancel_draft(ids[0])
-    write(bridge, [tick(20001, '2026-10-07T14:00:11Z')])        # prices only: no fill changes
+    opened, = journal.trades()
+    assert journal.workspace()['drafts'][first]['trade_id'] == opened.id
+    # Armed while that trade is still open: it waits for the next one, even as the open one adds and exits.
+    second = journal.save_draft(provider='motivewave-native:ws:live', account='SIM', symbol='NQZ6', notes='second')
+    write(bridge, [fill('buy', 'add', 20001, '2026-10-07T14:00:20Z'),
+                   fill('sell', 'out', 20005, '2026-10-07T14:01:00Z'), fill('sell', 'out-2', 20005, '2026-10-07T14:01:00Z')])
     worker.poll()
-    assert journal.workspace()['drafts'][ids[1]]['state'] == 'attached'
+    assert journal.workspace()['drafts'][second]['state'] == 'armed'
+    write(bridge, [fill('sell', 'next', 20010, '2026-10-07T14:05:00Z')])
+    worker.poll()
+    following = next(t for t in journal.trades() if t.id != opened.id)
+    assert journal.workspace()['drafts'][second]['trade_id'] == following.id
+    notes = {id: review['notes'] for id, review in journal.annotations().items()}
+    assert notes == {opened.id: 'first', following.id: 'second'}
 
 
 def test_a_draft_waiting_for_its_trade_is_not_written_again_at_every_poll(tmp_path, monkeypatch):
     from mwjournal import workspace
     journal, bridge = watched(tmp_path)
-    id = journal.save_draft('Plan', provider='motivewave-native:ws:live', account='SIM', symbol='NQZ6',
-                            start='2026-10-07T15:00:00Z', end='2026-10-07T15:05:00Z')
-    write(bridge, [fill('buy', 'in', 20000, '2026-10-07T14:00:10Z')])         # outside its window
+    write(bridge, [fill('buy', 'in', 20000, '2026-10-07T14:00:10Z')])
     worker = SyncWorker(journal)
-    written = []
+    worker.poll()
+    id = journal.save_draft(provider='motivewave-native:ws:live', account='SIM', symbol='NQZ6', notes='Plan')
+    written = []                               # the trade open when it was armed is not its trade
     original = workspace.write
     monkeypatch.setattr(workspace, 'write', lambda db, state: written.append(1) or original(db, state))
     for second in range(3):

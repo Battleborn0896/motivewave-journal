@@ -164,7 +164,7 @@ def tag_uses(db, state, id):
         uses.append('is part of a playbook')
     quoted = [json.dumps(name) for name in names]
     if any(id in value or any(q in value for q in quoted) for value in _settings(db)):
-        uses.append('is named in a filter, checklist or draft')
+        uses.append('is named in a filter, a checklist or Tag My Next Trade')
     return uses
 
 

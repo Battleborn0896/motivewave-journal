@@ -674,9 +674,8 @@ def test_simple_navigation_and_optional_controls_do_not_remove_reviews(home):
     open_review(app)
     assert widget(app.metric, 'MAE').value != '—' and widget(app.metric, 'MFE').value != '—'
     assert not app.tabs and [e.label for e in app.main.expander] == ['More Filters', 'More Tagging Tools', 'Details']
-    # The session tools, then the list's own menus, all in the row above the list.
-    assert [b.proto.popover.label for b in app.main.get('popover')][:4] == [
-        'Check-Ins', 'Drafts', 'Filters', 'Merge Trades']
+    # The Session menu, then the list's own menus, all in the row above the list.
+    assert [b.proto.popover.label for b in app.main.get('popover')][:3] == ['Session', 'Filters', 'Merge Trades']
     assert not any(b.proto.popover.label in ('Chart settings', 'More', 'Trade filters', 'Options')
                    for b in app.get('popover'))
     assert not any(s.label == 'Review a trade' for s in app.selectbox)

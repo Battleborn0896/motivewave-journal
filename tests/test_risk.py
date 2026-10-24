@@ -252,10 +252,8 @@ def test_the_trade_list_reads_linked_orders_once_for_all_its_trades(monkeypatch)
 def test_a_draft_carries_a_stop_and_an_older_draft_with_a_dollar_risk_still_attaches(home):
     journal = Journal()
     long_one(journal)
-    draft = journal.save_draft('Plan', provider='motivewave', account='paper', symbol='ESZ6',
-                               start=at(100), end=at(400), stop=4995)
-    older = journal.save_draft('Older', provider='motivewave', account='paper', symbol='NQZ6',
-                               start=at(100), end=at(400))
+    draft = journal.save_draft(provider='motivewave', account='paper', symbol='ESZ6', stop=4995)
+    older = journal.save_draft(provider='motivewave', account='paper', symbol='NQZ6', notes='Older')
     with journal.connect() as db:                              # as 0.4.6 saved it: a dollar risk, no stop
         state = json.loads(db.execute("SELECT value FROM journal_meta WHERE key='workspace'").fetchone()[0])
         state['drafts'][older].pop('stop')
@@ -342,15 +340,15 @@ def test_notes_without_a_stop_order_asks_for_one(home):
     assert said(app.caption, 'No stop order 10 seconds after entry. Type your stop to get R.')
 
 
-def test_the_drafts_menu_arms_a_draft_with_a_stop_price(home):
+def test_tag_my_next_trade_takes_a_stop_price(home):
     journal = Journal()
     long_one(journal)
     app = open_app()
-    menu(app, 'Drafts')
+    menu(app)
     assert not any(w.label.startswith('Planned total risk') for w in app.number_input)
     widget(app.text_input, 'Stop · optional').set_value('4,995')          # typed as prices are shown
-    menu(app, 'Drafts', run=False)
-    press(app, 'Arm Draft')
+    menu(app, run=False)
+    press(app, 'Tag My Next Trade')
     (draft,) = journal.workspace()['drafts'].values()
     assert draft['stop'] == 4995 and 'risk' not in draft
 

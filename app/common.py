@@ -87,7 +87,7 @@ def navigation(view: str) -> dict:
         return {VIEW_KEY: 'Analytics', TAB_KEY: 'Dashboards'}
     if view == 'Daily review':
         return {VIEW_KEY: 'Trades', REPORT_KEY: True}
-    if view == 'Live session':              # the session tools are the bar at the top of Trades
+    if view == 'Live session':              # the session tools are the Session menu at the top of Trades
         return {VIEW_KEY: 'Trades'}
     return {VIEW_KEY: 'Analytics' if view in ('Edge', 'Analytics') else view}
 

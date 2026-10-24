@@ -138,8 +138,7 @@ def test_named_journal_scoped_draft_reconciles_against_new_mirrored_fills(home):
     capture = seed_preview(home)
     id = journals.create(capture, 'Practice', [('motivewave', 'paper')])
     target = journals.open_named(capture, id)
-    draft = target.save_draft('Next trade', provider='motivewave', account='paper', symbol='ESZ6',
-                               start='2026-10-07T14:05:00Z', end='2026-10-07T14:07:00Z', tags=['Patient'])
+    draft = target.save_draft(provider='motivewave', account='paper', symbol='ESZ6', tags=['Patient'])
     second(capture)
     target = journals.open_named(capture, id)
     assert target.workspace()['drafts'][draft]['state'] == 'attached'
