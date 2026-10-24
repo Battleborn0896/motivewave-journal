@@ -252,8 +252,8 @@ def playbook_panel(journal, trade, library, chosen):
                          else tagging.matches(library, r['tag_ids'], {'rules': rules}))]
             s = summary(rows)
             win_rate = f"{s['win_rate']:.1f}%" if s['win_rate'] is not None else '—'
-            st.write(common.md(f"{s['count']} closed trades entered before this one · Win Rate {win_rate} · "
-                               f"Average Trade {common.money(s['expectancy'], trade.currency)}"))
+            st.write(common.md(f"{s['count']} trade{'' if s['count'] == 1 else 's'} closed before this entry · "
+                               f"Win Rate {win_rate} · Average Trade {common.money(s['expectancy'], trade.currency)}"))
 
 
 def day_panel(journal, date):

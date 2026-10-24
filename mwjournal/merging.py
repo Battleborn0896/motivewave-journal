@@ -25,7 +25,7 @@ def compound(id, legs):
         raise ValueError('Merge at least two complete closed trades. Missing fills/prices must be reconciled first.')
     scope = {(t.provider, t.account, t.symbol, t.currency, t.direction, t.point_value) for t in legs}
     if len(scope) != 1:
-        raise ValueError('Merged trades need the same provider, account, exact contract, currency, direction and multiplier.')
+        raise ValueError('Merged trades need the same account, exact contract, currency, direction and dollars per point.')
     opened, closed = min(t.opened for t in legs), max(t.closed for t in legs)
     if (instant(closed) - instant(opened)).total_seconds() > 86400:
         raise ValueError('Merge reviews within one 24-hour window, not unrelated weeks of trading.')

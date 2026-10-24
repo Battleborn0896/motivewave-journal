@@ -436,8 +436,9 @@ def numbers(journal, trade, annotation: dict, zone) -> None:
         # At the newest price the MAE and MFE beside it were measured with, so the three always agree.
         result, label = common.open_pnl(trade, metric), 'Open P&L'
         if result is not None:
-            why = (f'Realised so far: {money(trade.net, trade.currency)}, plus the {trade.open_qty:g} still held if '
-                   f"closed at {humanize.price(metric['last_price'])}, the last recorded price, before the exit's fees.")
+            held = f"{trade.open_qty:g} contract{'' if trade.open_qty == 1 else 's'}"
+            why = (f'Realised so far: {money(trade.net, trade.currency)}, plus the {held} still held as if closed at '
+                   f"{humanize.price(metric['last_price'])}, the last recorded price, before the exit's fees.")
         elif trade.net is not None:
             # No measured price: the line under these numbers says why (common.no_excursions).
             shown, why = '—', f'Realised so far: {money(trade.net, trade.currency)}.'

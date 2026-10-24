@@ -359,6 +359,20 @@ def test_a_stop_typed_with_a_thousands_comma_is_the_same_price(home):
     assert not app.exception and journal.annotations()[trade.id]['planned_stop'] == 19980.25
 
 
+def test_check_this_combination_says_which_earlier_trades_it_counts(home):
+    """Only trades closed before this entry count: one entered earlier but still open at this entry does not."""
+    journal = Journal()
+    journal.ingest([fill('a-in', 'buy', 5000, '2026-10-07T14:00:00Z'), fill('a-out', 'sell', 5002, '2026-10-07T14:05:00Z'),
+                    fill('b-in', 'buy', 20000, '2026-10-07T14:10:00Z', symbol='NQZ6'),
+                    fill('b-out', 'sell', 20010, '2026-10-07T14:40:00Z', symbol='NQZ6'),
+                    fill('c-in', 'buy', 5000, '2026-10-07T14:20:00Z'), fill('c-out', 'sell', 5001, '2026-10-07T14:25:00Z')])
+    for trade in journal.trades():
+        journal.annotate(trade.id, {'tags': ['Breakout']})
+    this = next(t for t in journal.trades() if t.opened.startswith('2026-10-07T14:20'))
+    app = pick(open_app(), this.id)
+    assert said(app.markdown, r'1 trade closed before this entry · Win Rate 100.0% · Average Trade +\$96.00')
+
+
 # ---------------------------------------------------------------- one word for each thing, and a short ?
 
 APP = Path(__file__).resolve().parents[1] / 'app'

@@ -1034,6 +1034,7 @@ def test_trades_the_study_writes_show_up_without_any_setup():
     # An open position: bought at 5000 with a $2 fee, and the replay's last print is 5001, one ES point up.
     result = widget(app.metric, 'Open P&L')
     assert result.value == '+$48.00' and 'closed at 5,001,' in result.help and 'Realised so far: -$2.00' in result.help
+    assert 'the 1 contract still held' in result.help
 
 
 def test_group_tag_clicks_autosave_and_preserve_legacy_tags_and_plan(home):
