@@ -490,8 +490,8 @@ never counts. **MAE / MFE Units** only rescales that one moment:
   [Micro equity](https://www.cmegroup.com/education/courses/micro-e-mini-futures/micro-e-mini-futures-products-overview),
   [NQ](https://www.cmegroup.com/markets/equities/nasdaq/e-mini-nasdaq-100.contractSpecs.html) and
   [MNQ](https://www.cmegroup.com/markets/equities/nasdaq/micro-e-mini-nasdaq-100.contractSpecs.html)
-  specifications); any other contract's trade shows **Set Tick Size** under its MAE and MFE, set once for the
-  contract.
+  specifications); any other contract's trade shows **Set Tick Size** under its MAE and MFE, which sets it, or
+  corrects it, once for the contract.
 - **R**: the dollars divided by the risk to the trade's stop; without a stop there is no R, never zero.
 
 Long 2 NQ at 100, price dips to 97, you sell 1 at 102, then the runner dips to 96: MAE is 3 points on the 2 contracts

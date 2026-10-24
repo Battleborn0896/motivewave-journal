@@ -259,7 +259,9 @@ def _schema_4(db) -> dict:
         if [key for *_, key, _ in found] != [date] or found[0][3] != merged:
             db.executemany('DELETE FROM sessions WHERE key=?', [(key,) for *_, key, _ in found])
             db.execute('INSERT INTO sessions VALUES(?,?)', (date, encode(merged)))
-            moved += 1
+            # Moved for the trader only when a review of this date was kept in another zone: one kept in the Time
+            # Zone loses only the zone from its key, and stays the day it was.
+            moved += any(elsewhere for elsewhere, *_ in found)
     # Only what happened: a journal without a day stored in another zone, or a ticked box, is told just its zone.
     done = [*(['day reviews moved to their dates'] if moved else []),
             *(['the day checkboxes became Day tags'] if ticked else [])]
@@ -515,6 +517,7 @@ def one_waiting(drafts: dict) -> int:
         scope = contract(draft['provider'], draft['account'], draft['symbol'])
         if scope in waiting:
             waiting[scope]['state'] = 'cancelled'
+            waiting[scope].pop('existing_trades', None)     # read only while a draft waits (Workspace.save_draft)
             cancelled += 1
         waiting[scope] = draft
     return cancelled

@@ -330,6 +330,8 @@ def test_tags_waiting_in_both_journals_wait_for_the_next_trade_once(home):
     journal.reconcile_drafts()
     # One contract keeps one waiting, the one armed last; the trade only the named journal held is not the next one.
     assert sorted(d['state'] for d in journal.workspace()['drafts'].values()) == ['armed', 'cancelled']
+    # Like any cancelled one, it keeps no list of the trades held when it was armed: that is read only while waiting.
+    assert [d for d in journal.workspace()['drafts'].values() if 'existing_trades' in d and d['state'] != 'armed'] == []
     following = trade_on(journal, 'paper', 21)
     journal.reconcile_drafts()
     used, = [d for d in journal.workspace()['drafts'].values() if d['state'] == 'attached']

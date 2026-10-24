@@ -30,7 +30,7 @@ import tag_controls
 from views import checklists, daily, preferences, session
 from common import money
 from mwjournal.chart import STOP, chart_window, trade_chart
-from mwjournal.model import WHY_INCOMPLETE, finite, instant
+from mwjournal.model import WHY_INCOMPLETE, finite, instant, product
 from mwjournal.metrics import excursions
 from mwjournal.scope import LIVE_TICKS, provenance
 from mwjournal import humanize, risk, units
@@ -460,8 +460,8 @@ def numbers(journal, trade, annotation: dict, zone) -> None:
         st.caption(common.no_excursions(journal, trade))
     elif unit == 'r' and plan.risk is None and plan.why:
         st.caption(plan.why)                       # in R, why there is none: no stop reported, typed or found
-    elif unit == 'ticks' and units.tick_size(trade.symbol, journal.display_settings()['tick_sizes']) is None:
-        common.tick_size_menu(journal, trade)      # in ticks, the one thing missing, set once for the contract
+    elif unit == 'ticks' and product(trade.symbol) not in units.TICK_SIZES:
+        common.tick_size_menu(journal, trade)      # in ticks, set (or corrected) once for the contract
 
 
 def executions_panel(journal, trade, zone) -> None:

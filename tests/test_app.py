@@ -1221,6 +1221,12 @@ def test_missing_risk_and_unknown_tick_size_show_unavailable_with_one_time_setup
     press(app, 'Save Tick Size')
     assert widget(app.metric, 'MFE').value == '6.00 ticks'
     assert journal.display_settings()['tick_sizes'] == {'CUSTOM': .5}
+    # Typed wrong, it is corrected in the same place, which opens on the size saved.
+    assert widget(app.number_input, 'Minimum price increment').value == .5
+    widget(app.number_input, 'Minimum price increment').set_value(.25)
+    press(app, 'Save Tick Size')
+    assert widget(app.metric, 'MFE').value == '12.00 ticks'
+    assert journal.display_settings()['tick_sizes'] == {'CUSTOM': .25}
     show(app, 'Export')
     from views import export
     table = export.trades_csv(common.rows_for(journal), 'UTC').splitlines()
@@ -1239,6 +1245,10 @@ def test_one_measurement_from_recorded_ticks_in_every_unit_and_no_word_about_how
     display_setting(app, 'MAE / MFE Units', 'points')
     assert widget(app.metric, 'MFE').value == '2.50 pts'          # the same moment as the $250
     assert not any('9,999' in m.value for m in app.metric)
+    display_setting(app, 'MAE / MFE Units', 'ticks')
+    assert widget(app.metric, 'MFE').value == '10.00 ticks'       # ES's tick size is known: nothing to set
+    assert not any(n.label == 'Minimum price increment' for n in app.number_input)
+    display_setting(app, 'MAE / MFE Units', 'points')
     assert not any(s.label == 'Measurement' for s in app.selectbox)
     # The trade's own recorded ticks need no label: no caption says how MAE / MFE were measured, nor any note.
     open_review(app)

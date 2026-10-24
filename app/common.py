@@ -380,12 +380,14 @@ def excursion_values(journal, trade, metric, risk=None):
 
 
 def tick_size_menu(journal, trade):
-    """Where a contract with no known tick size gets one: under the trade's MAE and MFE, which ticks cannot show
-    without it."""
+    """The one place a contract's tick size is set, and changed when it was typed wrong: under the trade's MAE and
+    MFE in ticks, for a contract whose tick size is not known (units.TICK_SIZES)."""
+    given = units.tick_size(trade.symbol, journal.display_settings()['tick_sizes']) or 0.
     with st.popover('Set Tick Size for ' + trade.symbol):
         with st.form(key(journal, 'tick-size-' + trade.id)):
-            size = st.number_input('Minimum price increment', min_value=0., value=0., step=.000001, format='%.8f',
-                                    help='The smallest price step of this exact contract, such as 0.25 for ES.')
+            size = st.number_input('Minimum price increment', min_value=0., value=float(given), step=.000001,
+                                   format='%.8f',
+                                   help='The smallest price step of this exact contract, such as 0.25 for ES.')
             if st.form_submit_button('Save Tick Size'):
                 if size <= 0:
                     st.error('Enter a confirmed tick size greater than zero.')
@@ -712,7 +714,7 @@ def point_value_line(journal, trade) -> None:
     worth = money(trade.point_value, trade.currency, signed=False,
                   decimals=0 if float(trade.point_value).is_integer() else 2)
     with st.container(horizontal=True, vertical_alignment='center', gap='small'):
-        st.caption(md(f'{trade.symbol}: {worth} per point'))
+        st.caption(md(f'{trade.symbol}: {worth} per point'), width='content')     # Change sits beside it
         with st.popover('Change'):
             multiplier_form(journal, 'trade-multiplier', trade.symbol)
 
