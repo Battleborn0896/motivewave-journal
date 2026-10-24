@@ -13,6 +13,7 @@ import sqlite3
 import uuid
 from pathlib import Path
 
+from .chart import CONTEXT as CHART_CONTEXT
 from .model import instant, product, timestamp
 from .scope import allows_source
 from .store import Journal, ImportConflict, drop_copies, encode, minute
@@ -20,7 +21,7 @@ from .workspace import label
 
 KEY = 'journal_registry'
 RECENT = dt.timedelta(minutes=3)       # the study writes the last two minutes' candles again as each minute closes
-CONTEXT = dt.timedelta(minutes=120)    # the widest chart context before entry (Trades → Options)
+CONTEXT = dt.timedelta(minutes=CHART_CONTEXT)    # the chart's minutes before entry (chart.chart_window)
 
 
 def registry(capture):
@@ -167,7 +168,7 @@ def follow(journal, trade):
                 # From the newest price held: a print is never written again, but the study writes the last two
                 # minutes' candles again as each minute closes. A print, from the start of its minute: the capture
                 # journal may have packed that minute since, and the packed row is stored at the minute's start.
-                # Nothing held yet: from the chart's widest context.
+                # Nothing held yet: from where the trade's chart starts.
                 if held is None:
                     start = timestamp(instant(trade.opened) - CONTEXT)
                 elif json.loads(held['payload']).get('resolution_seconds'):

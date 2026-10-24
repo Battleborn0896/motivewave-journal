@@ -384,24 +384,20 @@ def excursion_values(journal, trade, metric, risk=None):
     return tuple(units.value(metric, name, unit, risk=risk, tick=tick) for name in ('mae', 'mfe'))
 
 
-def excursion_help(journal, trade, at_risk):
-    unit = excursion_unit(journal)
-    if unit == 'r' and not units.positive(at_risk):
-        # Why there is no risk, as the Stop box under Notes says it: no stop reported, a stop on the wrong side...
-        st.info(risk.plan_for(journal, trade).why or 'R needs a stop: the stop order you place with the trade '
-                'counts, or type your stop under Notes → Stop.')
-    if unit == 'ticks' and units.tick_size(trade.symbol, journal.display_settings()['tick_sizes']) is None:
-        with st.popover('Set Tick Size for ' + trade.symbol):
-            with st.form(key(journal, 'tick-size-' + trade.id)):
-                size = st.number_input('Minimum price increment', min_value=0., value=0., step=.000001, format='%.8f',
-                                        help='Use the confirmed minimum price increment for this exact contract; '
-                                             'this starting value is not an inferred specification.')
-                if st.form_submit_button('Save Tick Size'):
-                    if size <= 0:
-                        st.error('Enter a confirmed tick size greater than zero.')
-                        return
-                    journal.set_tick_size(trade.symbol, size)
-                    st.rerun()
+def tick_size_menu(journal, trade):
+    """Where a contract with no known tick size gets one: under the trade's MAE and MFE, which ticks cannot show
+    without it."""
+    with st.popover('Set Tick Size for ' + trade.symbol):
+        with st.form(key(journal, 'tick-size-' + trade.id)):
+            size = st.number_input('Minimum price increment', min_value=0., value=0., step=.000001, format='%.8f',
+                                    help='Use the confirmed minimum price increment for this exact contract; '
+                                         'this starting value is not an inferred specification.')
+            if st.form_submit_button('Save Tick Size'):
+                if size <= 0:
+                    st.error('Enter a confirmed tick size greater than zero.')
+                    return
+                journal.set_tick_size(trade.symbol, size)
+                st.rerun()
 
 
 # What the trade rows show besides fills, measurements, linked orders and multipliers (changes()): the journal_meta
@@ -692,21 +688,23 @@ def filter_rule(journal, rows: list[dict], prefix='filter', start=None) -> dict:
 # ---------------------------------------------------------------- a contract's multiplier
 
 def multiplier_form(journal, form_key: str, symbol: str) -> None:
-    """Dollars per full price point per contract, asked on a trade whose contract has none: known futures roots come
-    with one; anything else stays without P&L until it is set here."""
+    """Dollars per full price point per contract: asked at the top of a trade whose contract has none (known futures
+    roots come with one; anything else stays without P&L until it is set), and changed under the trade's Details
+    when it is wrong. Saving measures every trade again, so that contract's trades follow it."""
     in_use = next((t.point_value for t in journal.trades() if t.symbol == symbol and t.point_value), None)
     with st.form(key(journal, form_key)):
         st.caption('Instrument: ' + symbol)
-        pv = st.number_input('Currency per price point', min_value=.000001,
+        pv = st.number_input('Dollars per point', min_value=.000001,
                              value=float(in_use or point_value(symbol) or 1.),
                              key=key(journal, form_key + '-value-' + symbol),
-                             help='ES 50, MES 5, NQ 20, MNQ 2, CL 1000; 1 for shares.')
+                             help='What one point is worth on one contract (ES 50, NQ 20, MNQ 2); saving '
+                                  "recalculates this contract's trades.")
         tick = st.number_input('Tick size · optional', min_value=0.,
                                value=float(units.tick_size(symbol, journal.display_settings()['tick_sizes']) or 0.),
                                format='%.6f', key=key(journal, form_key + '-tick-' + symbol),
                                help='One minimum price increment, not its dollar value. Zero leaves it unchanged. '
                                     'ES/MES/NQ/MNQ are detected automatically. Other contracts need a confirmed size.')
-        if st.form_submit_button('Set Multiplier and Recalculate'):
+        if st.form_submit_button('Save and Recalculate'):
             journal.set_instrument(symbol, pv)
             if tick > 0:
                 journal.set_tick_size(symbol, tick)

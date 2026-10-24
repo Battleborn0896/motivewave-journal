@@ -84,10 +84,13 @@ recovered.
 Run this with a simulation account:
 
 1. Enter two contracts, exit one, add one, then flatten the remaining two.
-2. Confirm the journal creates one flat-to-flat trade with four fills and the correct maximum size.
-3. Confirm the chart shows the entry and exit markers and that an observed tick path exists.
-4. Save a stop for the trade, then read its **More → After Exit** sentence once the 15 minutes after the exit
-   are over: how much further the price went your way before reaching your stop, in your MAE / MFE unit.
+2. Confirm the journal creates one flat-to-flat trade with four fills, and that its **Contracts** reads 2, the
+   most held at once.
+3. Confirm the chart shows the entry and exit markers, 30 minutes either side, and that the trade's **Details**
+   lists the four fills once and draws its MAE / MFE path.
+4. Save a stop for the trade, check its **R**, then read the After Exit sentence under **Details** once the 15
+   minutes after the exit are over: how much further the price went your way before reaching your stop, in your
+   MAE / MFE unit.
 5. Create `Orderflow` and `Psychology` tag categories, add tags and apply them to the trade. Pick its Setup
    tag and give it a Rating, 1 to 5 stars.
 6. Click the trade's day header in the list: on its Daily Report Card choose Day tags and a Rating, then

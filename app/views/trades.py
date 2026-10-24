@@ -1,10 +1,11 @@
-"""Trades: a day-by-day list on the left; the selected trade's chart, tags, review and checklist on the right.
+"""Trades: a day-by-day list on the left; the selected trade on the right, as one page that scrolls.
 
-One way to pick a trade: click its row, or step with Prev / Next. Click a day's header instead and its Daily
-Report Card takes the trade's place, until a trade is clicked or Back to Trades. Above both, the session
-tools (a check-in timer, check-ins, pre-trade drafts, a session checklist) share a row with Filters and
-Options. The list follows the background watcher by itself, without moving the selection, the open tab or a
-note being typed.
+The trade's page, top to bottom: its numbers, the chart beside its tags and Rating, its note and Stop, its
+checklist when there is one, and a closed Details fold with everything looked at now and then. One way to pick
+a trade: click its row, or step with Prev / Next. Click a day's header instead and its Daily Report Card takes
+the trade's place, until a trade is clicked or Back to Trades. Above both, the session tools (a check-in timer,
+check-ins, pre-trade drafts, a session checklist) share a row with Filters and Merge Trades. The list follows
+the background watcher by itself, without moving the selection, the Details fold or a note being typed.
 """
 
 from __future__ import annotations
@@ -14,6 +15,7 @@ import hashlib
 import html
 import itertools
 import json
+import math
 import time
 
 import pandas as pd
@@ -40,7 +42,9 @@ REPORT = 'report-card-open'  # per environment: the Daily Report Card is shown i
 # are drawn again: one clock, so a fill and the prices after it reach the page together.
 LIVE = '1s'
 KEPT = 'live-chart-kept'   # per session: the prices an open trade's chart has drawn before the current minute
-CONTEXT = [15, 30, 60, 120, 0]
+# The Details fold's key: one for every trade, so it stays open or closed from trade to trade and through an open
+# trade's redraws.
+DETAILS = 'trade-details'
 LONG, SHORT = theme.SERIES[0], theme.SERIES[1]
 # Where a trade's MAE / MFE prices came from (scope.provenance), said in its caption only when they were not the
 # ticks the study recorded while you traded.
@@ -242,7 +246,7 @@ def render(journal, rows, *, every=None) -> None:
 
 
 def top_row(journal, every, open_rows, rows=None):
-    """The session tools, then Filters and Options: one row above the list. Returns the trades the filters
+    """The session tools, then Filters and Merge Trades: one row above the list. Returns the trades the filters
     keep."""
     # The timer takes the width it needs and the menus the rest; on a narrow window the menus move below it
     # together rather than one by one.
@@ -257,8 +261,8 @@ def top_row(journal, every, open_rows, rows=None):
                         help='Narrow the list by market, date, account, tag, playbook or rating; the saved filter '
                              'here applies to every page.'):
             shown = preferences.filter_menu(journal, rows)
-        with st.popover('Options', help='Chart settings, and merging or splitting trades.'):
-            options_menu(journal, rows)
+        with st.popover('Merge Trades', help='Review several trades as one, or split a merged trade again.'):
+            merge_menu(journal, rows)
     return shown
 
 
@@ -275,7 +279,7 @@ def report_card(journal, rows) -> None:
 @st.fragment(run_every=LIVE)
 def follow(capture, seen) -> None:
     """Redraws the page when the background watcher has added or changed trades. Widgets keep their
-    keys, so the selection, the open tab and text being typed stay as they are."""
+    keys, so the selection, the Details fold and text being typed stay as they are."""
     if common.changes(capture) != seen:
         st.rerun()
 
@@ -333,13 +337,8 @@ def open_row(journal, row, zone, selected) -> None:
     st.markdown(row_html({**row, 'open_net': open_net}, zone, selected), unsafe_allow_html=True)
 
 
-def options_menu(journal, rows) -> None:
-    """The rarely used actions, together: how the chart is drawn, and merging or splitting reviews."""
-    st.markdown('**Chart**')
-    st.selectbox('Context each side', CONTEXT, format_func=lambda n: f'{n} minutes',
-                 key=common.key(journal, 'chart-context'), help='Minutes of chart before entry and after exit.')
-    st.checkbox('Show Stop', value=True, key=common.key(journal, 'chart-levels'))
-    st.markdown('**Merge Trades**')
+def merge_menu(journal, rows) -> None:
+    """Merging trades to review them as one, and splitting a merged trade again."""
     originals = [r for r in rows if r['status'] == 'closed' and r.get('complete', True) and not r.get('merge_leg_ids')]
     by_id = {r['id']: r for r in originals}
     zone = common.display_zone(journal)
@@ -367,7 +366,9 @@ def options_menu(journal, rows) -> None:
 
 
 def detail(journal, trade, ids, zone) -> None:
-    """The selected trade: its header, result, chart and tags, notes and the less used details."""
+    """The selected trade as one page: its header and numbers, the chart beside its tags and Rating, its note and
+    Stop, its checklist when one exists, and the Details fold. At about 1440 x 900 the chart and tags are on
+    screen when the trade opens, and the note and Stop are one short scroll below them."""
     selected = common.key(journal, 'selected-trade')
 
     def move(offset):
@@ -387,43 +388,54 @@ def detail(journal, trade, ids, zone) -> None:
     live = trade.status == 'open'          # an open trade follows the market: see live_numbers at the end
     (live_numbers if live else numbers)(journal, trade, annotation, zone)
     if trade.point_value is None:
-        st.warning(f'{trade.symbol} has no dollars-per-point multiplier yet, so its P&L cannot be calculated. Set it here.')
+        st.warning(f'{trade.symbol} has no dollars per point yet, so its P&L cannot be calculated. Set it here.')
         common.multiplier_form(journal, 'trade-multiplier', trade.symbol)
-    overview, notes, checks, more = st.tabs(['Chart & Tags', 'Notes', 'Checklist', 'More'],
-                                            key=common.key(journal, 'trade-tabs'))
-    with overview:
-        chart_col, tag_col = st.columns([1.35, 1], gap='small')
-        with chart_col:
-            (live_chart if live else chart_panel)(journal, trade, annotation, zone)
-        with tag_col:
-            tag_controls.render(journal, trade)
-    with notes:
-        review_form(journal, trade, annotation)
-    with checks:
+    chart_col, tag_col = st.columns([1.35, 1], gap='small')
+    with chart_col:
+        notes = (live_chart if live else chart_panel)(journal, trade, zone)
+    with tag_col:
+        tag_controls.render(journal, trade)
+    review_form(journal, trade, annotation)
+    if checklists.offered(journal):
+        theme.section('Checklist')
         checklists.run_panel(journal, trade, prefix='trade-' + trade.id)
-    with more:
-        metrics, executions, after = st.tabs(['MAE / MFE', 'Executions', 'After Exit'],
-                                             key=common.key(journal, 'trade-more-tabs'))
-        with executions:
-            executions_panel(journal, trade, zone)
-        with metrics:
-            (live_excursions if live else excursions_panel)(journal, trade, annotation, zone)
-        with after:
-            if words := after_exit.line(journal, trade, common.excursion_unit(journal)):
-                st.markdown(common.md(words))
+    details(journal, trade, zone, notes or [])
+
+
+def details(journal, trade, zone, chart_notes) -> None:
+    """What is looked at now and then, in one fold that opens closed: the fills, the stop order's moves and the
+    chart's notes, the MAE / MFE path, the After Exit sentence, and the contract's dollars per point. What is in it
+    is drawn only while it is open. Its state is kept under DETAILS, so it stays open while an open trade redraws
+    every second, after the watcher redraws the page, and from trade to trade."""
+    fold = st.expander('Details', key=common.key(journal, DETAILS), on_change='rerun')
+    if not fold.open:
+        return
+    with fold:
+        executions_panel(journal, trade, zone)
+        stop_orders(journal, trade, zone)
+        if chart_notes:
+            theme.subsection('Chart')
+            for note in chart_notes:
+                st.caption(note)
+        (live_excursions if trade.status == 'open' else excursions_panel)(journal, trade, zone)
+        if words := after_exit.line(journal, trade, common.excursion_unit(journal)):
+            theme.subsection('After Exit')
+            st.markdown(common.md(words))
+        if trade.point_value is not None:          # a contract without one is asked for at the top of the trade
+            common.multiplier_form(journal, 'trade-multiplier', trade.symbol)
 
 
 def numbers(journal, trade, annotation: dict, zone) -> None:
-    """The trade's result, MAE, MFE and peak contracts, and where their prices came from when they were not the
+    """The trade's result, MAE, MFE, R and contracts, and where their prices came from when they were not the
     ticks the study recorded while you traded (PRICES_FROM). An open trade's result is what it would be if closed
-    at the newest price its MAE and MFE were measured with."""
+    at the newest price its MAE and MFE were measured with, and its R is that result's."""
     unit = common.excursion_unit(journal)
     metric = common.best_display_metric(journal, trade)
     prices_from = PRICES_FROM.get(metric.get('provenance')) if common.measured(metric) else None
     st.caption(' · '.join(part for part in (common.span(trade.opened, trade.closed, zone), prices_from) if part))
     if getattr(trade, 'merge_leg_ids', None):
         st.caption(f'Merged from {len(trade.merge_leg_ids)} trades · their own fills and notes are kept')
-    cols = st.columns([1.25, 1, 1, .75])
+    cols = st.columns([1.25, 1, 1, .85, .8])
     result, label, shown = trade.net, 'Net P&L', 'Unknown'
     why = (' '.join(WHY_INCOMPLETE[reason] for reason in trade.incomplete) if trade.incomplete
            else 'This contract has no dollars per point yet.' if trade.net is None else 'After recorded fees.')
@@ -444,18 +456,29 @@ def numbers(journal, trade, annotation: dict, zone) -> None:
     mae, mfe = common.excursion_values(journal, trade, metric, plan.risk)
     cols[1].metric('MAE', common.excursion_amount(mae, unit, trade.currency), help=units.description(unit))
     cols[2].metric('MFE', common.excursion_amount(mfe, unit, trade.currency), help=units.description(unit))
-    cols[3].metric('Peak size', f'{trade.max_qty:g}', help='The most contracts held at once.')
+    # R: the result over the risk to the trade's stop (risk.py); without a stop, why there is none.
+    if result is not None and plan.risk:
+        cols[3].metric('R', f'{result / plan.risk:+.2f}R',
+                       help=f'{label} divided by the risk to your stop, {money(plan.risk, trade.currency, signed=False)}.')
+    else:
+        cols[3].metric('R', '—', help=plan.why or None)
+    cols[4].metric('Contracts', f'{trade.max_qty:g}', help='The most contracts held at once.')
     if not common.measured(metric) or common.replay_ticks_pending(journal, trade):
         st.caption(common.no_excursions(journal, trade))
     elif unit == 'r' and plan.risk is None and plan.why:
         st.caption(plan.why)                       # in R, why there is none: no stop reported, typed or found
+    elif unit == 'ticks' and units.tick_size(trade.symbol, journal.display_settings()['tick_sizes']) is None:
+        common.tick_size_menu(journal, trade)      # in ticks, the one thing missing, set once for the contract
 
 
 def executions_panel(journal, trade, zone) -> None:
+    """The trade's fills, the one place they are listed, with what is wrong with them, and a merged trade's own
+    trades."""
+    theme.subsection('Fills')
     if trade.flags:
         st.warning('Data quality: ' + ' · '.join(trade.flags))
     st.dataframe(pd.DataFrame([{'Time': common.moment(f['ts'], zone), 'Role': f['role'].title(), 'Side': f['side'].title(),
-                                'Qty': f['qty'], 'Price': f['price'], 'Fee': f['commission']} for f in trade.fills]),
+                                'Contracts': f['qty'], 'Price': f['price'], 'Fee': f['commission']} for f in trade.fills]),
                  hide_index=True, width='stretch', column_config={'Fee': common.money_column('Fee', trade.currency)})
     if getattr(trade, 'merge_leg_ids', None):
         original = getattr(journal, 'original', journal)
@@ -467,6 +490,19 @@ def executions_panel(journal, trade, zone) -> None:
                                           'Notes': leg_reviews.get(id, {}).get('notes', '')}
                                          for index, id in enumerate(trade.merge_leg_ids)], trade.currency,
                                         results=['Net P&L']), hide_index=True)
+
+
+def stop_orders(journal, trade, zone) -> None:
+    """How the trade's stop orders stood and moved, each by its number, 1 for the first placed, so its moves read
+    as one order's. Nothing without one: the Stop box says so."""
+    events = [e for e in journal.protection_events(trade) if e.role == 'stop']      # take profit plays no part
+    if not events:
+        return
+    theme.subsection('Stop Orders')
+    number = {id: n for n, id in enumerate(dict.fromkeys(e.order_id for e in events), 1)}
+    st.dataframe(pd.DataFrame([{'Time': common.moment(e.ts, zone), 'Stop': number[e.order_id],
+                                'Status': e.state.title(), 'Price': e.price} for e in events]),
+                 hide_index=True, width='stretch')
 
 
 def empty(journal) -> None:
@@ -486,14 +522,14 @@ def empty(journal) -> None:
 
 
 def review_form(journal, trade, a: dict) -> None:
-    """The trade's review: its note and its Stop. Its setup is a Setup tag, chosen on Chart & Tags."""
+    """The trade's review, two boxes side by side under the chart: its note and its Stop. Its setup is a Setup
+    tag, and how well it was traded its Rating, both beside the chart."""
+    note, c1 = st.columns([2.3, 1], gap='small')
     notes_key = common.key(journal, 'notes-' + trade.id)
-    st.text_area('Review notes', a.get('notes', ''), placeholder='What worked? What will I change next time?',
-                 key=notes_key, height=160, on_change=tag_controls.save_field,
-                 args=(journal, trade.id, 'notes', notes_key), help='Saves when you leave the box.')
-    theme.section('Trade Plan')
+    note.text_area('Review notes', a.get('notes', ''), placeholder='What worked? What will I change next time?',
+                   key=notes_key, height=120, on_change=tag_controls.save_field,
+                   args=(journal, trade.id, 'notes', notes_key), help='Saves when you leave the box.')
     plan = risk.plan_for(journal, trade)
-    c1 = st.columns(2)[0]
     if plan.source != 'merged':
         shown = stop_text(plan.stop)
         # The key carries what the box was filled with, so a stop saved here, or a stop order that arrives
@@ -549,70 +585,84 @@ def stop_caption(plan, currency) -> str:
     return text
 
 
-def excursions_panel(journal, trade, a: dict, zone) -> None:
-    theme.section('MAE / MFE')
+def excursions_panel(journal, trade, zone) -> None:
+    """The MAE / MFE path in the MAE / MFE unit, with its CSV: the MAE and MFE themselves are in the numbers at the
+    top. Only for a measured trade; the line under those numbers says why another has none."""
+    # The one measurement the trade is shown with everywhere (common.best_display_metric): nothing to choose.
+    m = shown = common.best_display_metric(journal, trade)
+    if not common.measured(m) or not m.get('path'):
+        return
+    theme.subsection('MAE / MFE Path')
     unit = common.excursion_unit(journal)
     at_risk = risk.plan_for(journal, trade).risk
     tick = units.tick_size(trade.symbol, journal.display_settings()['tick_sizes'])
-    # The one measurement the trade is shown with everywhere (common.best_display_metric): nothing to choose.
-    m = shown = common.best_display_metric(journal, trade)
-    if not common.measured(m):
-        st.info(common.no_excursions(journal, trade))
-    else:
-        common.excursion_help(journal, trade, at_risk)
-        mae, mfe = common.excursion_values(journal, trade, m, at_risk)
-        c1, c2 = st.columns(2)
-        c1.metric('Maximum adverse excursion', common.excursion_amount(mae, unit, trade.currency), help=units.description(unit))
-        c2.metric('Maximum favorable excursion', common.excursion_amount(mfe, unit, trade.currency), help=units.description(unit))
-        if at_risk and unit != 'r':
-            c1, c2 = st.columns(2)
-            c1.metric('MAE / risk', f"{m['mae'] / at_risk:.2f}R" if m.get('mae') is not None else '—',
-                      help='MAE divided by the risk to your stop.')
-            c2.metric('MFE / risk', f"{m['mfe'] / at_risk:.2f}R" if m.get('mfe') is not None else '—',
-                      help='MFE divided by the risk to your stop.')
-        if m.get('path'):
-            # Every recorded price is read for it: once the trade is closed, not again every second.
-            full = trade.closed is not None and st.checkbox('Show/export full recorded trade path',
-                                                            key=common.key(journal, 'full-path-' + trade.id))
-            if trade.closed is None:
-                st.caption('The full recorded path can be shown and exported once the trade is closed.')
-            if full:
-                samples = journal.prices(trade.symbol, m['source'], start=trade.opened, end=trade.closed)
-                clock = journal.trade_clock(trade)
-                m = excursions(trade, samples, m['source'], now=clock, max_path_points=None)
-                st.caption(f"{len(m['path']):,} recorded prices",
-                           help='Every observation that was recorded, not proof that the feed delivered every tick. '
-                                'OHLC paths remain bounds, not exact ticks. The CSV times are UTC.')
-                st.download_button('Download Full Path CSV', pd.DataFrame(m['path']).to_csv(index=False),
-                                   file_name=trade.id + '-recorded-path.csv', mime='text/csv',
-                                   key=common.key(journal, 'path-export-' + trade.id))
-            path = pd.DataFrame(m['path'])
-            if path.empty:
-                st.info('No matching recorded path observations remain for this source.')
-                return
-            if full and len(path) > 20000:
-                st.caption('The CSV has every price; the plot uses fewer so it stays responsive.')
-                path = pd.DataFrame(shown['path'])
-            fig = go.Figure()
-            high = [units.path_value(p, 'high', unit, risk=at_risk, tick=tick) for p in path.to_dict('records')]
-            low = [units.path_value(p, 'low', unit, risk=at_risk, tick=tick) for p in path.to_dict('records')]
-            if all(v is None for v in high + low):
-                st.info('No path values are available in these units yet.')
-            else:
-                times = common.wall_clock(path.ts, zone)
-                fig.add_scatter(x=times, y=high, name='Upper bound', line_color=theme.UP)
-                fig.add_scatter(x=times, y=low, name='Lower bound', line_color=theme.DOWN)
-                fig.add_hline(y=0, line_color=theme.MUTED)
-                for fill in trade.fills:
-                    fig.add_vline(x=common.wall_clock([fill['ts']], zone)[0], line_width=1,
-                                  line_dash='dot', line_color=theme.UP if fill['role'] == 'entry' else theme.DOWN)
-                # uirevision: a zoom survives the redraws of an open trade's path.
-                fig.update_layout(height=290, yaxis_title=f'Move from your average entry ({units.suffix(unit, trade.currency)})',
-                                  xaxis_title=f'Time ({humanize.zone_name(zone, trade.opened)})', uirevision=trade.id)
-                if unit == 'currency':
-                    theme.money_axis(fig, trade.currency, [*high, *low])
-                st.plotly_chart(fig, width='stretch', config=theme.PLOTLY_CONFIG,
-                                key=common.key(journal, 'path-' + trade.id))
+    # Every recorded price is read for it: once the trade is closed, not again every second.
+    full = trade.closed is not None and st.checkbox('Show/export full recorded trade path',
+                                                    key=common.key(journal, 'full-path-' + trade.id))
+    if trade.closed is None:
+        st.caption('The full recorded path can be shown and exported once the trade is closed.')
+    if full:
+        samples = journal.prices(trade.symbol, m['source'], start=trade.opened, end=trade.closed)
+        clock = journal.trade_clock(trade)
+        m = excursions(trade, samples, m['source'], now=clock, max_path_points=None)
+        st.caption(f"{len(m['path']):,} recorded prices",
+                   help='Every observation that was recorded, not proof that the feed delivered every tick. '
+                        'OHLC paths remain bounds, not exact ticks. The CSV times are UTC.')
+        st.download_button('Download Full Path CSV', pd.DataFrame(m['path']).to_csv(index=False),
+                           file_name=trade.id + '-recorded-path.csv', mime='text/csv',
+                           key=common.key(journal, 'path-export-' + trade.id))
+    path = pd.DataFrame(m['path'])
+    if path.empty:
+        st.info('No matching recorded path observations remain for this source.')
+        return
+    if full and len(path) > 20000:
+        st.caption('The CSV has every price; the plot uses fewer so it stays responsive.')
+        path = pd.DataFrame(shown['path'])
+    points = path.to_dict('records')
+    high = [units.path_value(p, 'high', unit, risk=at_risk, tick=tick) for p in points]
+    low = [units.path_value(p, 'low', unit, risk=at_risk, tick=tick) for p in points]
+    if all(v is None for v in high + low):
+        st.info('No path values are available in these units yet.')
+        return
+    fig = go.Figure()
+    times = common.wall_clock(path.ts, zone)
+    fig.add_scatter(x=times, y=high, name='Upper bound', line_color=theme.UP)
+    fig.add_scatter(x=times, y=low, name='Lower bound', line_color=theme.DOWN)
+    fig.add_hline(y=0, line_color=theme.MUTED)
+    for fill in trade.fills:
+        fig.add_vline(x=common.wall_clock([fill['ts']], zone)[0], line_width=1,
+                      line_dash='dot', line_color=theme.UP if fill['role'] == 'entry' else theme.DOWN)
+    # uirevision: a zoom survives the redraws of an open trade's path.
+    fig.update_layout(height=290, yaxis_title=f'Move from your average entry ({units.suffix(unit, trade.currency)})',
+                      xaxis_title=f'Time ({humanize.zone_name(zone, trade.opened)})', uirevision=trade.id)
+    if unit == 'currency':
+        theme.money_axis(fig, trade.currency, [*high, *low])
+    st.plotly_chart(fig, width='stretch', config=theme.PLOTLY_CONFIG, key=common.key(journal, 'path-' + trade.id))
+    for sentence in moment_notes(trade, shown, points, unit, tick):
+        st.caption(common.md(sentence))
+
+
+def moment_notes(trade, metric, path, unit, tick) -> list[str]:
+    """One sentence for MAE, and one for MFE, when the path drawn in points or ticks reaches another distance than
+    the one shown. MAE and MFE are the moment the move times the contracts held was largest (metrics.extremes), so
+    a runner can dip further with fewer contracts: the path reaches -4 pts while MAE is 3.00 pts on the 2 contracts
+    held at the first dip. In dollars and R the path and the numbers are the same amounts."""
+    if unit not in ('points', 'ticks'):
+        return []
+    said = []
+    for name, side, sign, words in (('mae', 'low', -1, 'the most money was at risk'),
+                                    ('mfe', 'high', 1, 'the most money was in your favor')):
+        moved = metric.get(name + '_points')
+        reach = max((sign * p['point_' + side] for p in path if p.get('point_' + side) is not None), default=None)
+        amount = units.value(metric, name, unit, tick=tick)
+        if moved is None or reach is None or amount is None or math.isclose(max(0., reach), moved, abs_tol=1e-9):
+            continue
+        dollars = metric.get(name)
+        held = round(dollars / (moved * trade.point_value), 6) if dollars and moved and trade.point_value else None
+        contracts = f" with {held:g} contract{'' if held == 1 else 's'}" if held else ''
+        said.append(f'{name.upper()} counts the moment {words}: '
+                    f'{common.excursion_amount(amount, unit, trade.currency)}{contracts}.')
+    return said
 
 
 def window_prices(journal, trade, source, start, end) -> list:
@@ -654,17 +704,17 @@ def default_source(sources) -> str:
     return next((s for s in sources if provenance(s) == 'platform-bars'), sources[0])
 
 
-def chart_panel(journal, trade, annotation: dict, zone) -> None:
+def chart_panel(journal, trade, zone) -> list[str]:
+    """The trade's 1-minute chart, chart.CONTEXT minutes each side, with its fills and its stop. Returns the
+    chart's notes on its candles, which Details shows."""
     sources = journal.price_sources(trade.symbol, trade)
     if not sources:
         st.info('No candles yet for this contract. Add the study to its chart in MotiveWave, or import '
                 '1-minute bars or ticks in Import.')
-        return
+        return []
     source = default_source(sources)
-    context = st.session_state.get(common.key(journal, 'chart-context'), CONTEXT[0])
-    levels = st.session_state.get(common.key(journal, 'chart-levels'), True)
     clock = journal.trade_clock(trade)
-    start, end = chart_window(trade, context, now=clock)
+    start, end = chart_window(trade, now=clock)
     samples = window_prices(journal, trade, source, start, end)
     prints = []
     # The trade's own recorded prints: live, or its replay run's.
@@ -683,11 +733,10 @@ def chart_panel(journal, trade, annotation: dict, zone) -> None:
                           prints=prints, prints_source=recorded or LIVE_TICKS)
     candles = payload['series']['data']
     if candles:
-        overlays = payload['overlays'] if levels else {**payload['overlays'], 'levels': []}
         tvchart.show([payload['series']], key='journal-candles-' + trade.id, height=320,
                      title=f'{trade.symbol} · 1m · {humanize.zone_name(zone, trade.opened)}', intraday=True,
                      precision=4 if trade.symbol.startswith(('6', 'Z')) else 2,
-                     watermark=trade.symbol, timezone=zone, trade_overlays=overlays,
+                     watermark=trade.symbol, timezone=zone, trade_overlays=payload['overlays'],
                      visible_range={'from': candles[0]['time'], 'to': max(candles[-1]['time'], candles[0]['time'] + 60)})
         # Drawn dots rather than '●', which IBM Plex Sans does not have.
         legend = ' '.join(f"<span class='mwj-dot' style='background:{colour}'></span>{name}" for name, colour in
@@ -706,21 +755,7 @@ def chart_panel(journal, trade, annotation: dict, zone) -> None:
         st.warning('The chart is capped at 10,000 minutes from entry. This position was held beyond that window.')
     if journal.capture_gaps(source, start=start.isoformat(), end=end.isoformat(), symbol=trade.symbol):
         st.warning('This chart window has a recorded capture gap. Missing prices can understate excursions.')
-    with st.expander('Chart Data & Orders'):
-        for note in payload['notes']:
-            st.caption(note)
-        if events:
-            # Each stop order by its number, 1 for the first placed, so its moves read as one order's.
-            number = {id: n for n, id in enumerate(dict.fromkeys(e.order_id for e in events), 1)}
-            st.dataframe(pd.DataFrame([{'Time': common.moment(e.ts, zone), 'Stop': number[e.order_id],
-                                        'Status': e.state.title(), 'Price': e.price} for e in events]),
-                         hide_index=True, width='stretch')
-        else:
-            st.caption('No stop order was recorded for this trade. Type your stop under Notes.')
-        st.dataframe(pd.DataFrame([{'Time': common.moment(f['ts'], zone), 'Role': f['role'].title(),
-                                    'Side': f['side'].title(), 'Qty': f['qty'], 'Price': f['price']}
-                                   for f in trade.fills]),
-                     hide_index=True, width='stretch')
+    return payload['notes']
 
 
 def following(journal, trade, annotation: dict, zone) -> None:
@@ -730,8 +765,9 @@ def following(journal, trade, annotation: dict, zone) -> None:
     numbers(journal, trade, annotation, zone)
 
 
-# An open trade's numbers, chart and MAE / MFE are drawn again every LIVE from what has been stored by then, the
-# rest of the page staying as it is. A closed trade's are drawn once.
+# An open trade's numbers, chart and MAE / MFE path are drawn again every LIVE from what has been stored by then, the
+# rest of the page staying as it is. A closed trade's are drawn once. On the page's own run each returns what the
+# function returns, so the chart's notes reach Details.
 live_numbers = st.fragment(run_every=LIVE)(following)
 live_chart = st.fragment(run_every=LIVE)(chart_panel)
 live_excursions = st.fragment(run_every=LIVE)(excursions_panel)

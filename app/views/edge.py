@@ -299,7 +299,7 @@ def show_costs(closed, stat):
         cols[2].metric('Fees Per Trade', money(costs['fee_per_trade'], currency, signed=False),
                        help='Recorded fees divided by the number of closed trades.')
         r_help = (f"Across {stat['risk_recorded']} trades with a stop." if stat['expectancy_r'] is not None
-                  else 'Needs a stop: the stop order you place with a trade counts, or type it under Notes.')
+                  else 'Needs a stop: the stop order you place with a trade counts, or type it in the trade\'s Stop box.')
         if costs['fee_per_r'] is not None:
             r_help += f" Recorded fees average {costs['fee_per_r']:.3f}R across {costs['risk_recorded']} trades."
         cols[3].metric('Average R', f"{stat['expectancy_r']:+.2f}R" if stat['expectancy_r'] is not None else '—',

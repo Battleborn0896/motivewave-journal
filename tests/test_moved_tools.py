@@ -124,22 +124,24 @@ def test_the_report_card_opens_even_with_no_trades_yet():
 
 # ---------------------------------------------------------------- the checklist beside the trade
 
-def test_a_checklist_runs_in_the_selected_trades_checklist_tab(home):
+def test_a_checklist_runs_in_the_selected_trades_checklist_section(home):
     journal = seed_preview(home)
     journal.save_checklist('Plan', checklists.starter())
     trade = journal.trades()[0]
     app = open_app()
-    assert [t.label for t in app.tabs][:4] == ['Chart & Tags', 'Notes', 'Checklist', 'More']
-    assert 'Checklists' not in [t.label for t in app.tabs]          # no longer under More
+    assert not app.tabs and said(app.main.markdown, '>Checklist<')     # a section of the trade's page
     press(app, 'Start New Run')
     press(app, 'Yes — continue my plan')
     runs = list(journal.workspace()['runs'].values())
     assert len(runs) == 1 and runs[0]['trade_id'] == trade.id and runs[0]['complete']
 
 
-def test_with_no_checklist_yet_the_tab_links_to_the_editor_on_setup(home):
+def test_with_no_checklist_a_trade_has_no_checklist_section_and_the_session_menu_links_to_the_editor(home):
     seed_preview(home)
     app = open_app()
+    assert not said(app.main.markdown, '>Checklist<') and not any(s.label == 'Run checklist' for s in app.selectbox)
+    assert not any(b.label == 'Build a Checklist' for b in app.button)  # nothing on the trade asks for one
+    menu(app, 'Checklist')
     press(app, 'Build a Checklist')
     assert app.session_state[common.TOOL_KEY] == 'Tags'
     assert app.session_state['tag-settings-tabs-live'] == 'Checklists'

@@ -167,16 +167,21 @@ def test_one_way_to_pick_a_trade_a_row_click_or_prev_and_next(home):
     assert chosen(app) == newer.id and said(app.main.caption, '1 of 2')
 
 
-def test_options_hold_the_chart_settings_and_merging_next_to_filters(home):
+def test_merge_trades_sits_next_to_filters_and_the_chart_has_nothing_to_set(home):
     journal = seed_preview(home)
     journal.ingest([fill('n1', 'buy', 1, 5010, '2026-10-07T15:10:00Z'), fill('n2', 'sell', 1, 5012, '2026-10-07T15:12:00Z')])
     app = open_app()
     popovers = [p.proto.popover.label for p in app.main.get('popover')]
-    assert popovers[3:5] == ['Filters', 'Options']                 # after the session tools' three menus
-    assert not any(label in popovers for label in ('More', 'Chart settings', 'Trade filters'))
-    assert not any(s.label == 'Chart price source' for s in app.selectbox)    # MotiveWave's candles, nothing to pick
-    assert widget(app.selectbox, 'Context each side').value == 15
-    assert not any(s.label in ('Chart timezone', 'Review a trade') for s in app.selectbox)
+    assert popovers[3:5] == ['Filters', 'Merge Trades']            # after the session tools' three menus
+    assert not any(label in popovers for label in ('More', 'Options', 'Chart settings', 'Trade filters'))
+    # The chart: MotiveWave's candles, 30 minutes each side, the stop always drawn. Nothing to pick.
+    assert not any(s.label in ('Chart price source', 'Context each side', 'Chart timezone', 'Review a trade')
+                   for s in app.selectbox)
+    assert not any(c.label == 'Show Stop' for c in app.checkbox)
+    pick(app, next(t.id for t in journal.trades() if t.fills[0]['execution_id'] == 'entry'))   # the one with a stop
+    chart = next(json.loads(c.proto.json_args)['spec'] for c in app.main.get('component_instance')
+                 if 'journal-candles' in c.proto.id)
+    assert [level['label'] for level in chart['tradeOverlays']['levels']] == ['Stop · R']
     widget(app.multiselect, 'Original trades to merge').set_value([t.id for t in journal.trades()])
     press(app, 'Merge Selected')
     assert len(merging.ReviewJournal(journal).trades()) == 1 and len(listed(app)) == 1

@@ -244,13 +244,19 @@ def test_a_time_of_day_takes_the_rows_date_whatever_the_columns_are_called():
     assert not preview.errors and preview.fills[0][0].ts == '2026-10-07T14:00:23+00:00'
 
 
+def test_a_trades_chart_shows_30_minutes_each_side(tmp_path):
+    trade = round_trip(Journal(tmp_path / 'journal.sqlite3'))
+    assert chart_window(trade) == (instant(trade.opened) - dt.timedelta(minutes=30),
+                                   instant(trade.closed) + dt.timedelta(minutes=30))
+
+
 def test_chart_window_is_bounded_for_long_open_positions(tmp_path):
     trade = round_trip(Journal(tmp_path / 'journal.sqlite3'))
     trade.closed = None
-    start, end = chart_window(trade, 30, now=instant('2027-10-07T14:00:00Z'))
+    start, end = chart_window(trade, now=instant('2027-10-07T14:00:00Z'))
     assert (end - start).total_seconds() == 10000 * 60
     # An open replay trade's chart ends at its replay clock: the replay's later minutes are stored already.
-    start, end = chart_window(trade, 30, now=instant(trade.opened) + dt.timedelta(minutes=5))
+    start, end = chart_window(trade, now=instant(trade.opened) + dt.timedelta(minutes=5))
     assert end == instant(trade.opened) + dt.timedelta(minutes=5)
 
 
