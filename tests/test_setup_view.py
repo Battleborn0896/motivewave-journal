@@ -1,5 +1,5 @@
 """Settings: one status line in one of three words, the one step that is missing in one line, Time Zone and
-MAE / MFE Units with a small Advanced heading, three pages of real setup, one About line, and a sidebar with
+MAE / MFE Units and nothing else to set, three pages of real setup, one About line, and a sidebar with
 nothing to unfold. Everything that was its own page before 0.4.5 stays two clicks from the sidebar. Disposable
 journals only, in a temporary data home."""
 
@@ -64,20 +64,18 @@ def live_bar(symbol, price, ts):
 
 # ---------------------------------------------------------------- the first page
 
-def test_the_first_page_reads_status_then_the_missing_step_then_two_settings_then_advanced_then_the_pages():
+def test_the_first_page_reads_status_then_the_missing_step_then_two_settings_then_the_pages():
     app = open_app('Settings')
     assert states(app.main) == ['Not recording'] and steps_shown(app) == ['install']
-    status, step, advanced, pages = order(
-        app, "data-state='Not recording'", 'then add the study to your chart', '>Advanced<', '>More Settings<')
-    assert status < step < advanced < pages
+    status, step, pages = order(app, "data-state='Not recording'", 'then add the study to your chart', '>More Settings<')
+    assert status < step < pages
     # No heading repeats the page's name, and the step is one plain line: no box, no title.
     assert not said(app.main.markdown, "<div class='mwj-section'>Settings<") and not said(app.main.markdown, '**Install')
-    # Time Zone and MAE / MFE Units, then hide weekends under Advanced: nothing else to set here. There is no
-    # MAE / MFE Accuracy: only recorded ticks measure a trade.
+    # Time Zone and MAE / MFE Units: nothing else to set here, and no Advanced heading. There is no MAE / MFE
+    # Accuracy, as only recorded ticks measure a trade, and no weekends to hide: the calendar shows them when traded.
     assert [s.label for s in app.main.selectbox] == ['Time Zone', 'MAE / MFE Units']
-    assert [c.label for c in app.main.checkbox] == ['Hide Weekends in Calendar']
-    assert "<div class='mwj-subsection'>Advanced</div>" in [m.value for m in app.main.markdown][advanced]
-    assert not app.main.expander and not app.main.get('popover')         # a plain heading, nothing that folds
+    assert not app.main.checkbox and not said(app.main.markdown, '>Advanced<')
+    assert not app.main.expander and not app.main.get('popover')         # nothing that folds
     assert not any('filter' in s.label.lower() for s in app.main.selectbox)  # the saved filter lives in Filters
     assert [b.label for b in app.main.button if b.key and b.key.startswith('setup-open-')] == [
         'Tags, Playbooks & Checklists ›', 'Data ›']
@@ -473,16 +471,6 @@ def test_units_and_the_time_zone_are_set_on_settings_and_saved_for_the_journal(h
     assert widget(app.metric, 'MFE').value.endswith('pts')
 
 
-def test_hide_weekends_is_under_advanced_and_saved_for_the_calendar(home):
-    journal = seed_preview(home)
-    app = open_app('Settings')
-    widget(app.checkbox, 'Hide Weekends in Calendar').check().run()
-    assert not app.exception and journal.workspace()['preferences']['hide_weekends'] is True
-    show(app, 'Dashboard')                          # the default page's calendar leaves the weekend out
-    days = [c.value for c in app.main.caption]
-    assert 'Fri' in days and 'Sat' not in days and 'Sun' not in days
-
-
 @pytest.mark.parametrize('page', ['Trades', 'Edge'])
 def test_the_saved_filter_is_chosen_in_the_filters_menu_and_applies_to_every_page(home, page):
     journal = seed_preview(home)
@@ -777,7 +765,7 @@ def test_dashboard_page_filters_still_save_on_their_own(home):
     app.multiselect(key='page-filter-default-directions-live').set_value(['short'])
     press(app, 'Save Page Filters')
     page = next(iter(journal.workspace()['dashboards'].values()))
-    assert page['filters']['directions'] == ['short'] and widget(app.metric, 'Trades').value == '0'
+    assert page['filters']['directions'] == ['short'] and said(app.caption, '0 closed trades on this page')
     assert menu_label(app, 'Page Filters') == 'Page Filters · 1'
     assert not journal.workspace()['filters']                    # a dashboard's filters are not a saved filter
 

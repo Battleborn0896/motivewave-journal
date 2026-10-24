@@ -410,7 +410,7 @@ midnight there, in Live and Replay: the trade list's days, the calendar, Stats' 
 and day tags all use the same date for a trade. A new journal starts on this computer's zone and keeps it, so
 taking the computer elsewhere moves no trade to another day; change it here when you want another.
 
-The **Daily Report Card** opens from a day's header in the trade list, or a day in a dashboard calendar. Beside
+The **Daily Report Card** opens from a day's header in the trade list, or a day in the calendar on Stats. Beside
 that day's result it holds the day's **Day Tags**, its **Rating** (1 to 5 stars, as a trade has) and a note.
 The **Day** category comes with **Had a Plan**, **Kept Risk Limits** and **Respected My Stop**; any other tag
 made available on days is offered there too. Every trade opened that day wears the day's tags, so they show in
@@ -450,11 +450,21 @@ you traded need no label. The trade's chart draws MotiveWave's 1-minute candles 
 ticks filling any minute that has no candle. The backup keeps every stored measurement; summary excursions and the trades CSV
 are in account currency. Points remain available without a cash multiplier; currency and R do not.
 
-Stats uses in-place tabs: **Overview** for cumulative results, **Compare** for tag (Setup tags and
-Rating included), playbook, market and time comparisons, **MAE / MFE** for price/position excursions, **After Exit** for
-what the price did after your exits, and **Dashboards**, always last. Tables lead with sample count and average net result per trade. Comparisons
-are descriptions of your recorded sample, not proof of an edge. **Customize** saves the
-visible tabs and their order per environment (Dashboards always stays).
+Stats always shows the same tabs, in one order: **Overview** for the equity curve, the trading calendar and the
+spread of results; **Compare** for tag (Setup tags and Rating included), playbook, market and time comparisons;
+**MAE / MFE** for price/position excursions; **After Exit** for what the price did after your exits; and
+**Dashboards**, your own pages of widgets. There is nothing to hide or reorder, so there is no Customize on Stats.
+
+Overview's calendar counts the same trades as the rest of Stats: closed trades after **Filters** and the period
+above Stats. Each day shows its net result and number of trades, each week's total ends its row, and a click on a
+day opens its Daily Report Card on Trades. It shows Monday to Friday, and Saturday and Sunday too in a month with a
+trade on one.
+
+**Compare by** is one list wherever trades are compared: on Compare, in a Compare widget and on After Exit. It
+offers Tags, Playbooks, Market, Exact contract, Direction, Entry hour and Weekday. On Compare, Tags is a table per
+tag category with your tags in your own order, and the Rating table runs from 5 stars to 1; every other table lists
+the worst Net P&L first, the place to look first. Tables lead with sample count and average net result per trade.
+Comparisons are descriptions of your recorded sample, not proof of an edge.
 
 **Filters**, on Trades and on Stats, is one menu with one set of filters: Markets and Entry Dates, then under
 **More Filters** Accounts, Exact Contracts, Tags with **Tag Match** (all or any selected), Exclude Tags, Playbook,
@@ -521,16 +531,19 @@ no rollover price gaps are silently adjusted, and one expiry's ticks never subst
 
 ## Dashboard and session workflows (0.3)
 
-**Stats → Dashboards → Customize Page** creates/clones/renames pages, chooses 1–3 columns, adds/edits/removes
-and reorders widgets. Summary, equity, drawdown, calendar, comparisons, distributions, MAE/MFE,
-tag score, Rating, radar, trades and custom-statistics widgets are independently configurable.
-The default uses two independently stacked columns so the calendar doesn't push the equity curve
-below an unnecessarily tall row. **Page Filters** (on top of the Stats filters) and each widget's filters, under
+**Stats → Dashboards → Customize Page** is the one place to customize Stats: it creates/clones/renames pages,
+chooses 1–3 columns, adds/edits/removes and reorders widgets. Until you save a page there is one, **My Dashboard**,
+and it is empty: Overview already draws the equity curve, the calendar and the results, so a page holds only the
+widgets you add, and says **Add a widget under Customize Page.** while it has none. A page holds up to 24 widgets
+and can be emptied again. Summary, equity, drawdown, calendar, comparisons, distributions, MAE/MFE,
+tag score, Rating, radar, trades and custom-statistics widgets are independently configurable, in independently
+stacked columns. A Compare widget's bars run lowest first; its Tags bars stand together by tag category, each
+category in its colour. **Page Filters** (on top of the Stats filters) and each widget's filters, under
 Customize Page, are the same editor as the Filters menu, with the same words, and save with their own button;
 **Page Filters · 3** says how many the page has. Saved filters, page filters and widget filters intersect;
-they never change recorded trades. Saved tag rules use stable identities and show a tag's name now. Calendar
-buttons open the exact day's Report Card on Trades. **Settings** sets the Time Zone the calendar's days follow,
-and hides weekends under Advanced.
+they never change recorded trades. Saved tag rules use stable identities and show a tag's name now. A Calendar
+widget is Overview's calendar for the widget's trades: its days open the exact day's Report Card on Trades, follow
+the **Time Zone** on Settings, and include Saturday and Sunday only in a month with a trade on one.
 
 A **Rating** widget charts each trade's stars, 1 to 5. Tag scores are signed values configured on each tag; a
 trade's score is the sum of its selected tag scores, and a widget can restrict the contributing tags. The Tag
@@ -632,10 +645,12 @@ not every price, was recorded, with the one fix: keep the study on a chart of th
 Without a stop it says breakeven instead of your stop. In R, a trade without a stop has no R amount: it shows —
 and why, as the MAE tile does. Open, incomplete and merged trades show nothing.
 
-In Stats, open **After Exit** and press **Compare Runners** to average the same 15 minutes by tag or by tag
-category; **Filters** narrows the trades, for example to winners by Net P&L or to exits near 1R by R. A trade
-counts only when all of its 15 minutes were recorded, so a partial window is never averaged in as zero; exits
-at or past the stop are left out too, and a trade with several tags counts under each.
+In Stats, open **After Exit** and press **Compare Runners** to average the same 15 minutes by any **Compare by**
+choice: Tags (each tag under its category, in your order), Playbooks, Market, Exact contract, Direction, Entry hour
+or Weekday, the most room after the exit first. **Filters** narrows the trades, for example to winners by Net P&L
+or to exits near 1R by R. A trade counts only when all of its 15 minutes were recorded, so a partial window is never
+averaged in as zero. An exit at or past the stop counts as 0, as there was nothing left to hold: leaving it out
+would make the averages look bigger than your trades were. A trade with several tags counts under each.
 
 This is hindsight on a price path, not a strategy backtest or profit you could have made. A stop touch is not
 a stop fill; spread, slippage, fees and trailing stops are not modelled; and recorded ticks are not proof that

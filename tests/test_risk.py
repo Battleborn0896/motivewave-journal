@@ -11,7 +11,7 @@ from mwjournal import Execution, Journal, PriceSample, merging
 from mwjournal.chart import trade_chart
 from mwjournal.metrics import measurements
 from mwjournal.model import ProtectionEvent, instant
-from mwjournal.post_exit import best_post_exit, resolve_stop
+from mwjournal.post_exit import best_post_exit
 from mwjournal.risk import NOT_REPORTED, STOP_SETTLES, initial_risk, plan, plan_for, settles_at, stop_for_risk
 from test_app import display_setting, open_app, open_details, press, said, widget
 from test_moved_tools import menu
@@ -289,12 +289,13 @@ def test_after_exit_holds_to_the_stop_r_uses(home):
     journal = Journal()
     t = long_one(journal)
     journal.ingest_protection([order(0, 4996), order(30, 5003)])     # trailed above entry later
-    assert resolve_stop(journal, t) == (4996, 'stop')
+    assert plan_for(journal, t).stop == 4996
     journal.ingest_prices([PriceSample('ESZ6', at(60 + s), 'ticks', p, p) for s, p in [(5, 5005), (60, 4997)]])
-    result = best_post_exit(journal, t, plan_for(journal, t).risk)
-    assert result['stop_price'] == 4996 and result['extra_mfe_r'] == pytest.approx(result['extra_mfe'] / 200)
+    result = best_post_exit(journal, t, plan_for(journal, t).stop)
+    assert result['stop_price'] == 4996 and result['held_to'] == 'stop'
+    assert result['extra_mfe_r'] == pytest.approx(result['extra_mfe'] / plan_for(journal, t).risk)
     journal.update_annotation(t.id, {'planned_stop': 4994})
-    assert resolve_stop(journal, t) == (4994, 'stop')
+    assert best_post_exit(journal, t, plan_for(journal, t).stop)['stop_price'] == 4994
 
 
 def test_the_chart_draws_the_stop_and_never_a_take_profit(home):

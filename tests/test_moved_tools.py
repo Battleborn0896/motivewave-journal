@@ -103,7 +103,7 @@ def test_the_report_card_keeps_working_for_a_day_picked_in_its_own_date_box(home
 
 def test_a_calendar_day_on_stats_opens_that_days_report_card_on_trades(home):
     two_days(home)
-    app = open_app('Dashboard')
+    app = open_app('Edge')                         # the calendar on Overview
     calendar_day = next(b for b in app.button if b.label.startswith('8  \n'))
     assert 'Daily Report Card on Trades' in calendar_day.help
     calendar_day.click().run()
@@ -234,32 +234,30 @@ def test_the_session_tools_are_there_before_the_first_trade():
 
 # ---------------------------------------------------------------- the dashboards on Stats
 
-def test_dashboards_are_the_last_tab_of_stats_and_customize_cannot_remove_it(home):
-    journal = seed_preview(home)
+def test_stats_has_the_same_tabs_every_time_and_one_customize_on_the_dashboards(home):
+    seed_preview(home)
     app = open_app('Edge')
-    assert [t.label for t in app.tabs][-1] == edge.DASHBOARDS
+    assert [t.label for t in app.tabs] == [*edge.SECTIONS, edge.DASHBOARDS] == [
+        'Overview', 'Compare', 'MAE / MFE', 'After Exit', 'Dashboards']
     assert not any(s.label == 'Dashboard page' for s in app.selectbox)          # drawn only when open
+    assert not any(m.label == 'Tabs, in order' for m in app.multiselect)
     open_tab(app, 'Dashboards')
     assert any(s.label == 'Dashboard page' for s in app.selectbox)
-    assert [p.proto.popover.label for p in app.main.get('popover')][:4] == [
-        'Filters', 'Customize', 'Page Filters', 'Customize Page']
-    assert edge.DASHBOARDS not in widget(app.multiselect, 'Tabs, in order').options
-    widget(app.multiselect, 'Tabs, in order').set_value(['After Exit'])
-    press(app, 'Save Tabs')
-    assert [t.label for t in app.tabs][:2] == ['After Exit', 'Dashboards']
-    assert journal.display_settings()['dashboard_sections'] == ['After Exit']
+    # One Customize: the dashboard page's own, beside its filters.
+    assert [p.proto.popover.label for p in app.main.get('popover')] == ['Filters', 'Page Filters', 'Customize Page']
+    assert not hasattr(edge, 'customize') and not hasattr(Journal, 'set_dashboard_sections')
 
 
 def test_the_stats_filters_narrow_the_dashboards_too(home):
     two_days(home)
+    Journal().save_dashboard('Glance', [{'kind': 'Summary', 'title': 'Results at a Glance'}])
     app = open_app('Dashboard')
     summary = lambda: widget(app.metric, 'Trades').value
     assert summary() == '2'
     widget(app.multiselect, 'Markets').set_value(['NQ']).run()
     assert not app.exception and summary() == '1'
     # The Stats button says a filter is on; the page's own count only the page's filters.
-    assert [p.proto.popover.label for p in app.main.get('popover')][:4] == [
-        'Filters · 1', 'Customize', 'Page Filters', 'Customize Page']
+    assert [p.proto.popover.label for p in app.main.get('popover')] == ['Filters · 1', 'Page Filters', 'Customize Page']
 
 
 def test_dashboards_open_with_no_closed_trade_yet():
@@ -269,11 +267,13 @@ def test_dashboards_open_with_no_closed_trade_yet():
     assert any(s.label == 'Dashboard page' for s in app.selectbox)
 
 
-def test_a_tab_that_was_removed_gives_way_to_the_first(home):
-    journal = seed_preview(home)
+def test_a_tab_that_is_gone_gives_way_to_the_first(home):
+    seed_preview(home)
     app = open_app('Edge')
     open_tab(app, 'After Exit')
-    journal.set_dashboard_sections(['Overview'])
-    app.run()
-    assert not app.exception and [t.label for t in app.tabs] == ['Overview', 'Dashboards']
+    # Filters that keep no closed trade leave only Dashboards; with the trades back, Stats opens on Overview.
+    widget(app.multiselect, 'Directions').set_value(['short']).run()
+    assert not app.exception and [t.label for t in app.tabs] == ['Dashboards']
+    widget(app.multiselect, 'Directions').set_value([]).run()
+    assert not app.exception and [t.label for t in app.tabs][0] == 'Overview'
     assert app.session_state.get('analytics-tabs-live') in (None, 'Overview')

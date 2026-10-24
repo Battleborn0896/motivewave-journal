@@ -66,6 +66,7 @@ def test_buy_old_expiry_and_sell_new_expiry_are_two_open_positions_not_a_round_t
 def test_grouped_market_analytics_pool_expiries_not_micros():
     rows = [{'symbol': symbol, 'status': 'closed', 'closed': '2026-10-07T14:01:00Z', 'net': net}
             for symbol, net in [('NQZ6', 10), ('NQM7', -5), ('MNQZ6', 2), ('ESZ6', 3), ('ESH7', 4)]]
+    assert [r['group'] for r in grouped(rows, 'market')] == ['MNQ', 'NQ', 'ES']           # the worst Net P&L first
     groups = {r['group']: r for r in grouped(rows, 'market')}
     assert groups['NQ']['count'] == 2 and groups['NQ']['net'] == 5
     assert groups['ES']['count'] == 2 and groups['ES']['net'] == 7

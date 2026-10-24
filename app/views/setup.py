@@ -3,10 +3,10 @@
 The first page reads top to bottom: once after an upgrade, one quiet line saying what it did, with OK; one status
 line, Recording, Not recording or Needs attention, green and alone
 when the study records; under it, one line saying the one thing to do when there is something (install the study,
-add it to a chart, open MotiveWave, or update an older study); Time Zone and MAE / MFE Units, with hide weekends
-under a small Advanced heading; a tile each for Tags, Playbooks & Checklists and Data, with a link to each of
-their tabs; and one About line. Bridge paths and raw errors are on Data → Connection. The other pages
-are drawn by the parent through ``tool``, under a button back to this one.
+add it to a chart, open MotiveWave, or update an older study); Time Zone and MAE / MFE Units, nothing else to set;
+a tile each for Tags, Playbooks & Checklists and Data, with a link to each of their tabs; and one About line.
+Bridge paths and raw errors are on Data → Connection. The other pages are drawn by the parent through ``tool``,
+under a button back to this one.
 
 Everything that was its own page before 0.4.5 is still at most two clicks from the sidebar: Settings, then a
 tile or one of its links. The Daily Report Card, the session tools and running a checklist moved to Trades;

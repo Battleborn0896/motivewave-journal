@@ -1,10 +1,6 @@
-"""Configurable local dashboard pages, independently filtered widgets and a clickable calendar."""
+"""Your own dashboard pages on Stats: widgets you add, each with its own filters. A page starts empty: Overview
+already draws the equity curve, the calendar and the results, so nothing here repeats them until you add it."""
 from __future__ import annotations
-
-import calendar
-import datetime as dt
-import html
-from zoneinfo import ZoneInfo
 
 import pandas as pd
 import plotly.express as px
@@ -12,23 +8,19 @@ import plotly.graph_objects as go
 import streamlit as st
 
 import common
+import tag_controls
 import theme
 import script_widget
 from views import edge
 from mwjournal import tagging
 from mwjournal.analytics import summary
-from mwjournal.model import instant
-from mwjournal.workspace import WIDGETS, METRICS, GROUPS, filter_sample
+from mwjournal.workspace import WIDGETS, METRICS, GROUPS, filter_sample, group_labels
 
-DEFAULT = {'name': 'Overview', 'columns': 2, 'filters': {}, 'widgets': [
-    {'id': 'summary', 'kind': 'Summary', 'title': 'Results at a Glance', 'metric': 'Net P&L'},
-    {'id': 'calendar', 'kind': 'Calendar', 'title': 'Trading Calendar', 'metric': 'Net P&L'},
-    {'id': 'equity', 'kind': 'Equity', 'title': 'Equity Curve', 'metric': 'Net P&L'}]}
+# The page shown while you have none: empty, and stored only once you save it.
+DEFAULT = {'name': 'My Dashboard', 'columns': 2, 'filters': {}, 'widgets': []}
 LINES = ('Equity', 'Tag score', 'Rating', 'Drawdown')
 WIDGET_HELP = {'Radar': 'The share of this sample tagged in each category. Not an edge or a performance score.',
-               'Calendar': 'Each day\'s net result and closed trades in your display time zone, a deeper green or red '
-                           'for a bigger day of the month; each week\'s total ends its row. Click a day for its Daily '
-                           'Report Card.',
+               'Calendar': edge.CALENDAR_HELP,
                'Drawdown': 'How far the running total sits below its highest point so far.'}       # drawn along the trades, one point each
 AXES = {'trade': 'Trade number', 'time': 'Date and time'}
 
@@ -38,9 +30,10 @@ def render(journal, rows):
     state = journal.workspace()
     pages = state['dashboards']
     selector, top, filter_col, actions = st.columns([2, 2.4, 1, 1], vertical_alignment='center')
-    choices = ['default', *sorted(pages, key=lambda id: pages[id]['order'])]
-    page_id = selector.selectbox('Dashboard page', choices, format_func=lambda id: pages[id]['name'] if id in pages else 'Overview',
-                            key=common.key(journal, 'dashboard-page'), label_visibility='collapsed')
+    choices = sorted(pages, key=lambda id: pages[id]['order']) or ['default']
+    page_id = selector.selectbox('Dashboard page', choices,
+                                 format_func=lambda id: pages[id]['name'] if id in pages else DEFAULT['name'],
+                                 key=common.key(journal, 'dashboard-page'), label_visibility='collapsed')
     page = pages.get(page_id, DEFAULT)
     count = common.active_filters(page.get('filters', {}))
     with filter_col.popover(f'Page Filters · {count}' if count else 'Page Filters', width='stretch',
@@ -59,6 +52,9 @@ def render(journal, rows):
     rows = filter_sample(rows, page.get('filters', {}))
     closed = [r for r in rows if r['status'] == 'closed' and r['net'] is not None]
     top.caption(f'{len(closed)} closed trade{"" if len(closed) == 1 else "s"} on this page')
+    if not page['widgets']:
+        st.info('Add a widget under Customize Page.')
+        return
     columns = page['columns']
     cols = st.columns(columns, gap='small')
     for index, widget in enumerate(page['widgets']):
@@ -134,7 +130,7 @@ def customize(journal, rows, page_id, page):
                 new = [dict(w) for w in widgets]
                 new[selected], new[other] = new[other], new[selected]
                 save(new)
-        if hide.button('Remove Widget', disabled=len(widgets) < 2, key=common.key(journal, 'remove-widget-' + page_id)):
+        if hide.button('Remove Widget', key=common.key(journal, 'remove-widget-' + page_id)):
             save([w for i, w in enumerate(widgets) if i != selected])
 
 
@@ -169,7 +165,7 @@ def draw(journal, rows, widget, page_id):
         cols[1].metric('Trades', str(stats['count']), help='Closed trades in this widget\'s sample.')
         return
     if kind == 'Calendar':
-        trading_calendar(journal, rows, key)
+        edge.trading_calendar(journal, rows, key)
         return
     if kind == 'Trades':
         if rows:
@@ -227,24 +223,42 @@ def draw(journal, rows, widget, page_id):
             if money:
                 theme.money_axis(fig, currency, frame.value, axis='xaxis')
         else:
-            group = widget.get('group', 'Market')
-            pairs = []
-            for r in data:
-                time = pd.Timestamp(r['opened']).tz_convert(zone)
-                labels = (r['tags'] if group == 'Tags' else r['playbooks'] if group == 'Playbooks' else
-                          [r['market'] if group == 'Market' else r['symbol'] if group == 'Exact contract' else
-                           r['direction'] if group == 'Direction' else f'{time.hour:02d}:00' if group == 'Entry hour' else time.day_name()])
-                pairs.extend({'group': label, 'value': r['value']} for label in labels)
-            if not pairs:
+            fig = compare_bars(journal, data, widget.get('group', 'Market'), widget['metric'], zone)
+            if fig is None:
                 st.info('No values in the chosen groups.')
                 return
-            frame = pd.DataFrame(pairs).groupby('group', as_index=False).agg(value=('value', 'mean'), count=('value', 'count'))
-            fig = px.bar(frame, x='group', y='value', hover_data=['count'],
-                         labels={'value': 'Average ' + widget['metric'], 'group': group, 'count': 'Trades'})
             if money:
-                theme.money_axis(fig, currency, frame.value)
-    fig.update_layout(height=270, margin=dict(l=20, r=20, t=20, b=25), showlegend=False)
+                theme.money_axis(fig, currency, [v for trace in fig.data for v in trace.y])
+    # Tag bars are coloured by category, one trace each: only then does a legend say which colour is which.
+    fig.update_layout(height=270, margin=dict(l=20, r=20, t=20, b=25), legend_title_text='',
+                      showlegend=kind == 'Compare' and len(fig.data) > 1)
     st.plotly_chart(fig, width='stretch', config=theme.PLOTLY_CONFIG, key=key)
+
+
+def compare_bars(journal, data, group, metric, zone):
+    """A Compare widget's bars: the average of `metric` for each name of `group` (GROUPS), lowest first, or None when
+    no trade has one. Tags stand together by category, each category in the library's order and in its colour."""
+    library = journal.tag_library()
+    tags = library['tags']
+    pairs = [{'group': tags[id]['name'], 'category': tags[id]['group'], 'value': r['value']}
+             for r in data for id in r['tag_ids'] if id in tags] if group == 'Tags' else [
+        {'group': name, 'category': group, 'value': r['value']} for r in data for name in group_labels(r, group, zone)]
+    if not pairs:
+        return None
+    frame = (pd.DataFrame(pairs).groupby(['category', 'group'], as_index=False)
+             .agg(value=('value', 'mean'), count=('value', 'count')))
+    if group == 'Tags':
+        frame['place'] = frame.category.map(lambda name: library['groups'][name]['order'])
+        colours = {name: tag_controls.group_colour(name, [t for t in tags.values() if t['group'] == name])
+                   for name in frame.category.unique()}
+    else:
+        frame['place'], colours = 0, {group: theme.SERIES[0]}
+    frame = frame.sort_values(['place', 'value', 'group'])
+    return px.bar(frame, x='group', y='value', color='category', color_discrete_map=colours,
+                  category_orders={'group': list(frame.group), 'category': list(dict.fromkeys(frame.category))},
+                  # Only a tag has a category: other bars would read 'Category=Entry hour'.
+                  hover_data={'count': True, 'category': group == 'Tags'},
+                  labels={'value': 'Average ' + metric, 'group': group, 'count': 'Trades', 'category': 'Category'})
 
 
 def formatter(metric, currency):
@@ -256,83 +270,3 @@ def formatter(metric, currency):
     if metric == 'Rating':
         return lambda v: '—' if v is None else f'{v:g} star' + ('' if v == 1 else 's')
     return lambda v: '—' if v is None else f'{v:+,.2f}'.rstrip('0').rstrip('.')
-
-
-def trade_count(n) -> str:
-    return f'{n} trade{"" if n == 1 else "s"}'
-
-
-def calendar_cell(label, net, trades, biggest, currency, *, kind='mwj-cal') -> str:
-    """A calendar cell (a day, a week, or the month's total, kind 'mwj-cal-month'): its label, then its net result
-    and number of closed trades when it has any, tinted by the result against `biggest`, the month's largest
-    day (or week). The tint follows the whole amount the cell shows, so a cell that reads $0 stays neutral: a
-    break-even day of prices such as 71.15 adds up to a crumb like 0.00000000001, not 0. '$' is written as an
-    entity: two in one block of Markdown would start a formula."""
-    amount = html.escape(common.money(net, currency, decimals=0)).replace('$', '&#36;')
-    lines, title = f"<span class='d'>{label}</span>" if label else '', ''
-    if trades:
-        lines += f"<span class='n'>{amount}</span><span class='k'>{trade_count(trades)}</span>"
-        title = f" title='{amount}, {trade_count(trades)}'"       # all of it, for a cell too narrow to show it
-    return f"<div class='{kind} {theme.tint(round(net), biggest)}'{title}>{lines}</div>"
-
-
-def trading_calendar(journal, rows, key):
-    """The month's days, each tinted by its closed trades' net result, deeper for a bigger day of that month, with
-    each week's total at the end of its row and the month's beside the month. A day opens its Daily Report Card."""
-    zone = common.display_zone(journal)
-    currency = rows[0]['currency'] if rows else 'USD'
-    days = [instant(r['opened']).astimezone(ZoneInfo(zone)).date() for r in rows]
-    latest = max(days) if days else dt.datetime.now(ZoneInfo(zone)).date()
-    months = sorted({d.replace(day=1) for d in days} | {latest.replace(day=1)}, reverse=True)
-
-    def open_day(date):
-        # The Daily Report Card is on Trades, in place of a trade, for this date.
-        st.session_state.update(common.navigation('Daily review'))
-        st.session_state[common.key(journal, 'review-day')] = date
-
-    with st.container(key='journal-calendar-' + key):
-        choice, total = st.columns(2, vertical_alignment='center')
-        month = choice.selectbox('Month', months, format_func=lambda d: d.strftime('%B %Y'), key=key + '-month',
-                                 label_visibility='collapsed')
-        results = {}                                   # the month's days with closed trades: [net, trades]
-        for r, day in zip(rows, days):
-            if day.replace(day=1) == month and r['status'] == 'closed' and r['net'] is not None:
-                result = results.setdefault(day, [0, 0])
-                result[0] += r['net']
-                result[1] += 1
-        add = lambda dates: [sum(results[d][i] for d in dates if d in results) for i in (0, 1)]
-        weeks = [[dt.date(month.year, month.month, day) if day else None for day in week]
-                 for week in calendar.monthcalendar(month.year, month.month)]
-        # A week's total counts all its days in this month, a hidden weekend's too, as the month's total does.
-        totals = [add(week) for week in weeks]
-        month_net, month_trades = add(results)
-        total.markdown(calendar_cell('', month_net, month_trades, abs(month_net), currency, kind='mwj-cal-month'),
-                       unsafe_allow_html=True)
-        biggest_day = max((abs(net) for net, _ in results.values()), default=0)
-        biggest_week = max((abs(net) for net, _ in totals), default=0)
-        shown = 5 if journal.workspace()['preferences'].get('hide_weekends', False) else 7
-        names = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'][:shown] + ['Week']
-        for col, name in zip(st.columns(len(names)), names):
-            col.caption(name)
-        number = 0
-        for week, (week_net, week_trades) in zip(weeks, totals):
-            if not any(week[:shown]) and not week_trades:
-                continue                               # a hidden weekend that starts the month, nothing traded
-            number += 1
-            cols = st.columns(len(names))
-            for col, date in zip(cols, week[:shown]):
-                if date is None:
-                    col.caption(' ')
-                    continue
-                net, trades = results.get(date, (0, 0))
-                with col.container(key=f'calendar-day-{key}-{date}'):
-                    st.markdown(calendar_cell(date.day, net, trades, biggest_day, currency), unsafe_allow_html=True)
-                    # Invisible, over the cell: its label is what a screen reader says.
-                    st.button(f'{date.day}  \n' + common.md(common.money(net, currency, decimals=0)) +
-                              f'  \n{trade_count(trades)}' if trades else str(date.day),
-                              key=key + '-day-' + str(date), on_click=open_day, args=(date,), width='stretch',
-                              help=common.md(f'{common.day_label(date, zone, weekday=True)}: {trade_count(trades)} '
-                                             f'closed, {common.money(net, currency)} · click for its Daily Report Card '
-                                             'on Trades'))
-            cols[-1].markdown(calendar_cell(f'Week {number}', week_net, week_trades, biggest_week, currency),
-                              unsafe_allow_html=True)

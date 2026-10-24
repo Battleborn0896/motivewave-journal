@@ -95,7 +95,8 @@ Run this with a simulation account:
    tag and give it a Rating, 1 to 5 stars.
 6. Click the trade's day header in the list: on its Daily Report Card choose Day tags and a Rating, then
    confirm the trade wears those Day tags. Days follow **Settings → Time Zone**, midnight to midnight.
-7. Open **Stats → After Exit** and compare by **Tag categories**.
+7. Open **Stats → After Exit**, compare by **Tags** and find each tag under its category. On **Stats → Overview**,
+   click the trade's day in the calendar under the equity curve and confirm it opens that day's Daily Report Card.
 8. Restart the journal and confirm the review and tags remain.
 9. Repeat a trade in Replay and confirm it appears only in the Replay journal, with MAE / MFE from the
    replay's own ticks. Leave the study on the replay chart, contract or continuous: within about ten
@@ -108,7 +109,8 @@ Run this with a simulation account:
 
 Do not report missing or partial minutes after an exit as zero. The app leaves out of Stats → After Exit any
 trade whose 15 minutes after the exit were not all recorded, or had a gap the study reported, and that trade's
-own sentence says not every price was recorded.
+own sentence says not every price was recorded. An exit at or past the stop is different: it counts as 0 there,
+because nothing was left to hold.
 
 ## What to include in a bug report
 

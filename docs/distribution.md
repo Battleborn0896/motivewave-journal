@@ -43,7 +43,7 @@ The gate is open during each trade, from a few seconds before the entry to a few
 The holding time of every closed trade of the last 30 days, and the 30 minutes after each exit, are loaded
 from MotiveWave's own tick history once they are over, on the contract's own chart and on a continuous
 one alike: a chart loads the trades of its active contract, from the instrument the fills were in. This
-gives **After Exit** its 15 minutes after each exit, on the trade and by tag or tag category in Stats,
+gives **After Exit** its 15 minutes after each exit, on the trade and by tag, playbook, market or time in Stats,
 without writing every print of the day. Study 0.3.10 has no settings; studies 0.3.8 and 0.3.9 kept the
 minutes after an exit only on a chart of the exact contract, and studies 0.3.2 to 0.3.7 recorded every print MotiveWave sent to
 the chart. Version 0.3.3 is the first that MotiveWave actually sends prints to, because it requires bar

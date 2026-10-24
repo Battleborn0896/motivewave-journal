@@ -8,7 +8,8 @@ import pytest
 import after_exit
 from mwjournal import Execution, Journal, PriceSample, merging
 from mwjournal.model import EXIT_MISSING, instant
-from mwjournal.post_exit import AFTER_EXIT_MINUTES, best_post_exit, post_exit, resolve_stop, runner_groups
+from mwjournal.post_exit import AFTER_EXIT_MINUTES, COMPLETE, best_post_exit, post_exit, runner_groups
+from mwjournal.risk import plan_for
 
 START = '2026-10-08T14:00:00+00:00'
 EXIT = '2026-10-08T14:01:00+00:00'
@@ -75,14 +76,14 @@ def test_candles_and_simulated_replay_prints_are_never_measured(tmp_path):
     assert simulated['precision'] == 'replay-simulated' and simulated['extra_mfe'] is None
     wrong = post_exit(t, ticks('motivewave-replay:run-b:ticks'), 'motivewave-replay:run-b:ticks', 4990, now=LATER)
     assert wrong['extra_mfe'] is None and wrong['precision'] == 'pending'
-    assert best_post_exit(journal, t)['precision'] == 'pending'
+    assert best_post_exit(journal, t, None)['precision'] == 'pending'
 
 
 def test_minutes_not_all_recorded_are_never_averaged_in(tmp_path):
     journal, t = trade(tmp_path)
     missing = post_exit(t, ticks()[:-1], 'prices', 4990, now=LATER)
     assert missing['coverage'] == 'partial-window' and missing['termination'] == 'awaiting-prices'
-    assert not runner_groups([{'tags': ['A+'], **missing}])
+    assert not runner_groups([{'group': ['A+'], **missing}])
     none = post_exit(t, [], 'prices', 4990, now=LATER)
     assert none['extra_mfe'] is None and none['termination'] == 'unavailable'
     # A tick within a minute of the exit, and of the end of the 15 minutes, counts as recorded from and to there.
@@ -92,10 +93,10 @@ def test_minutes_not_all_recorded_are_never_averaged_in(tmp_path):
     assert coverage(61, 900) == coverage(1, 839) == 'partial-window'
     # Ticks with a gap the study reported never cover the minutes.
     journal.ingest_prices(ticks('motivewave-ticks'))
-    assert best_post_exit(journal, t)['coverage'] == 'window-observed'
+    assert best_post_exit(journal, t, None)['coverage'] == 'window-observed'
     journal.ingest_gaps([{'provider': 'motivewave-ticks', 'symbol': 'ESZ6', 'dropped': 3,
                           'start_ts': after(30), 'end_ts': after(31), 'ts': after(31)}])
-    assert best_post_exit(journal, t)['coverage'] == 'partial-window'
+    assert best_post_exit(journal, t, None)['coverage'] == 'partial-window'
 
 
 def test_minutes_still_running_are_not_over_until_the_stop_is_touched(tmp_path):
@@ -119,36 +120,47 @@ def test_stop_touch_ends_tracking_before_a_later_peak(tmp_path):
 def test_an_exit_at_or_past_the_stop_has_nothing_left_to_hold(tmp_path):
     _, t = trade(tmp_path)
     for stop in (5002, 5003):
-        result = post_exit(t, ticks(), 'prices', stop, now=LATER)
+        result = post_exit(t, ticks(), 'prices', stop, now=LATER, initial_risk=100)
         assert result['termination'] == 'stop-already-touched-at-exit' and result['extra_mfe'] == 0
+        # That says what the price did: 0 further your way, in R too, and it counts like a recorded window.
+        assert result['coverage'] == 'exit-at-stop' in COMPLETE and result['extra_mfe_r'] == 0
+    assert post_exit(t, [], 'prices', 5002, now=LATER)['extra_mfe_r'] is None          # no risk: no R
 
 
 def test_one_stop_rule_the_stop_r_uses_else_breakeven(tmp_path):
     journal, t = trade(tmp_path)
     samples = prints([(1, 5002), (60, 5000), (120, 5008), (900, 5003)])
     journal.ingest_prices(samples)
-    assert resolve_stop(journal, t) == (5000, 'breakeven')            # no stop: the average entry
-    breakeven = best_post_exit(journal, t)
+    assert plan_for(journal, t).stop is None
+    breakeven = best_post_exit(journal, t, None)                     # no stop: the average entry
     assert breakeven['held_to'] == 'breakeven' and breakeven['stop_price'] == 5000
-    assert breakeven['extra_mfe'] == 0 and breakeven['stop_touched']
+    assert breakeven['extra_mfe'] == 0 and breakeven['stop_touched'] and breakeven['extra_mfe_r'] is None
     journal.annotate(t.id, {'planned_stop': 4998})
-    assert resolve_stop(journal, t) == (4998, 'stop')
-    stop = best_post_exit(journal, t, 100)
-    assert stop['held_to'] == 'stop' and stop['extra_mfe'] == 300 and not stop['stop_touched']
+    stop = best_post_exit(journal, t, plan_for(journal, t).stop)
+    assert stop['held_to'] == 'stop' and stop['stop_price'] == 4998
+    assert stop['extra_mfe'] == 300 and not stop['stop_touched']
+    # R over the risk to that stop, $100: the stop is all it needs.
     assert stop['extra_mfe_r'] == 3 and stop['termination'] == 'still-running-at-cutoff'
 
 
-def test_groups_count_every_trade_once_per_tag_and_need_one_currency(tmp_path):
+def test_groups_count_every_trade_once_per_name_and_need_one_currency(tmp_path):
     _, t = trade(tmp_path)
     result = post_exit(t, ticks(), 'prices', 5000, now=LATER, initial_risk=100)
-    base = {'tags': ['A+', 'A+'], 'currency': 'USD', **result}
-    groups = runner_groups([base, {**base, 'tags': []}])
+    base = {'group': ['A+', 'A+'], 'currency': 'USD', **result}
+    groups = runner_groups([base, {**base, 'group': ['Untagged']}])
     assert [(g['group'], g['trades'], g['additional_1R_reached_pct']) for g in groups] == [('A+', 1, 100), ('Untagged', 1, 100)]
     with pytest.raises(ValueError, match='one currency'):
         runner_groups([base, {**base, 'currency': 'EUR'}])
-    categories = runner_groups([{**base, 'tag_categories': ['Orderflow', 'Psychology', 'Orderflow']},
-                                {**base, 'tag_categories': []}], field='tag_categories')
-    assert [(g['group'], g['trades']) for g in categories] == [('Orderflow', 1), ('Psychology', 1), ('Uncategorized', 1)]
+
+
+def test_an_exit_at_the_stop_counts_as_0_and_the_most_room_comes_first(tmp_path):
+    _, t = trade(tmp_path)
+    room = {'currency': 'USD', **post_exit(t, ticks(), 'prices', 5000, now=LATER, initial_risk=100)}     # +$200, 2R
+    at_stop = {'currency': 'USD', **post_exit(t, ticks(), 'prices', 5002, now=LATER, initial_risk=100)}
+    groups = runner_groups([{**room, 'group': ['short']}, {**room, 'group': ['long']}, {**at_stop, 'group': ['long']}])
+    # Left out, the exit at the stop would make long +$200 and 1R more reached on every trade. It had nothing to hold.
+    assert [(g['group'], g['trades'], g['avg_extra_peak'], g['additional_1R_reached_pct']) for g in groups] == [
+        ('short', 1, 200, 100), ('long', 2, 100, 50)]
 
 
 # ---------------------------------------------------------------- the sentence on the trade

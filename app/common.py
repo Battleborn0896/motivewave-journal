@@ -95,8 +95,8 @@ def navigation(view: str) -> dict:
 def tabs(labels, key: str):
     """Tabs whose `.open` says which one is showing, that open the one navigation() asked for, and that come
     back on the tab last opened. The choice is kept under its own key as well as the widget's, because
-    Streamlit forgets a widget's value on a page that does not draw it. A tab that is no longer there (Stats
-    tabs can be removed) gives way to the first."""
+    Streamlit forgets a widget's value on a page that does not draw it. A tab that is no longer there (Stats has
+    only Dashboards while the filters keep no closed trade) gives way to the first."""
     chosen = key + '-chosen'
     wanted = st.session_state.pop(TAB_KEY, None)
     if wanted in labels:

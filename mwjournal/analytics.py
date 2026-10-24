@@ -28,6 +28,8 @@ def summary(rows: list[dict]) -> dict:
 
 
 def grouped(rows: list[dict], field: str) -> list[dict]:
+    """summary() of the rows for each value of `field`, the worst Net P&L first: what to look at first. A row
+    counts under each of its tags or playbooks."""
     groups = defaultdict(list)
     for row in rows:
         if field == 'market':
@@ -36,7 +38,8 @@ def grouped(rows: list[dict], field: str) -> list[dict]:
             values = (row.get(field) or ['Untagged' if field == 'tags' else 'No matching playbook']) if field in ('tags', 'playbooks') else [row.get(field) or 'Unspecified']
         for value in values:
             groups[value].append(row)
-    return [{'group': key, **summary(trades)} for key, trades in sorted(groups.items())]
+    return sorted(({'group': key, **summary(trades)} for key, trades in groups.items()),
+                  key=lambda g: (g['net'], g['group']))
 
 
 def cost_summary(rows: list[dict]) -> dict:

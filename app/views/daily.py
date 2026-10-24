@@ -2,8 +2,8 @@
 Time Zone (Settings), from midnight to midnight, as in the trade list and the calendar. Every box saves when it
 changes.
 
-It opens on Trades, in place of a trade, from a day's header in the trade list or a day in a dashboard
-calendar. Its own date box picks any other day."""
+It opens on Trades, in place of a trade, from a day's header in the trade list or a day in the calendar on Stats
+(Overview, or a Calendar widget). Its own date box picks any other day."""
 
 from __future__ import annotations
 

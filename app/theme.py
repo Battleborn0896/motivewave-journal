@@ -286,7 +286,7 @@ def section(title: str, hint: str = '', *, help: str | None = None) -> None:
 
 
 def subsection(title: str, *, help: str | None = None) -> None:
-    """A small plain heading inside a section, such as Advanced: never a menu that folds."""
+    """A small plain heading inside a section, such as Fills: never a menu that folds."""
     st.markdown(f"<div class='mwj-subsection'>{html.escape(title)}</div>", unsafe_allow_html=True, help=help)
 
 

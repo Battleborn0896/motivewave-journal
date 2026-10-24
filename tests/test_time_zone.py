@@ -55,8 +55,8 @@ def test_a_trade_at_10_pm_in_los_angeles_is_on_that_date_everywhere(home):
     # On the trade they are not offered again: the Day category is chosen on its card.
     press(app, '← Back to Trades')
     assert not any(p.label == 'Day' for p in app.pills) and any(p.label == 'Rating' for p in app.pills)
-    # The calendar: the result is on the 7th, and the 7th opens the same card.
-    show(app, 'Dashboard')
+    # The calendar on Stats → Overview: the result is on the 7th, and the 7th opens the same card.
+    show(app, 'Edge')
     cells = calendar_cells(app)
     assert cells['7'] == (['mwj-cal', 'up', 'l3'], '+$500', '1 trade') and cells['8'] == (['mwj-cal'], None, None)
     next(b for b in app.button if b.label.startswith('7  \n')).click().run()

@@ -1,11 +1,10 @@
-"""The first page of Settings: Time Zone and MAE / MFE Units side by side, then hiding weekends under a small Advanced
-heading. MAE / MFE are measured from recorded ticks only: there is no accuracy to choose. Also the saved filter every
-page uses, which is chosen, saved, renamed and deleted in the Filters menus of Trades and Stats, where filtering
-lives. Each choice saves the moment it is made. Nothing here changes a fill or a review."""
+"""The first page of Settings: Time Zone and MAE / MFE Units side by side, nothing else to set. MAE / MFE are measured
+from recorded ticks only: there is no accuracy to choose. Also the saved filter every page uses, which is chosen,
+saved, renamed and deleted in the Filters menus of Trades and Stats, where filtering lives. Each choice saves the
+moment it is made. Nothing here changes a fill or a review."""
 import streamlit as st
 
 import common
-import theme
 from mwjournal.workspace import combine_filters, filter_sample
 
 GLOBAL_FILTER = 'global-saved-filter'
@@ -41,13 +40,6 @@ def render(journal, rows):
                        help='Times and trading days, with their day tags and reviews, follow this zone in Live and '
                             'Replay; a day runs midnight to midnight.')
     common.unit_selector(journal, unit_col)
-    theme.subsection('Advanced')
-    weekend_col, _ = st.columns(2, vertical_alignment='bottom')
-    weekend_key = common.key(journal, 'hide-weekends')
-    st.session_state.setdefault(weekend_key, bool(journal.workspace()['preferences'].get('hide_weekends', False)))
-    weekend_col.checkbox('Hide Weekends in Calendar', key=weekend_key,
-                         on_change=lambda: journal.save_preferences(hide_weekends=st.session_state[weekend_key]),
-                         help='Leaves Saturday and Sunday out of the calendar widget on Stats → Dashboards.')
 
 
 def filters_label(journal, rows) -> str:

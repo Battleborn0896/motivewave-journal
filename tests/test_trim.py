@@ -10,6 +10,7 @@ import pytest
 from mwjournal import Execution, Journal, PriceSample, journals, store
 from mwjournal.metrics import measurements
 from mwjournal.post_exit import best_post_exit
+from mwjournal.risk import plan_for
 from mwjournal.sync import SyncWorker
 
 DAY, NEXT = '2026-10-21', '2026-10-22'
@@ -167,7 +168,7 @@ def test_no_measurement_changes_and_none_is_measured_again(tmp_path):
                                         end=(dt.datetime.fromisoformat(trade.closed) + store.PRINTS_AFTER).isoformat())
                          if trade.closed else [])
                 held[trade.id, source] = (samples, after, measurements(trade, samples, source, now=now))
-            held[trade.id] = best_post_exit(journal, trade) if trade.closed else None
+            held[trade.id] = best_post_exit(journal, trade, plan_for(journal, trade).stop) if trade.closed else None
         with journal.connect() as db:
             held['metrics'] = [tuple(row) for row in db.execute('SELECT rowid, * FROM metrics ORDER BY rowid')]
         return held

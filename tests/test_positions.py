@@ -114,7 +114,9 @@ def test_statistics_and_cost_attribution_count_only_complete_closed_trades():
     stats = summary(rows)
     assert stats['count'] == 3 and stats['net'] == 600 and stats['drawdown'] == 200
     assert stats['win_rate'] == pytest.approx(200 / 3) and stats['profit_factor'] == 4
-    assert grouped(rows, 'tags')[0]['count'] == 3 and grouped(rows, 'direction')[0]['group'] == 'long'
+    assert grouped(rows, 'tags')[0]['count'] == 3
+    # The worst Net P&L first: the longs, +10 and -10 points, before the short's +30.
+    assert [(g['group'], g['count']) for g in grouped(rows, 'direction')] == [('long', 2), ('short', 1)]
     costs = cost_summary(rows)
     assert costs['count'] == 3 and costs['gross'] == 600 and costs['fees'] == 0
 
@@ -306,7 +308,7 @@ def test_incomplete_trades_have_no_excursions_stored_measurements_runner_or_zero
         assert journal.metric_options(trade) == []
         runner = post_exit(trade, samples, 'test-prices', 20000)
         assert runner['extra_mfe'] is None and runner['coverage'] == runner['termination'] == 'unavailable'
-        assert best_post_exit(journal, trade)['extra_mfe'] is None
+        assert best_post_exit(journal, trade, None)['extra_mfe'] is None
     with journal.connect() as db:
         assert db.execute('SELECT count(*) FROM metrics').fetchone()[0] == 0
     # A platform's own excursion report is an event this version skips and counts: it attaches nothing.
