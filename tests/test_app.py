@@ -362,29 +362,37 @@ def test_empty_journal_then_a_review_is_saved():
     assert not any(w.label in ('Use saved setup', 'Followed my plan') for w in app.selectbox)
 
 
-def test_full_recorded_path_and_runner_controls_render_without_claiming_missing_data(home):
-    seed_ticks(seed_preview(home))
+def test_full_recorded_path_and_after_exit_render_without_claiming_missing_data(home):
+    journal = seed_ticks(seed_preview(home))
     app = open_app()
     widget(app.checkbox, 'Show/export full recorded trade path').set_value(True).run()
     assert not app.exception
     assert any(b.label == 'Download Full Path CSV' for b in app.download_button)
-    widget(app.selectbox, 'Look after exit').set_value(120).run()
-    assert not app.exception and said(app.caption, 'Partial or gapped horizon')
-    # What it was measured from, in words: no program codes.
-    assert said(app.caption, 'From ticks · price after exit not complete yet · 1 contract')
-    assert said(app.caption, 'Stop 4,998 · Your saved stop · the one R uses · waiting for prices')
-    assert not any(code in c.value for c in app.caption for code in ('estimated-bars', 'partial-window', 'awaiting-prices'))
+    # After Exit is one sentence with nothing to pick: two prints after the exit, not all of its 15 minutes.
+    assert said(app.markdown, 'Not every price was recorded in the 15 minutes after your exit. Keep the study on a '
+                              'chart of this contract while you trade.')
+    assert not any(s.label in ('Look after exit', 'Runner stop rule') for s in app.selectbox)
+    assert not any(m.label.startswith(('Best extra', 'Extra after')) for m in app.metric)
     show(app, 'Edge')
-    assert not any(s.label == 'Runner comparison horizon' for s in app.selectbox)    # drawn only when its tab is open
-    open_tab(app, 'Runners')
-    assert not app.exception and not said(app.info, 'No comparable completed windows')   # not run until asked
-    # A form sends its choices with the click, as a browser does: a run between them drops the choice (Streamlit 1.66).
-    widget(app.selectbox, 'Runner comparison horizon').set_value(120)
+    assert not any(s.label == 'Compare runners by' for s in app.selectbox)    # drawn only when its tab is open
+    open_tab(app, 'After Exit')
+    assert not app.exception and not said(app.info, 'None of these trades')   # not run until asked
+    assert said(app.caption, 'The 15 minutes after each exit, from recorded ticks, held until your stop, or breakeven')
+    assert not any(s.label.startswith('Runner comparison') for s in app.selectbox)
+    assert not any(c.label.startswith(('Only winning', 'Only exits near')) for c in app.checkbox)
     press(app, 'Compare Runners')
-    assert said(app.info, 'No comparable completed windows')
+    assert said(app.info, 'None of these trades has all of the 15 minutes after its exit recorded')
+    assert said(app.caption, '1 trade · 1 left out')
     assert widget(app.selectbox, 'Compare runners by').options == ['Individual tags', 'Tag categories']
     assert not any(b.label in ('Analyze recorded post-exit prices', 'Calculate post-exit tag analysis')
                    for b in app.checkbox)
+    # An exit at its stop left nothing to hold: Stats says that, not that prices were missing, which were never read.
+    journal.update_annotation(journal.trades()[0].id, {'planned_stop': 5003})
+    app.run()
+    press(app, 'Compare Runners')
+    assert said(app.info, 'Each of these trades exited at or past its stop, or breakeven without one, so there was '
+                          'nothing left to hold.')
+    assert not said(app.info, 'None of these trades')
 
 
 def test_measured_trade_risk_renders_from_the_traded_price_alone():
@@ -536,19 +544,16 @@ def test_stats_choices_are_still_chosen_after_another_tab_was_open(home):
     app = open_tab(open_app('Edge'), 'Compare')
     assert widget(app.selectbox, 'Compare by').value == 'Tags'
     widget(app.selectbox, 'Compare by').set_value('Playbooks').run()
-    open_tab(app, 'Runners')
-    assert widget(app.selectbox, 'Runner comparison horizon').value == 15
-    assert widget(app.checkbox, 'Only winning trades').value
-    widget(app.selectbox, 'Runner comparison horizon').set_value(120)
+    open_tab(app, 'After Exit')
+    assert widget(app.selectbox, 'Compare runners by').value == 'tags'
+    # A form sends its choices with the click, as a browser does: a run between them drops the choice (Streamlit 1.66).
     widget(app.selectbox, 'Compare runners by').set_value('tag_categories')
-    widget(app.checkbox, 'Only winning trades').uncheck()
     press(app, 'Compare Runners')
     open_tab(app, 'Overview')
     open_tab(app, 'Compare')
     assert widget(app.selectbox, 'Compare by').value == 'Playbooks'
-    open_tab(app, 'Runners')
-    assert (widget(app.selectbox, 'Runner comparison horizon').value, widget(app.selectbox, 'Compare runners by').value,
-            widget(app.checkbox, 'Only winning trades').value) == (120, 'tag_categories', False)
+    open_tab(app, 'After Exit')
+    assert widget(app.selectbox, 'Compare runners by').value == 'tag_categories'
 
 
 def test_simple_navigation_and_optional_controls_do_not_remove_reviews(home):
@@ -563,7 +568,7 @@ def test_simple_navigation_and_optional_controls_do_not_remove_reviews(home):
     open_review(app)
     assert widget(app.metric, 'MAE').value != '—' and widget(app.metric, 'MFE').value != '—'
     assert [t.label for t in app.tabs] == [
-        'Chart & Tags', 'Notes', 'Checklist', 'More', 'MAE / MFE', 'Executions', 'Runner']
+        'Chart & Tags', 'Notes', 'Checklist', 'More', 'MAE / MFE', 'Executions', 'After Exit']
     # The session tools, then the list's own menus, all in the row above the list.
     assert [b.proto.popover.label for b in app.main.get('popover')][:5] == [
         'Check-Ins', 'Drafts', 'Checklist', 'Filters', 'Options']
@@ -1121,7 +1126,7 @@ def test_one_measurement_from_recorded_ticks_in_every_unit_and_no_word_about_how
 def test_analytics_is_question_based_and_selected_units_change_only_excursion_axes(home):
     seed_ticks(seed_preview(home))
     app = open_app('Edge')
-    assert [t.label for t in app.tabs] == ['Overview', 'Compare', 'MAE / MFE', 'Runners', 'Dashboards']
+    assert [t.label for t in app.tabs] == ['Overview', 'Compare', 'MAE / MFE', 'After Exit', 'Dashboards']
     assert widget(app.metric, 'Average Trade').value == '+$242.00'
     # Only the open tab is drawn: Overview's equity curve, and none of Compare's controls yet.
     assert widget(app.metric, 'Gross P&L') and not any(s.label == 'Compare by' for s in app.selectbox)

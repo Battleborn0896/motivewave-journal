@@ -89,10 +89,10 @@ def test_an_nqz6_trade_is_measured_from_the_prices_its_chart_recorded_as_nq(tmp_
     assert (metric['mae'], metric['mfe']) == (200, 600)          # NQ's $20 a point, from the product
     chart = trade_chart(trade, journal.prices(trade.symbol, 'motivewave-ticks'), 'motivewave-ticks')
     assert chart['series']['data'][0]['high'] == 20030 and chart['series']['data'][0]['low'] == 19990
-    # After the exit, the same rule: the runner analysis reads the chart's prints too.
+    # After the exit, the same rule: the minutes after it are read from the chart's prints too.
     journal.ingest_prices([PriceSample('NQ', '2026-10-07T14:02:00Z', 'motivewave-ticks', 20040, 20040)])
     runner = post_exit(trade, journal.prices(trade.symbol, 'motivewave-ticks', start=trade.closed),
-                       'motivewave-ticks', minutes=5)
+                       'motivewave-ticks', trade.entry_price)
     assert runner['observations'] == 1 and runner['extra_mfe'] == 600
     # A gap the chart reported under its own label concerns this trade.
     journal.ingest_gaps([{'provider': 'motivewave-ticks', 'symbol': 'NQ', 'dropped': 2,

@@ -86,12 +86,13 @@ Run this with a simulation account:
 1. Enter two contracts, exit one, add one, then flatten the remaining two.
 2. Confirm the journal creates one flat-to-flat trade with four fills and the correct maximum size.
 3. Confirm the chart shows the entry and exit markers and that an observed tick path exists.
-4. Save a planned stop, then inspect the 5-, 15- and 30-minute Runner views.
+4. Save a stop for the trade, then read its **More → After Exit** sentence once the 15 minutes after the exit
+   are over: how much further the price went your way before reaching your stop, in your MAE / MFE unit.
 5. Create `Orderflow` and `Psychology` tag categories, add tags and apply them to the trade. Pick its Setup
    tag and give it a Rating, 1 to 5 stars.
 6. Click the trade's day header in the list: on its Daily Report Card choose Day tags and a Rating, then
    confirm the trade wears those Day tags. Days follow **Settings → Time Zone**, midnight to midnight.
-7. Open **Stats → Runners** and compare by **Tag categories**.
+7. Open **Stats → After Exit** and compare by **Tag categories**.
 8. Restart the journal and confirm the review and tags remain.
 9. Repeat a trade in Replay and confirm it appears only in the Replay journal, with MAE / MFE from the
    replay's own ticks. Leave the study on the replay chart, contract or continuous: within about ten
@@ -102,8 +103,9 @@ Run this with a simulation account:
    with the market, and the line under its time should name no price source.
 11. Quit the journal and confirm MotiveWave stays open.
 
-Do not report a missing or partial runner window as zero. The app intentionally excludes windows
-with missing prices, recorded capture gaps or ambiguous OHLC stop ordering.
+Do not report missing or partial minutes after an exit as zero. The app leaves out of Stats → After Exit any
+trade whose 15 minutes after the exit were not all recorded, or had a gap the study reported, and that trade's
+own sentence says not every price was recorded.
 
 ## What to include in a bug report
 

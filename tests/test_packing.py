@@ -1,6 +1,6 @@
 """The study's prints are packed one to two hours after they are stored: one row per contract, source and minute,
 which Journal.prices() unpacks into exactly the prints stored, in the order stored. Nothing a trader sees changes:
-every price read, measurement, runner result and export is the same before and after, and every print is kept."""
+every price read, measurement, after-exit result and export is the same before and after, and every print is kept."""
 import dataclasses
 import datetime as dt
 import json
@@ -25,7 +25,6 @@ LIVE, HISTORY, BARS = 'motivewave-ticks', 'motivewave-ticks:history', 'motivewav
 STUDY, RUN = 'motivewave-native:ws', 'motivewave-native:ws:replay:r1'
 REPLAY = ('motivewave-replay:r1:ticks', 'motivewave-replay:r1:history', 'motivewave-replay:r1:simulated')
 START = dt.datetime(2026, 10, 21, 13, 50, tzinfo=dt.timezone.utc)
-HORIZONS, STOPS = (5, 15, 30, 60, 120), (None, 'original', 'at-exit', 'breakeven')
 
 
 def fill(id, side, clock, price=20000., *, symbol='NQZ6', provider=STUDY, day=DAY):
@@ -88,8 +87,9 @@ def day_journal(path, seed=1, *, dataset='live'):
 
 
 def windows(trade):
-    """Every window a trade reads its prices over: none, its hold, after its exit to the longest runner horizon, its
-    chart two hours either side, starts and ends in the middle of a minute and on one, and open at either end."""
+    """Every window a trade reads its prices over: none, its hold, after its exit to the end of the prints it keeps
+    (store.PRINTS_AFTER), its chart two hours either side, starts and ends in the middle of a minute and on one, and
+    open at either end."""
     opened, closed = instant(trade.opened), instant(trade.closed or '2026-10-21T16:20:00+00:00')
     minute = dict(second=0, microsecond=0)
     for start, end in ((None, None), (opened, closed), (closed, closed + dt.timedelta(minutes=120)),
@@ -256,7 +256,7 @@ def test_a_minute_that_cannot_be_packed_exactly_stays_as_it_was_stored(tmp_path)
 
 def everything(journal, *, now=dt.datetime(2026, 10, 21, 16, 25, tzinfo=dt.timezone.utc)):
     """Every number a trade shows from its prints: MAE / MFE from each source as measured afresh and as stored, the
-    full recorded path the export writes, and the runner result for every horizon and stop rule."""
+    full recorded path the export writes, and what the price did in the minutes after the exit."""
     found = {}
     for trade in journal.trades():
         for source in journal.price_sources(trade.symbol, trade):
@@ -264,9 +264,7 @@ def everything(journal, *, now=dt.datetime(2026, 10, 21, 16, 25, tzinfo=dt.timez
             found[trade.id, source] = (measurements(trade, samples, source, now=now),
                                        excursions(trade, samples, source, now=now, max_path_points=None)['path'])
         if trade.closed:
-            for minutes in HORIZONS:
-                for stop in STOPS:
-                    found[trade.id, minutes, stop] = best_post_exit(journal, trade, minutes, stop_mode=stop)
+            found[trade.id, 'after exit'] = best_post_exit(journal, trade)
         found[trade.id] = journal.metric_options(trade)
     return found
 
@@ -275,12 +273,14 @@ def test_every_measurement_runner_result_and_full_path_is_the_same_once_packed(t
     journal = day_journal(tmp_path / 'trades.sqlite3')
     trades = journal.trades()
     assert [t.status for t in trades] == ['closed', 'closed', 'open']
-    journal.annotate(trades[0].id, {'planned_stop': 19995.})
+    journal.annotate(trades[0].id, {'planned_stop': 20001.})
     for trade in trades:
         for source in journal.price_sources(trade.symbol, trade):
             journal.measure(trade, source)
     before = everything(journal)
-    assert before[trades[1].id] and all(before[trades[0].id, m, 'breakeven']['extra_mfe'] is not None for m in HORIZONS)
+    # The first is held to its stop, the second to breakeven, and both are measured from recorded ticks.
+    assert [before[t.id, 'after exit']['held_to'] for t in trades[:2]] == ['stop', 'breakeven']
+    assert before[trades[1].id] and all(before[t.id, 'after exit']['precision'] == 'observed-ticks' for t in trades[:2])
     journal.pack_prices()
     assert everything(journal) == before
     # Measured again from what is stored (Recalculate, a change of measuring rules, a fill that regroups trades): the
@@ -307,7 +307,7 @@ def test_an_open_trade_carried_on_from_a_packed_minute_is_measured_as_before(tmp
     assert carried(packed) == carried(plain) and all(carried(packed).values())
 
 
-def test_a_stop_typed_after_packing_gives_the_runner_result_it_gives_unpacked(tmp_path):
+def test_a_stop_typed_after_packing_gives_the_after_exit_result_it_gives_unpacked(tmp_path):
     plain, packed = (day_journal(tmp_path / name) for name in ('plain.sqlite3', 'packed.sqlite3'))
     packed.pack_prices()
     for journal in (plain, packed):
@@ -390,7 +390,7 @@ def test_the_watcher_packs_as_it_starts_and_then_every_hour(tmp_path, monkeypatc
     assert passes == [journal.path] * 2
 
 
-def test_the_trade_page_shows_the_same_runner_numbers_and_full_path_once_packed(tmp_path, monkeypatch):
+def test_the_trade_page_shows_the_same_after_exit_and_full_path_once_packed(tmp_path, monkeypatch):
     import runtime
     from test_app import open_app, widget
     from test_chart import seed_preview
@@ -412,17 +412,13 @@ def test_the_trade_page_shows_the_same_runner_numbers_and_full_path_once_packed(
     def shown():
         app = open_app()
         widget(app.checkbox, 'Show/export full recorded trade path').set_value(True).run()
-        found = {'path': [c.value for c in app.caption if 'recorded prices' in c.value]}
-        for minutes, stop in [*((m, 'original') for m in HORIZONS), (120, 'at-exit'), (120, 'breakeven')]:
-            widget(app.selectbox, 'Look after exit').set_value(minutes)
-            widget(app.selectbox, 'Runner stop rule').set_value(stop).run()
-            assert not app.exception
-            found[minutes, stop] = [(m.label, m.value) for m in app.metric], [c.value for c in app.caption]
-        return found
+        return {'path': [c.value for c in app.caption if 'recorded prices' in c.value],
+                'after exit': [m.value for m in app.markdown if 'after you exited' in m.value],
+                'numbers': [(m.label, m.value) for m in app.metric]}
     try:
         before = shown()
         assert before['path'] and int(before['path'][0].split()[0].replace(',', '')) > 10
-        assert any(label == 'Best extra before your stop' for label, _ in before[120, 'original'][0])
+        assert len(before['after exit']) == 1 and 'further your way' in before['after exit'][0]
         monkeypatch.setattr(Journal, 'pack_prices', pack)
         assert Journal().pack_prices() == 1200 and not rows(tmp_path / 'trades.sqlite3', LOOSE)
         assert shown() == before

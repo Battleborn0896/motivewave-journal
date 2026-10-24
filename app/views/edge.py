@@ -1,7 +1,7 @@
 """Stats: the headline numbers first, then charts of what the closed trades say. Descriptive, never a forecast.
 
 One row holds the page title, Filters (with the saved filter every page uses) and Customize; the numbers
-come straight after it, then a tab each for Overview, Compare, MAE / MFE and Runners, and Dashboards, your
+come straight after it, then a tab each for Overview, Compare, MAE / MFE and After Exit, and Dashboards, your
 own pages of widgets, always last. The equity curve counts trades along the bottom (1, 2, 3, ...) so nights
 and weekends take no room; a toggle puts it on the clock instead, in the display time zone.
 
@@ -26,7 +26,7 @@ import streamlit as st
 
 import common
 import theme
-import runner_controls
+import after_exit
 import tag_controls
 from views import preferences
 from views.trades import REPORT
@@ -36,7 +36,7 @@ from mwjournal.model import instrument_market
 from mwjournal import units
 
 SEGMENTS = ['Market', 'Exact contract', 'Entry hour', 'Weekday', 'Direction']
-SECTIONS = ['Overview', 'Compare', 'MAE / MFE', 'Runners']
+SECTIONS = ['Overview', 'Compare', 'MAE / MFE', 'After Exit']
 DASHBOARDS = 'Dashboards'          # always the last tab, so Customize can never hide it
 AXES = {'trade': 'By Trade', 'time': 'By Date'}
 LABELS = {'closed': 'Exit', 'net': 'Net P&L', 'mae': 'MAE', 'mfe': 'MFE', 'max_qty': 'Contracts',
@@ -153,12 +153,12 @@ def render(journal, rows) -> None:
     if 'MAE / MFE' in panels and panels['MAE / MFE'].open:
         with panels['MAE / MFE']:
             excursion(journal, closed)
-    if 'Runners' in panels and panels['Runners'].open:     # the comparison itself waits for its button
-        with panels['Runners']:
+    if 'After Exit' in panels and panels['After Exit'].open:     # the comparison itself waits for its button
+        with panels['After Exit']:
             st.markdown('### Was There Room to Hold Longer?',
-                        help='A separate hindsight check of the prices after your final exit. It is not the '
-                             'MAE / MFE of the trade you actually took.')
-            runner_controls.edge_panel(journal, closed)
+                        help='Hindsight on the prices after your final exit, apart from the MAE / MFE of the trade '
+                             'you took.')
+            after_exit.stats(journal, closed)
 
 
 def customize(journal) -> None:

@@ -403,7 +403,7 @@ wins.
 
 **MAE / MFE Units** is on **Settings**: choose account currency, points, ticks or R. It changes how MAE / MFE
 are shown, and the unit MAE and MFE filter limits are in. The preference is remembered independently for Live and
-Replay, and applies to the trade list, detail cards, excursion plots, runner views and filters. Actual net P&L is
+Replay, and applies to the trade list, detail cards, excursion plots, After Exit and filters. Actual net P&L is
 unchanged.
 
 MAE means the same in every unit: how far the position you held went against you, from its average entry
@@ -433,8 +433,8 @@ ticks filling any minute that has no candle. The backup keeps every stored measu
 are in account currency. Points remain available without a cash multiplier; currency and R do not.
 
 Stats uses in-place tabs: **Overview** for cumulative results, **Compare** for tag (Setup tags and
-Rating included), playbook, market and time comparisons, **MAE / MFE** for price/position excursions, **Runners** for the separate
-post-exit hypothesis, and **Dashboards**, always last. Tables lead with sample count and average net result per trade. Comparisons
+Rating included), playbook, market and time comparisons, **MAE / MFE** for price/position excursions, **After Exit** for
+what the price did after your exits, and **Dashboards**, always last. Tables lead with sample count and average net result per trade. Comparisons
 are descriptions of your recorded sample, not proof of an edge. **Customize** saves the
 visible tabs and their order per environment (Dashboards always stays).
 
@@ -471,7 +471,7 @@ The outright index tick defaults follow CME's [Micro equity product overview](ht
 and [MNQ specifications](https://www.cmegroup.com/markets/equities/nasdaq/micro-e-mini-nasdaq-100.contractSpecs.html).
 These are not spread/option specifications; contract-specific overrides are stored separately.
 
-Use the in-place **Notes** and **Checklist** tabs and the **More** tab (MAE / MFE, Executions, Runner)
+Use the in-place **Notes** and **Checklist** tabs and the **More** tab (MAE / MFE, Executions, After Exit)
 instead of scrolling through a long stacked page. A trade's review is its note and its Stop. Every review box
 (the note, the Stop, and each box of the Daily Report Card) saves when it changes or you leave it; there is no
 Save button, and clicking another trade or day keeps what was typed. Opening a journal from 0.4.16 or earlier
@@ -575,7 +575,7 @@ the app watches it without routine exports. This follows the platform-connector/
 pattern documented by [SCS Trading Journal](https://www.scstudies.com/trading-journal), not its
 proprietary implementation. Tick prices remain stored at their original resolution. The journal keeps
 every recorded tick, packed small: an hour or two after a tick is recorded, each minute's ticks are packed
-into one entry, about 5 bytes a tick instead of about 475, and every chart, MAE / MFE, runner result and
+into one entry, about 5 bytes a tick instead of about 475, and every chart, MAE / MFE, After Exit and
 export reads exactly the same ticks as before. There is nothing to set or do. The first time this version
 opens a journal it packs every tick already recorded and shrinks the file (a tester's 222 MB journal became
 17 MB in 13 seconds). The default
@@ -593,31 +593,37 @@ it, so it holds only what the app has not read yet (while the app is closed it k
 bridge file is not a backup: the journal backup (Settings → Data → Export & Backup → **Back Up Journal**) is
 how a journal is recovered.
 
-### Post-exit runner analysis
+### After Exit
 
 The study has nothing to set, and the minutes after an exit come by themselves: once a trade is over, the
 study loads its holding time and the 30 minutes after its exit from MotiveWave's tick history, for the
-chart's current contract, on that contract's own chart or a continuous one alike. So the 5/15/30-minute
-post-exit windows need no separate recorder, and the chart does not have to stay open through them. The
-study never holds a position or modifies an order.
+chart's current contract, on that contract's own chart or a continuous one alike. So the chart does not have
+to stay open through them. The study never holds a position or modifies an order.
 
-In Trades, open **More → Runner** and expand **Could I Have Let This Trade Run?**. In Stats, open
-**Runners** and expand **Which Tags Have Room for Runners?**. Choose a fixed 5/15/30/60/120-minute horizon. Analysis reports extra peak gross profit,
-adverse movement, the observed fixed-horizon result, and approximate time to the peak. The
-hypothesis retains only the final exit fill's quantity; earlier partial exits remain unchanged.
-R statistics need the trade's stop. Compare winners or exits near 1R by tag or tag category.
-Choose an explicit frozen stop: your stop (the one R uses), recorded working
-stop at exit, or entry-average gross breakeven. Missing/ambiguous stop levels stay unavailable.
-Tracking ends at the FIRST observed stop touch or the pre-selected horizon. Peaks after a stop
-touch are never credited. If no stop is touched by the cutoff, the result is labelled still running
-at cutoff, not the final lifetime peak. Stop and peak in the same OHLC candle are order-ambiguous:
-report conservative/possible bounds and exclude that case from default comparisons.
+After Exit answers one question: in the 15 minutes after you exited, how much further did the price go your
+way before it reached your stop? The contracts of your final exit are held on at its price; earlier partial
+exits stay as they were. The stop is the one R uses: the stop you saved for the trade, else your stop order as
+it stood 10 seconds after entry. A trade with neither is held to breakeven, its average entry before fees.
+There is no take profit, and only recorded ticks count. A replay trade's 15 minutes go by as the replay plays
+them.
 
-Only recorded ticks are used; incomplete or gapped windows are left out.
-This is a frozen-stop price-path hypothesis, not an execution-accurate strategy backtest or an
-achievable-profit claim. No spread/slippage, additional fees, dynamic trailing rules or perfect
-peak execution is simulated. Tick completeness and actual stop fills remain unverified.
-Do not add hindsight peaks to expectancy; validate a fixed runner rule on unseen trades next.
+In Trades, open **More → After Exit**. It is one sentence in your MAE / MFE unit, for example "In the 15
+minutes after you exited, price went 6.25 pts further your way before reaching your stop." It can also say
+that the price did not reach your stop, that it reached your stop without going any further your way, that you
+exited at or past your stop (nothing left to hold), that the 15 minutes are not over yet, or that no price, or
+not every price, was recorded, with the one fix: keep the study on a chart of this contract while you trade.
+Without a stop it says breakeven instead of your stop. In R, a trade without a stop has no R amount: it shows —
+and why, as the MAE tile does. Open, incomplete and merged trades show nothing.
+
+In Stats, open **After Exit** and press **Compare Runners** to average the same 15 minutes by tag or by tag
+category; **Filters** narrows the trades, for example to winners by Net P&L or to exits near 1R by R. A trade
+counts only when all of its 15 minutes were recorded, so a partial window is never averaged in as zero; exits
+at or past the stop are left out too, and a trade with several tags counts under each.
+
+This is hindsight on a price path, not a strategy backtest or profit you could have made. A stop touch is not
+a stop fill; spread, slippage, fees and trailing stops are not modelled; and recorded ticks are not proof that
+the feed sent every print. Do not add these peaks to your expectancy: pick a fixed exit rule from them, then
+check it on trades you have not looked at yet.
 
 Prices use the public SDK. Reading manual-account fills uses an allow-listed, read-only adapter to
 MotiveWave internals, **not its supported SDK**; a platform update can break it. The connection status
