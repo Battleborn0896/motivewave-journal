@@ -1,4 +1,4 @@
-"""Session tools, at the top of Trades: a check-in timer and three small menus. Read-only towards trading.
+"""Session tools, at the top of Trades: a check-in timer and two small menus. Read-only towards trading.
 
 The timer is drawn like the loop timer of the journal it is modelled on (docs/research/tradecraft-videos.md):
 a large count, play, pause and stop, and a duration box in minutes. When it runs out, the tag groups chosen
@@ -157,13 +157,13 @@ def groups(journal) -> list[str]:
 # ---------------------------------------------------------------- the menus
 
 MENUS = {'Check-Ins': 'Which tag groups ask how you are doing when the timer runs out, and the latest check-ins.',
-         'Drafts': 'Pre-trade drafts: a plan that attaches its tags, note and stop to the next trade captured on '
+         'Drafts': 'Pre-trade drafts: a plan that attaches its tags, note and stop to the next trade recorded on '
                    'that account and contract.'}
 
 
 def menus(journal, rows) -> None:
     """Check-Ins and Pre-Trade Drafts, as small menus in the current row. Each is drawn only while it is open: the
-    trade beside it has tag groups, a checklist and forms of its own."""
+    trade beside it has categories of tags, a checklist and forms of its own."""
     panels = {'Check-Ins': lambda: checkins_panel(journal, rows), 'Drafts': lambda: draft_panel(journal, rows)}
     for label, explained in MENUS.items():
         menu = st.popover(label, help=explained, key=common.key(journal, 'session-menu-' + label.lower()),

@@ -316,7 +316,7 @@ def test_the_list_compiles_to_the_graph_and_back_unchanged(home):
     patient = tagging.identity('Patient')
     questions = [question('Did I wait for my setup?', yes={'tag_ids': [patient]}, no={'go': 3, 'count': True}),
                  question('Is my stop placed?', no={'go': 'finish'}),
-                 question('Did I size down after a loss?', yes={'go': 1, 'count': True})]
+                 question('Did I trade fewer contracts after a loss?', yes={'go': 1, 'count': True})]
     graph = compile_checklist(questions)
     assert [(n['id'], n['kind'], n['next']) for n in graph['nodes']] == [
         ('q1', 'question', ['q1-yes', 'q1-no']), ('q1-yes', 'answer', ['q2']),
@@ -462,11 +462,11 @@ def answer(app, label, choice):
 def test_checklist_ui_run_branch_undo_and_apply_tags(home):
     journal = seed_preview(home)
     journal.save_checklist('Plan', [question('Setup valid?', no={'go': 3, 'tag_ids': ['Patient']}),
-                                    question('Stop placed?'), question('Size right?')])
+                                    question('Stop placed?'), question('Contracts right?')])
     trade = journal.trades()[0]
     app = open_app()
     asked = [p.label for p in app.pills if '·' in p.label]
-    assert asked == ['1 · Setup valid?', '2 · Stop placed?', '3 · Size right?']
+    assert asked == ['1 · Setup valid?', '2 · Stop placed?', '3 · Contracts right?']
     assert [widget(app.pills, f'{n} ·').disabled for n in (1, 2, 3)] == [False, True, True]   # the first is due
     assert not journal.workspace()['runs']                                         # a run starts with an answer
     answer(app, '1 · Setup valid?', 'q1-no')
@@ -476,7 +476,7 @@ def test_checklist_ui_run_branch_undo_and_apply_tags(home):
     press(app, 'Undo Last Answer')
     assert any(p.label.startswith('2 ·') for p in app.pills) and widget(app.pills, '1 ·').value is None
     answer(app, '1 · Setup valid?', 'q1-no')
-    answer(app, '3 · Size right?', 'q3-yes')
+    answer(app, '3 · Contracts right?', 'q3-yes')
     assert said(app.success, 'Checklist complete')
     assert 'Patient' not in journal.annotations().get(trade.id, {}).get('tags', [])    # only Apply applies
     press(app, 'Apply Collected Tags')
@@ -503,8 +503,12 @@ def test_the_checklist_editor_builds_a_list_with_a_branch_and_saves_it_once(home
     press(app, 'Add Question')
     editing(app)['Question 3'].input('Did I sleep well?').run()
     assert [b.disabled for b in app.button if b.label == 'Move Up'] == [True, False, False]
+    folds = [e.key for e in app.expander]
     [b for b in app.button if b.label == 'Move Up'][1].click().run()
     assert editing(app)['Question 1'].value == 'Is my stop placed?'        # question 2 moved up
+    # Each Add a Branch is keyed by its question, so an open one moves with it and stays open when the line saying
+    # what its branches do appears above it.
+    assert all(folds) and [e.key for e in app.expander] == [folds[1], folds[0], folds[2]]
     no_goes = [s for s in app.selectbox if s.label == 'No goes to']
     no_goes[0].set_value(next(o for o in no_goes[0].options if o == 'Question 3')).run()
     assert said(app.caption, 'No goes to Question 3')

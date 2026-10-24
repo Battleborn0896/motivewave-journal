@@ -126,7 +126,8 @@ def editor(journal, selected, definition):
                           args=(place,))
             if words := branches(item, uids, library):
                 st.caption(words)
-            with st.expander('Add a Branch'):
+            # Keyed by its question: it stays open when the line above it first appears, and moves with its question.
+            with st.expander('Add a Branch', key=f'{held_key}-{uid}-branch'):
                 for column, answer in zip(st.columns(2), ANSWERS):
                     branch, word = item[answer], answer.title()
                     options = ['next', *[other for n, other in enumerate(uids)
@@ -134,7 +135,8 @@ def editor(journal, selected, definition):
                                *([] if last else ['finish'])]
                     with column:
                         st.selectbox(f'{word} goes to', options,
-                                     format_func=lambda go, last=last: target(go, uids, last), **box(f'{uid}-{answer}-go', branch['go'], 'go', uid, answer))
+                                     format_func=lambda go, last=last: target(go, uids, last),
+                                     **box(f'{uid}-{answer}-go', branch['go'], 'go', uid, answer))
                         st.multiselect(f'{word} collects tags', tag_choices(library, level, branch['tag_ids']),
                                        format_func=lambda id: library['tags'][id]['name'], placeholder='No tags',
                                        **box(f'{uid}-{answer}-tags', branch['tag_ids'], 'tag_ids', uid, answer))
