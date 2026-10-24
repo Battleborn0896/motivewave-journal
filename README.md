@@ -575,7 +575,7 @@ the app watches it without routine exports. This follows the platform-connector/
 pattern documented by [SCS Trading Journal](https://www.scstudies.com/trading-journal), not its
 proprietary implementation. Tick prices remain stored at their original resolution. The journal keeps
 every recorded tick, packed small: an hour or two after a tick is recorded, each minute's ticks are packed
-into one entry, about 5 bytes a tick instead of about 475, and every chart, MAE / MFE, runner result and
+into one entry, about 5 bytes a tick instead of about 475, and every chart, MAE / MFE, After Exit and
 export reads exactly the same ticks as before. There is nothing to set or do. The first time this version
 opens a journal it packs every tick already recorded and shrinks the file (a tester's 222 MB journal became
 17 MB in 13 seconds). The default

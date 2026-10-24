@@ -88,6 +88,10 @@ def stats(journal, rows):
         money = {name: common.money_column(name, results[0]['currency']) for name in table.columns
                  if unit == 'currency' and name.startswith('Average')}
         st.dataframe(table, hide_index=True, width='stretch', column_config=money)
+    elif results and all(r['termination'] == 'stop-already-touched-at-exit' for r in results):
+        # Their prices were never read, so whether they were recorded says nothing.
+        st.info('Each of these trades exited at or past its stop, or breakeven without one, so there was nothing '
+                'left to hold.')
     else:
         st.info(f'None of these trades has all of the {AFTER_EXIT_MINUTES} minutes after its exit recorded'
                 + (' and a stop for R' if unit == 'r' else '') + '. Keep the study on a chart of each contract you '

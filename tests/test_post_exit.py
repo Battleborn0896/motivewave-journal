@@ -85,6 +85,11 @@ def test_minutes_not_all_recorded_are_never_averaged_in(tmp_path):
     assert not runner_groups([{'tags': ['A+'], **missing}])
     none = post_exit(t, [], 'prices', 4990, now=LATER)
     assert none['extra_mfe'] is None and none['termination'] == 'unavailable'
+    # A tick within a minute of the exit, and of the end of the 15 minutes, counts as recorded from and to there.
+    def coverage(*seconds):
+        return post_exit(t, prints([(s, 5002) for s in seconds], 'prices'), 'prices', 4990, now=LATER)['coverage']
+    assert coverage(60, 840) == 'window-observed'
+    assert coverage(61, 900) == coverage(1, 839) == 'partial-window'
     # Ticks with a gap the study reported never cover the minutes.
     journal.ingest_prices(ticks('motivewave-ticks'))
     assert best_post_exit(journal, t)['coverage'] == 'window-observed'

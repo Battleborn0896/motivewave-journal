@@ -363,7 +363,7 @@ def test_empty_journal_then_a_review_is_saved():
 
 
 def test_full_recorded_path_and_after_exit_render_without_claiming_missing_data(home):
-    seed_ticks(seed_preview(home))
+    journal = seed_ticks(seed_preview(home))
     app = open_app()
     widget(app.checkbox, 'Show/export full recorded trade path').set_value(True).run()
     assert not app.exception
@@ -386,6 +386,13 @@ def test_full_recorded_path_and_after_exit_render_without_claiming_missing_data(
     assert widget(app.selectbox, 'Compare runners by').options == ['Individual tags', 'Tag categories']
     assert not any(b.label in ('Analyze recorded post-exit prices', 'Calculate post-exit tag analysis')
                    for b in app.checkbox)
+    # An exit at its stop left nothing to hold: Stats says that, not that prices were missing, which were never read.
+    journal.update_annotation(journal.trades()[0].id, {'planned_stop': 5003})
+    app.run()
+    press(app, 'Compare Runners')
+    assert said(app.info, 'Each of these trades exited at or past its stop, or breakeven without one, so there was '
+                          'nothing left to hold.')
+    assert not said(app.info, 'None of these trades')
 
 
 def test_measured_trade_risk_renders_from_the_traded_price_alone():

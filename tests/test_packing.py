@@ -87,8 +87,9 @@ def day_journal(path, seed=1, *, dataset='live'):
 
 
 def windows(trade):
-    """Every window a trade reads its prices over: none, its hold, after its exit to the longest runner horizon, its
-    chart two hours either side, starts and ends in the middle of a minute and on one, and open at either end."""
+    """Every window a trade reads its prices over: none, its hold, after its exit to the end of the prints it keeps
+    (store.PRINTS_AFTER), its chart two hours either side, starts and ends in the middle of a minute and on one, and
+    open at either end."""
     opened, closed = instant(trade.opened), instant(trade.closed or '2026-10-21T16:20:00+00:00')
     minute = dict(second=0, microsecond=0)
     for start, end in ((None, None), (opened, closed), (closed, closed + dt.timedelta(minutes=120)),

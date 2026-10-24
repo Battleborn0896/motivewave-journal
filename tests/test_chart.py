@@ -52,7 +52,7 @@ def seed_ticks(journal):
     only draw the chart, an estimate that never measures a trade). Long 2 from 5000, 1 out at 5002, the other at
     5003: MAE 1 point (4999 with 2 held, $100); MFE 2.5 points (5002.5 with 2 held, $250), which beats the 3.5
     points the one contract left saw at 5003.5 ($175). The 2 points banked by the partial exit are not counted.
-    Two prints after the exit are for the runner."""
+    Two prints after the exit are for After Exit."""
     trade = journal.trades()[0]
     prints = [PriceSample('ESZ6', f'2026-10-07T14:{at}Z', 'motivewave-ticks', price, price)
               for at, price in (('00:40', 4999), ('01:10', 5002.5), ('02:00', 5001), ('02:30', 4999.5),
