@@ -18,10 +18,9 @@ CSV_COLUMNS = ('id', 'account', 'symbol', 'direction', 'opened', 'closed', 'entr
                'mae', 'mfe', 'mae_r', 'mfe_r', 'tags')
 # Beside the UTC columns: the same entry and exit as a person reads them, in the display time zone.
 HUMAN_COLUMNS = ('entry_time', 'exit_time', 'time_zone')
-HELP = {'backup': 'One zip of the whole journal, Live and Replay and every journal you made, safe to take while '
-                  'trades are recording.',
-        'csv': 'Every trade of this environment, one row each, with UTC times and entry and exit in your display '
-               'time zone.',
+HELP = {'backup': 'One zip of Live and Replay with every trade, review and setting, safe to take while trades are '
+                  'recording.',
+        'csv': 'Every trade of this environment, one row each, with UTC times and entry and exit in your Time Zone.',
         'restore': 'Choose a backup zip to put the whole journal back as it was then; your journal as it is now is '
                    'saved first.'}
 # The file box's number goes up after a restore, so the box is empty again; the chosen file's summary is read

@@ -172,7 +172,7 @@ def preview_bridge(text: str, *, timezone='UTC', allow_partial_tail=False, datas
                 result.fills.append((Execution(**fields), event))
             elif kind in ('tick', 'quote', 'bar'):
                 duration = event.get('resolution_seconds', 0)
-                if kind == 'bar' and finite(duration, 'Bar duration') <= 0:
+                if kind == 'bar' and finite(duration, 'Bar length') <= 0:
                     raise ValueError('A bar needs a positive resolution_seconds.')
                 high = event.get('high', event.get('last', event.get('price')))
                 low = event.get('low', high)
@@ -186,7 +186,7 @@ def preview_bridge(text: str, *, timezone='UTC', allow_partial_tail=False, datas
                 result.protection.append(ProtectionEvent(**fields))
             elif kind == 'gap':
                 if not isinstance(event.get('provider'), str) or not event['provider'].strip():
-                    raise ValueError('A capture gap needs its provider identity.')
+                    raise ValueError('A recording gap needs its provider.')
                 missing = finite(event.get('dropped'), 'Dropped ticks', True)
                 if not missing.is_integer():
                     raise ValueError('Dropped ticks must be a whole number.')
@@ -199,7 +199,7 @@ def preview_bridge(text: str, *, timezone='UTC', allow_partial_tail=False, datas
                     gap['start_ts'] = timestamp(event['start_ts'], timezone)
                     gap['end_ts'] = timestamp(event['end_ts'], timezone)
                     if instant(gap['end_ts']) < instant(gap['start_ts']):
-                        raise ValueError('Capture gap end precedes its start.')
+                        raise ValueError('A recording gap ends before it starts.')
                 result.gaps.append(gap)
             else:
                 heartbeat = dict(event, ts=timestamp(event['ts'], timezone))

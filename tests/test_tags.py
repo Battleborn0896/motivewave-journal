@@ -48,7 +48,7 @@ def test_reusable_tags_and_legacy_tags_remain_available_without_auto_tagging(tmp
     assert replay.tag_catalog()['VWAP reclaim'] == 'My setups' and not replay.annotations()   # one library, own reviews
     assert live.annotations()['a']['tags'] == ['My old tag']
     assert Journal(live.path).tag_catalog()['VWAP reclaim'] == 'My setups'
-    with pytest.raises(ValueError, match='another group'):
+    with pytest.raises(ValueError, match='another category'):
         live.add_tag('VWAP reclaim', 'Other')
     with pytest.raises(ValueError):
         live.add_tag('', 'Custom')

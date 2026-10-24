@@ -532,7 +532,7 @@ PRIMARY KEY (trade_id, fills_key)
 - the liquidation measurement is dropped;
 - Accuracy is fixed at ticks-only and its selector removed;
 - the Measurement picker is hidden;
-- a trade with no linked stop says "No stop order was recorded for this trade. Type your stop to get R.".
+- a trade with no linked stop says "No stop order was recorded for this trade: type your stop to get R.".
 
 **Tests prove:**
 - `JournalAccountCaptureTest` with a fixture `Reader`:

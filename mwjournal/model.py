@@ -79,7 +79,7 @@ def heartbeat_report(heartbeat: dict | None) -> tuple[str | None, str | None]:
     if heartbeat.get('status') != 'error':
         return None, warnings
     detail = heartbeat.get('detail')
-    detail = detail.strip() if isinstance(detail, str) and detail.strip() else 'The capture study reported an error.'
+    detail = detail.strip() if isinstance(detail, str) and detail.strip() else 'The study reported an error.'
     if PARTIAL_CAPTURE.fullmatch(detail):
         return None, detail if not warnings else detail + '; ' + warnings
     return detail, warnings
@@ -241,7 +241,7 @@ class PriceSample:
         for key in ('high', 'low', 'resolution_seconds'):
             object.__setattr__(self, key, finite(getattr(self, key), key))
         if self.high < self.low or not 0 <= self.resolution_seconds <= 86400:
-            raise ValueError('Price high must be >= low; bar duration must be between 0 and one day.')
+            raise ValueError('Price high must be >= low; bar length must be between 0 and one day.')
         for key in ('bid', 'ask'):
             if getattr(self, key) is not None:
                 object.__setattr__(self, key, finite(getattr(self, key), key))
@@ -257,7 +257,7 @@ class PriceSample:
         if self.volume is not None and self.volume < 0:
             raise ValueError('Volume cannot be negative.')
         if self.resolution_seconds == 0 and self.high != self.low:
-            raise ValueError('An observed tick must have a single price; use a bar duration for ranges.')
+            raise ValueError('An observed tick must have a single price; use a bar length for ranges.')
 
 
 @dataclass(frozen=True)

@@ -97,9 +97,6 @@ def stats(journal, rows):
         st.info(f'None of these trades has all of the {AFTER_EXIT_MINUTES} minutes after its exit recorded'
                 + (' and a stop for R' if unit == 'r' else '') + '. Keep the study on a chart of each contract you '
                 'trade.')
-    st.caption('Hindsight to test, not profit you missed',
-               help='A stop touch is not a fill, and fees, slippage and trailing stops are not modelled, so test '
-                    'any rule on new trades first.')
 
 
 def tag_order(library, groups) -> list[dict]:

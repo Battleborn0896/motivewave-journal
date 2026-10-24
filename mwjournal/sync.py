@@ -262,7 +262,7 @@ class SyncWorker:
 
 def main(argv=None):
     parser = argparse.ArgumentParser(prog='python -m mwjournal.sync',
-                                     description='Capture into MotiveWave Journal without opening the app.')
+                                     description='Record into MotiveWave Journal without opening the app.')
     parser.add_argument('--once', action='store_true', help='one bounded pass over the bridge file, then exit')
     parser.add_argument('--dataset', choices=paths.DATASETS, default='live')
     args = parser.parse_args(argv)

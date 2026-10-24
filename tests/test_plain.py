@@ -1,12 +1,16 @@
 """What a trader reads and types on Trades: every review box saves by itself, an open trade has one P&L, a
-trade without MAE / MFE says why, and the screen uses words instead of codes and ids. Disposable journals in a
-temporary data home, under the production tick-only default."""
+trade without MAE / MFE says why, and the screen uses words instead of codes and ids. Then, for every page, one
+word for each thing and a ? of one short sentence. Disposable journals in a temporary data home, under the
+production tick-only default."""
+import ast
 import datetime as dt
+import re
+from pathlib import Path
 
 import pytest
 
 import runtime
-from mwjournal import Execution, Journal, PriceSample, journals, tagging
+from mwjournal import Execution, Journal, PriceSample, journals, tagging, units
 from mwjournal.metrics import measurements
 from mwjournal.model import ProtectionEvent, instant
 from mwjournal.workspace import question
@@ -353,3 +357,126 @@ def test_a_stop_typed_with_a_thousands_comma_is_the_same_price(home):
     app = open_app()
     widget(app.text_input, 'Stop').set_value('19,980.25').run()
     assert not app.exception and journal.annotations()[trade.id]['planned_stop'] == 19980.25
+
+
+def test_check_this_combination_says_which_earlier_trades_it_counts(home):
+    """Only trades closed before this entry count: one entered earlier but still open at this entry does not."""
+    journal = Journal()
+    journal.ingest([fill('a-in', 'buy', 5000, '2026-10-07T14:00:00Z'), fill('a-out', 'sell', 5002, '2026-10-07T14:05:00Z'),
+                    fill('b-in', 'buy', 20000, '2026-10-07T14:10:00Z', symbol='NQZ6'),
+                    fill('b-out', 'sell', 20010, '2026-10-07T14:40:00Z', symbol='NQZ6'),
+                    fill('c-in', 'buy', 5000, '2026-10-07T14:20:00Z'), fill('c-out', 'sell', 5001, '2026-10-07T14:25:00Z')])
+    for trade in journal.trades():
+        journal.annotate(trade.id, {'tags': ['Breakout']})
+    this = next(t for t in journal.trades() if t.opened.startswith('2026-10-07T14:20'))
+    app = pick(open_app(), this.id)
+    assert said(app.markdown, r'1 trade closed before this entry · Win Rate 100.0% · Average Trade +\$96.00')
+
+
+# ---------------------------------------------------------------- one word for each thing, and a short ?
+
+APP = Path(__file__).resolve().parents[1] / 'app'
+PAGES = sorted([*APP.glob('*.py'), *(APP / 'views').glob('*.py')])
+# Words the screen no longer uses: record, Contracts, Minutes held, Win Rate, Category, Rating and Setup tags
+# took their place.
+RETIRED = ('captur', 'Peak size', 'Qty', 'Quantity', 'Duration', 'Win %', 'tag group', 'Process rating', 'Setup →',
+           '(Setup)')
+LONGEST_HELP = 25          # words in a ?, which says in one sentence what its control does
+
+
+def modules():
+    """(file name, syntax tree, module-level constants) of every page and shared module of the app."""
+    for path in PAGES:
+        tree = ast.parse(path.read_text(encoding='utf-8'))
+        constants = {target.id: node.value for node in tree.body if isinstance(node, ast.Assign)
+                     for target in node.targets if isinstance(target, ast.Name)}
+        yield path.relative_to(APP.parent).as_posix(), tree, constants
+
+
+def written(tree) -> list[str]:
+    """Every piece of text a module writes, but its docstrings: labels, helps, captions, notes and warnings, and
+    its text constants. A lower-case word with no space is a key, such as the filter rules' 'quantity' and
+    'duration', which stay as they are stored."""
+    docstrings = {id(node.body[0].value) for node in ast.walk(tree)
+                  if isinstance(node, (ast.Module, ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef))
+                  and node.body and isinstance(node.body[0], ast.Expr) and isinstance(node.body[0].value, ast.Constant)}
+    return [node.value for node in ast.walk(tree) if isinstance(node, ast.Constant) and isinstance(node.value, str)
+            and id(node) not in docstrings and not re.fullmatch(r'[a-z0-9_.:\-]+', node.value)]
+
+
+def standing_for(node, constants) -> list:
+    """The expressions `node` can be, through the module's constants: a dict of them by any key or .get(), one by
+    its key, an element of a (line, help) pair by its index, either side of a choice, and md()'s text."""
+    if isinstance(node, ast.Name):
+        return standing_for(constants[node.id], constants) if node.id in constants else []
+    if isinstance(node, ast.IfExp):
+        return standing_for(node.body, constants) + standing_for(node.orelse, constants)
+    if isinstance(node, ast.Call) and isinstance(node.func, (ast.Name, ast.Attribute)):
+        name = node.func.id if isinstance(node.func, ast.Name) else node.func.attr
+        if name == 'md' and node.args:
+            return standing_for(node.args[0], constants)
+        if name == 'get' and isinstance(node.func, ast.Attribute):
+            return [found for table in standing_for(node.func.value, constants) if isinstance(table, ast.Dict)
+                    for value in table.values for found in standing_for(value, constants)]
+        return []
+    if isinstance(node, ast.Subscript):
+        key = node.slice.value if isinstance(node.slice, ast.Constant) else None
+        found = []
+        for base in standing_for(node.value, constants):
+            if isinstance(base, ast.Dict):
+                found += [value for name, value in zip(base.keys, base.values)
+                          if key is None or isinstance(name, ast.Constant) and name.value == key]
+            elif isinstance(base, (ast.Tuple, ast.List)) and isinstance(key, int):
+                found.append(base.elts[key])
+        return [each for value in found for each in standing_for(value, constants)]
+    return [node]
+
+
+def wording(node, constants) -> list[str]:
+    """Every text an expression can be when it is a literal or a module constant, each value of an f-string
+    standing for one word; nothing when any part of it is worked out as the page runs."""
+    found = []
+    for each in standing_for(node, constants):
+        if isinstance(each, ast.Constant) and isinstance(each.value, str):
+            found.append(each.value)
+        elif isinstance(each, ast.JoinedStr):
+            found.append(''.join(part.value if isinstance(part, ast.Constant) else 'X' for part in each.values))
+        elif isinstance(each, ast.BinOp) and isinstance(each.op, ast.Add):
+            found += [left + right for left in wording(each.left, constants) for right in wording(each.right, constants)]
+    return found
+
+
+def helps():
+    """(where, text) of every ? the app writes as a literal or a module constant."""
+    for name, tree, constants in modules():
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Call):
+                for keyword in node.keywords:
+                    if keyword.arg == 'help':
+                        for text in wording(keyword.value, constants):
+                            yield f'{name}:{keyword.value.lineno}', text
+
+
+def too_long(text) -> bool:
+    words = [word for word in text.split() if any(c.isalnum() for c in word)]
+    sentences = [s for s in re.split(r'(?<=[.!?])\s+', text.strip()) if s]
+    return len(words) > LONGEST_HELP or len(sentences) > 1
+
+
+def test_the_screen_uses_one_word_for_each_thing():
+    said_ = {name: written(tree) for name, tree, _ in modules()}
+    assert len(said_) > 15 and sum(map(len, said_.values())) > 500             # every page was read
+    found = [(name, word, text) for name, texts in said_.items() for text in texts for word in RETIRED
+             if word.casefold() in text.casefold()]
+    assert found == []
+
+
+def test_every_question_mark_is_one_sentence_of_at_most_25_words():
+    shown = list(helps())
+    assert len(shown) > 100                                                    # every ? the app writes was read
+    assert any(text == 'Opens the newer trade above in the list.' for _, text in shown)     # a literal
+    assert any(text.startswith('One zip of Live and Replay') for _, text in shown)          # a dict's, by its key
+    assert any(text.startswith('Copies the study into') for _, text in shown)               # a (line, ?) pair's
+    assert [(where, text) for where, text in shown if too_long(text)] == []
+    # The ? beside MAE and MFE is worked out as the page runs: one sentence in each unit.
+    assert [unit for unit in units.UNITS if too_long(units.description(unit))] == []

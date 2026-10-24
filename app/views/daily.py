@@ -40,7 +40,7 @@ def render(journal, rows) -> None:
         with metrics[0].container(key='tile-day-net-' + tone):
             st.metric('Net P&L', money(s['net'], currency), border=True, help='After recorded fees.')
         metrics[1].metric('Trades', str(s['count']), border=True,
-                          help='Closed trades on this day.' + (f' {still_open} more still open.' if still_open else ''))
+                          help='Closed trades on this day' + (f'; {still_open} more still open.' if still_open else '.'))
         metrics[2].metric('Win Rate', f'{s["win_rate"]:.1f}%' if s['win_rate'] is not None else '—', border=True)
         metrics[3].metric('Average Trade', money(s['expectancy'], currency), border=True)
     saved = date.isoformat()

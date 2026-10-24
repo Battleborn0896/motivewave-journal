@@ -53,14 +53,14 @@ def test_without_a_stop_order_the_risk_is_unknown_and_says_why():
     t = long_one(journal)
     result = plan(t, {}, [])
     assert (result.stop, result.source, result.risk) == (None, '', None)
-    assert result.why == f'No stop order {STOP_SETTLES} seconds after entry. Type your stop to get R.'
+    assert result.why == f'No stop order {STOP_SETTLES} seconds after entry: type your stop to get R.'
 
 
 def test_a_motivewave_trade_with_no_stop_reported_says_so_where_r_would_show(home):
     journal = Journal()
     native = 'motivewave-native:workspace:live'
     t = trade(journal, ('in', 'buy', 1, 5000, 0), ('out', 'sell', 1, 5004, 60), provider=native)
-    assert plan(t, {}, []).why == NOT_REPORTED == 'No stop order was recorded for this trade. Type your stop to get R.'
+    assert plan(t, {}, []).why == NOT_REPORTED == 'No stop order was recorded for this trade: type your stop to get R.'
     # A stop was reported but was not standing 10 seconds after entry: that is said instead.
     assert plan(t, {}, [order(30, 4996, provider=native)]).why.startswith('No stop order 10 seconds after entry')
     # Typed: R, and nothing to say.
@@ -337,7 +337,7 @@ def test_notes_without_a_stop_order_asks_for_one(home):
     long_one(journal)
     app = open_app()
     assert widget(app.text_input, 'Stop').value == ''
-    assert said(app.caption, 'No stop order 10 seconds after entry. Type your stop to get R.')
+    assert said(app.caption, 'No stop order 10 seconds after entry: type your stop to get R.')
 
 
 def test_tag_my_next_trade_takes_a_stop_price(home):
@@ -359,7 +359,7 @@ def test_stats_average_r_comes_from_the_stop(home):
     journal.ingest_protection([order(0, 4996)])
     app = open_app('Edge')
     average = widget(app.metric, 'Average R')
-    assert average.value == '+0.98R' and 'Across 1 trades with a stop.' in average.proto.help
+    assert average.value == '+0.98R' and 'Across 1 trade with a stop' in average.proto.help
 
 
 def test_mae_and_mfe_in_r_divide_by_the_risk_to_the_stop_order(home):

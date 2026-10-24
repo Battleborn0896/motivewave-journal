@@ -69,9 +69,8 @@ def playbooks(journal, library):
     old = books.get(choice, {})
     with st.form(common.key(journal, 'playbook-editor-' + choice)):
         name = st.text_input('Playbook name', old.get('name', ''), max_chars=64,
-                             help='Choose the tags that fit within each category: any one of them will do. '
-                                  'Every category with a chosen tag must match; other categories are free. This '
-                                  'describes a setup, not a claim that it makes money.')
+                             help='A trade matches when it has one of the tags chosen below in every category that '
+                                  'has any.')
         color = st.color_picker('Playbook color', old.get('color', '#65CA98'),
                                 help='Its name is drawn in this color where Stats compares playbooks.')
         retired = st.checkbox('Retire playbook · keep its definition', value=old.get('retired', False))
@@ -137,8 +136,8 @@ def group_editor(journal, library):
     with st.form(common.key(journal, 'group-editor-' + group)):
         group_name = st.text_input('Category name', group, max_chars=40)
         exclusive = st.checkbox('One choice at a time', value=library['groups'][group]['exclusive'],
-                                help='Choosing a tag in this category clears the others on that trade. Trades that '
-                                     'already have two keep them until you choose again.')
+                                help='Choosing a tag in this category clears the others on that trade; a trade that '
+                                     'already has two keeps them until you choose again.')
         if st.form_submit_button('Save Category'):
             try:
                 journal.edit_tag_group(group, name=group_name, exclusive=exclusive)

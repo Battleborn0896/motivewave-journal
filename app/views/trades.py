@@ -252,7 +252,7 @@ def top_row(journal, every, rows):
     with bar.container(horizontal=True, horizontal_alignment='right', vertical_alignment='center', gap='small'):
         session.menu(journal, every)
         with st.popover(preferences.filters_label(journal, rows), key=common.key(journal, 'filters-menu'),
-                        help='Narrow the list by market, date, account, tag, playbook or rating; the saved filter '
+                        help='Narrow the list by market, date, account, tag, playbook or Rating; the saved filter '
                              'here applies to every page.'):
             shown = preferences.filter_menu(journal, rows)
         with st.popover('Merge Trades', help='Review several trades as one, or split a merged trade again.'):
@@ -266,7 +266,7 @@ def report_card(journal, rows) -> None:
         st.session_state[common.key(journal, REPORT)] = False
 
     st.button('← Back to Trades', key=common.key(journal, 'back-to-trades'), type='tertiary', on_click=back,
-              help='Shows the selected trade again. Clicking any trade in the list does too.')
+              help='Shows the selected trade again, as clicking any trade in the list does.')
     daily.render(journal, rows)
 
 
@@ -339,8 +339,8 @@ def merge_menu(journal, rows) -> None:
         ids = st.multiselect('Original trades to merge', list(by_id),
                              format_func=lambda id: f'{common.moment(by_id[id]["opened"], zone, seconds=False)} · '
                                                     f'{by_id[id]["symbol"]} · {money(by_id[id]["net"], by_id[id]["currency"])}',
-                             help='Reviews them as one trade. Same account, contract, currency and direction, within '
-                                  '24 hours. The original fills, positions and notes are kept; Split undoes it.')
+                             help='Reviews trades of one account, contract and direction within 24 hours as one trade; '
+                                  'Split gives them back.')
         if st.form_submit_button('Merge Selected'):
             try:
                 merged = merging.create(getattr(journal, 'original', journal), ids)
@@ -370,9 +370,9 @@ def detail(journal, trade, ids, zone) -> None:
     position = ids.index(trade.id)
     with st.container(horizontal=True, vertical_alignment='center', gap='small'):
         st.button('← Prev', on_click=move, args=(-1,), disabled=position == 0,
-                  key=common.key(journal, 'previous-trade'), help='The newer trade above in the list')
+                  key=common.key(journal, 'previous-trade'), help='Opens the newer trade above in the list.')
         st.button('Next →', on_click=move, args=(1,), disabled=position == len(ids) - 1,
-                  key=common.key(journal, 'next-trade'), help='The older trade below in the list')
+                  key=common.key(journal, 'next-trade'), help='Opens the older trade below in the list.')
         st.markdown(f"<div class='mwj-title'><b>{html.escape(trade.symbol)}</b> · "
                     f"{side_html(trade.direction, trade.max_qty)} · "
                     f"<span class='when'>{common.moment(trade.opened, zone)}</span></div>", unsafe_allow_html=True)
@@ -436,9 +436,9 @@ def numbers(journal, trade, annotation: dict, zone) -> None:
         # At the newest price the MAE and MFE beside it were measured with, so the three always agree.
         result, label = common.open_pnl(trade, metric), 'Open P&L'
         if result is not None:
-            why = (f'If the {trade.open_qty:g} still held were closed at {humanize.price(metric["last_price"])}, the '
-                   f'last recorded price ({common.moment(metric["last_ts"], zone)}). Realised so far: '
-                   f"{money(trade.net, trade.currency)}. The exit's fees are not included.")
+            held = f"{trade.open_qty:g} contract{'' if trade.open_qty == 1 else 's'}"
+            why = (f'Realised so far: {money(trade.net, trade.currency)}, plus the {held} still held as if closed at '
+                   f"{humanize.price(metric['last_price'])}, the last recorded price, before the exit's fees.")
         elif trade.net is not None:
             # No measured price: the line under these numbers says why (common.no_excursions).
             shown, why = '—', f'Realised so far: {money(trade.net, trade.currency)}.'
@@ -530,9 +530,7 @@ def review_form(journal, trade, a: dict) -> None:
         stop_key = common.key(journal, f'stop-{trade.id}-{shown}')
         typed = c1.text_input('Stop', shown, placeholder='Your stop price', key=stop_key, on_change=save_stop,
                               args=(journal, trade.id, stop_key, shown),
-                              help=f'The price R is measured from. Blank uses your stop order as it stood '
-                                   f'{risk.STOP_SETTLES} seconds after entry; moving it later is managing the trade '
-                                   'and leaves R alone. Saves when you leave the box.')
+                              help='The price R is measured from; leave it blank to use your stop order.')
         if error := stop_error(typed, shown):
             c1.error(error)
     c1.caption(common.md(stop_caption(plan, trade.currency)))
@@ -599,8 +597,7 @@ def excursions_panel(journal, trade, zone) -> None:
         clock = journal.trade_clock(trade)
         m = excursions(trade, samples, m['source'], now=clock, max_path_points=None)
         st.caption(f"{len(m['path']):,} recorded prices",
-                   help='Every observation that was recorded, not proof that the feed delivered every tick. '
-                        'OHLC paths remain bounds, not exact ticks. The CSV times are UTC.')
+                   help='Every price recorded during the trade; the CSV gives their times in UTC.')
         st.download_button('Download Full Path CSV', pd.DataFrame(m['path']).to_csv(index=False),
                            file_name=trade.id + '-recorded-path.csv', mime='text/csv',
                            key=common.key(journal, 'path-export-' + trade.id))
@@ -737,19 +734,15 @@ def chart_panel(journal, trade, zone) -> list[str]:
         legend = ' '.join(f"<span class='mwj-dot' style='background:{colour}'></span>{name}" for name, colour in
                           (('Buy', tvchart.CANDLE_UP), ('Sell', tvchart.CANDLE_DOWN), ('Stop', STOP)))
         st.caption(f"<span class='mwj-legend'>{legend}</span> · {common.CREDIT}", unsafe_allow_html=True,
-                   help='Each fill is an arrow pointing at its exact price and time, with its size and price beside '
-                        'it: +1 bought, −1 sold. Hover one for its details. A dashed line joins each entry to the exit '
-                        'that closed it, first in first out: green where that part made money, red where it lost. '
-                        'The solid stop is the one R uses; dashed, where your stop order was moved after that. '
-                        'Scroll to zoom, drag to pan, double-click to reset. Review '
-                        'only: nothing here can place an order.')
+                   help='Arrows are your fills, dashed lines join each entry to its exit, and the solid line is '
+                        'your stop.')
     else:
         st.info('No usable 1-minute candles in the trade window. Full OHLC or recorded ticks are needed; '
                 'high/low-only and 5-minute history cannot be turned into real 1-minute candles.')
     if trade.closed and instant(trade.closed) > end:
         st.warning('The chart is capped at 10,000 minutes from entry. This position was held beyond that window.')
     if journal.capture_gaps(source, start=start.isoformat(), end=end.isoformat(), symbol=trade.symbol):
-        st.warning('This chart window has a recorded capture gap. Missing prices can understate excursions.')
+        st.warning('This chart has a recording gap: some prices were not recorded, so it can miss part of the move.')
     return payload['notes']
 
 

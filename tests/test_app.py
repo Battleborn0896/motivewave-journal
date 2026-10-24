@@ -219,7 +219,7 @@ def landmarks(app, view, empty):
     if view == 'Trades':                   # Replay's empty list says 'No replay trades yet'
         return (said(app.info, 'No trades yet') or said(app.info, common.NO_REPLAY_TRADES)) if empty else bool(listed(app))
     if view == 'Edge':
-        return said(app.info, 'Statistics need') if empty else any(m.label == 'Win Rate' for m in app.metric)
+        return said(app.info, 'Stats need') if empty else any(m.label == 'Win Rate' for m in app.metric)
     if view == 'Import':                   # one box for any file, and no prices import
         return ([u.label for u in app.file_uploader] == [IMPORT_BOX]
                 and any(e.label == 'Add One Fill by Hand' for e in app.expander))
@@ -485,7 +485,7 @@ def test_r_shows_a_dash_and_why_without_a_stop(home):
     round_trip(journal)
     app = open_app()
     r = widget(app.metric, 'R')
-    assert r.value == '—' and r.help == 'No stop order 10 seconds after entry. Type your stop to get R.'
+    assert r.value == '—' and r.help == 'No stop order 10 seconds after entry: type your stop to get R.'
     widget(app.text_input, 'Stop').set_value('4998').run()
     r = widget(app.metric, 'R')
     assert r.value == '+1.21R' and r.help == 'Net P&L divided by the risk to your stop, $200.00.'
@@ -750,8 +750,8 @@ def test_edge_separates_gross_results_fees_and_planned_risk(home):
     assert widget(app.metric, 'Gross P&L').value == '+$250.00'
     assert widget(app.metric, 'Fees').value == '$8.00'
     assert widget(app.metric, 'Fees Per Trade').value == '$8.00'
-    assert helped(app.metric, 'Recorded fees average 0.040R')
-    assert helped(app.metric, 'not an estimate of slippage')
+    assert helped(app.metric, 'recorded fees average 0.040R a trade')
+    assert helped(app.metric, 'Recorded commissions and fees, gross minus net.')
 
 def test_edge_draws_excursions_for_captured_trades_nobody_has_reviewed(home):
     """Automatic capture produces measured trades with no setup, tags or risk; the statistics must not need them."""
@@ -1034,6 +1034,7 @@ def test_trades_the_study_writes_show_up_without_any_setup():
     # An open position: bought at 5000 with a $2 fee, and the replay's last print is 5001, one ES point up.
     result = widget(app.metric, 'Open P&L')
     assert result.value == '+$48.00' and 'closed at 5,001,' in result.help and 'Realised so far: -$2.00' in result.help
+    assert 'the 1 contract still held' in result.help
 
 
 def test_group_tag_clicks_autosave_and_preserve_legacy_tags_and_plan(home):
@@ -1251,9 +1252,9 @@ def test_analytics_is_question_based_and_selected_units_change_only_excursion_ax
     assert widget(app.metric, 'Gross P&L') and not any(s.label == 'Compare by' for s in app.selectbox)
     open_tab(app, 'Compare')
     assert widget(app.selectbox, 'Compare by').value == 'Tags' and not any(m.label == 'Gross P&L' for m in app.metric)
-    # The tag tables: Totals first, each a compact table of Trades, Net P&L, Win % and Average Trade.
+    # The tag tables: Totals first, each a compact table of Trades, Net P&L, Win Rate and Average Trade.
     tables = [m.value for m in app.markdown if "class='mwj-edge-table'" in m.value]
-    assert '>Totals</th><th>Trades</th><th>Net P&amp;L</th><th>Win %</th><th>Average Trade</th>' in tables[0]
+    assert '>Totals</th><th>Trades</th><th>Net P&amp;L</th><th>Win Rate</th><th>Average Trade</th>' in tables[0]
     display_setting(app, 'MAE / MFE Units', 'ticks', back='Edge')
     assert not app.exception and widget(app.metric, 'Net P&L').value == '+$242.00'
     open_tab(app, 'MAE / MFE')

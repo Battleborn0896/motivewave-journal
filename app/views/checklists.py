@@ -22,8 +22,7 @@ def starter():
 # ---------------------------------------------------------------- the editor, on Settings
 
 def render(journal, rows):
-    theme.section('Checklists', help='Yes/no questions you answer on each trade or on the Daily Report Card; no '
-                                     'checklist can place or block an order.')
+    theme.section('Checklists', help='Yes/no questions you answer on each trade or on the Daily Report Card.')
     definitions = journal.workspace()['checklists']
     ordered = sorted(definitions, key=lambda id: definitions[id]['order'])
     choice = common.key(journal, 'checklist-editor-choice')

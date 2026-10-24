@@ -635,14 +635,14 @@ def test_tag_score_is_offered_nowhere_until_a_tag_has_a_score(home):
         """Where Tag score shows: the tag panel, Filters, a widget's type, measure and tags, a script's trades."""
         app = open_app()
         found = {'panel': said(app.caption, 'Tag score'),
-                 'filters': 'Tag Score' in widget(app.multiselect, 'Number Ranges').options}
+                 'filters': 'Tag score' in widget(app.multiselect, 'Number Ranges').options}
         show(app, 'Dashboard')
         widget(app.selectbox, 'Dashboard page').set_value(stored).run()
         assert not app.exception and said(app.markdown, '### Old score')     # a widget of that kind still draws
         found.update(kind='Tag score' in widget(app.selectbox, 'Widget type').options,
                      measure='Tag score' in widget(app.selectbox, 'Series metric').options,
                      tags=any(m.label.startswith('Score only these tags') for m in app.multiselect),
-                     limit='Tag Score' in app.multiselect(key=f'widget-{stored}-new-numbers-live').options,
+                     limit='Tag score' in app.multiselect(key=f'widget-{stored}-new-numbers-live').options,
                      script='"tag_score"' in script_widget.document(common.rows_for(journal), journal.tag_library(), ''))
         return found
     assert not any(offered().values())
