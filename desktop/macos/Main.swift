@@ -134,7 +134,7 @@ final class JournalApp: NSObject, NSApplicationDelegate, WKNavigationDelegate, W
             .applicationVersion: "0.4.17", .credits: NSAttributedString(string:
                 "Local-first MotiveWave journal. Native macOS window with an embedded journal interface.\n"
                 + "Distribution builds include their own local journal backend.\n"
-                + "Capture comes from the read-only MotiveWave study; the app has no screen recorder.")])
+                + "Trades are recorded by the read-only MotiveWave study; the app has no screen recorder.")])
     }
     @objc private func reload() { if journalURL == nil { start() } else { web.reload() } }
     @objc private func zoomIn() { web.pageZoom = min(2, web.pageZoom + 0.1) }

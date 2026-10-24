@@ -25,7 +25,7 @@ The tester extracts the entire ZIP and runs `MotiveWave Journal.exe`. The app
 opens a native pywebview window and serves its bundled journal only on
 `127.0.0.1`. It contains no screen/video recorder. The bundled study JAR
 is inside the app at `journal\study\build\libs\motivewave-journal.jar` and can
-be installed from the app's setup flow.
+be installed from the app's Settings page.
 
 Windows may require the Microsoft Edge WebView2 Runtime. It is included with
 current Windows 10 and Windows 11 installations.
