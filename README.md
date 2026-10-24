@@ -8,6 +8,41 @@ settings. No routine CSV export/import is required.
 MotiveWave Journal is an independent open-source project. It is not affiliated with, endorsed by or
 supported by MotiveWave Software.
 
+## What's new in 0.4.18: a simpler journal everywhere
+
+Study **0.3.10** stays as it is: nothing to install. This finishes the simplification that 0.4.16 and 0.4.17
+began.
+
+- **One page per trade.** Numbers (Net or Open P&L, MAE, MFE, R, Contracts), then the chart beside your tags
+  and Rating, then your note and Stop. Fills, stop orders, the MAE / MFE path, After Exit and the contract's
+  dollars per point sit in one closed **Details** fold. The chart always shows 30 minutes either side.
+- **After Exit in one sentence**, for example "In the 15 minutes after you exited, price went 6.25 pts further
+  your way before reaching your stop." Your stop, else breakeven; nothing to pick. Stats → After Exit uses the
+  same rule.
+- **MAE / MFE mean the same in every unit.** Dollars, points, ticks and R describe one moment: the largest move
+  against you times the contracts you held. Every trade is measured once more from its recorded ticks. The
+  Chart price source picker and Recalculate are gone.
+- **One filter editor** on Trades, Stats, dashboard pages and widgets. The button says how many filters are
+  on ("Filters · 2") and has Clear; saved filters can be renamed and deleted.
+- **Stats without repeats.** The Trading Calendar is on Overview; one Customize (on Dashboards); one Compare
+  list (worst first, your tag tables in your own order); a new dashboard starts empty.
+- **Checklists are a plain list** of yes/no questions, with a branch only if you add one. A "Before the
+  session" checklist runs on the Daily Report Card.
+- **One Session menu**, off until you use it: the check-in timer and **Tag My Next Trade** (tags, Stop or a
+  note that go on your next trade on that contract).
+- **Live and Replay share** tags, playbooks, filters, dashboards, checklists, Time Zone and Units; each keeps
+  its own trades and reviews.
+- **Named journals are views** of chosen accounts that share your reviews (Settings → Data → Journals &
+  Accounts → New View).
+- **Data pages without plumbing.** Import is one box that recognises the file; Connection keeps the status and
+  Install, with the rest under Troubleshooting. Settings says once what each update changed.
+- **One word for each thing, and every ? is one short sentence.**
+- **Moved for you once, with a backup first:** Replay's settings join Live's (a zip in the data folder's
+  backups folder); named journals become views (another zip, only if you had any); old checklists become
+  lists; old drafts become Tag My Next Trade.
+
+**What to do:** install the app over the old one and open it.
+
 ## What's new in 0.4.17: one time zone, one grade, and a setup is a tag
 
 Study **0.3.10** stays as it is: nothing to install.
