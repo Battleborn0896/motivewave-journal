@@ -13,7 +13,7 @@ from mwjournal.metrics import measurements
 from mwjournal.model import ProtectionEvent, instant
 from mwjournal.post_exit import best_post_exit, resolve_stop
 from mwjournal.risk import NOT_REPORTED, STOP_SETTLES, initial_risk, plan, plan_for, settles_at, stop_for_risk
-from test_app import display_setting, open_app, press, said, widget
+from test_app import display_setting, open_app, open_details, press, said, widget
 from test_moved_tools import menu
 
 T0 = '2026-10-07T14:00:00+00:00'
@@ -70,11 +70,14 @@ def test_a_motivewave_trade_with_no_stop_reported_says_so_where_r_would_show(hom
     for metric in measurements(t, prints, 'motivewave-ticks'):
         journal.record_metric(t, metric)
     app = open_app()
-    assert [c.value for c in app.caption].count(NOT_REPORTED) == 1             # under Notes, by the Stop box
+    assert [c.value for c in app.caption].count(NOT_REPORTED) == 1             # by the Stop box
+    r = widget(app.metric, 'R')
+    assert r.value == '—' and r.help == NOT_REPORTED                           # and on R, where it shows
     display_setting(app, 'MAE / MFE Units', 'r')
     assert widget(app.metric, 'MAE').value == '—'
     assert [c.value for c in app.caption].count(NOT_REPORTED) == 2             # and under MAE / MFE, in R
-    assert said(app.info, NOT_REPORTED)                                        # and in More → MAE / MFE
+    open_details(app)
+    assert not said(app.info, NOT_REPORTED)                                    # never a third time
 
 
 def test_a_stop_placed_with_the_entry_gives_the_risk_and_take_profit_plays_no_part():
@@ -164,7 +167,7 @@ def test_unknown_results_and_multipliers_have_no_risk():
     custom = trade(journal, ('c-in', 'buy', 1, 100, 0), ('c-out', 'sell', 1, 101, 60), symbol='CUSTOM')
     assert custom.point_value is None
     result = plan(custom, {'planned_stop': 99}, [])
-    assert result.risk is None and 'multiplier' in result.why
+    assert result.risk is None and result.why == "R needs this contract's dollars per point."
     assert initial_risk(custom, 99) is None and stop_for_risk(custom, 100) is None
 
 

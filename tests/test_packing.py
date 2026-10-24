@@ -392,7 +392,7 @@ def test_the_watcher_packs_as_it_starts_and_then_every_hour(tmp_path, monkeypatc
 
 def test_the_trade_page_shows_the_same_after_exit_and_full_path_once_packed(tmp_path, monkeypatch):
     import runtime
-    from test_app import open_app, widget
+    from test_app import open_app, open_details, widget
     from test_chart import seed_preview
     monkeypatch.setenv('MWJ_HOME', str(tmp_path))
     journal = seed_preview(tmp_path)                   # long 2 ESZ6 14:00:23-14:03:11 with a saved stop
@@ -410,7 +410,7 @@ def test_the_trade_page_shows_the_same_after_exit_and_full_path_once_packed(tmp_
     monkeypatch.setattr(Journal, 'pack_prices', lambda self: 0)       # the app's own watcher: not yet
 
     def shown():
-        app = open_app()
+        app = open_details(open_app())
         widget(app.checkbox, 'Show/export full recorded trade path').set_value(True).run()
         return {'path': [c.value for c in app.caption if 'recorded prices' in c.value],
                 'after exit': [m.value for m in app.markdown if 'after you exited' in m.value],

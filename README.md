@@ -376,9 +376,24 @@ dashboards (its last tab); Settings holds tags and checklists, and data (imports
 connection), each two clicks from the sidebar. Under the pages, the sidebar says whether the
 study is **Recording**, **Not recording** or **Needs attention** (see *Build and connect the study*); click it
 to open Settings.
-The trade list stays on the left while the selected trade's chart and tags stay on the right.
-Click a row, or use Prev / Next; no separate opening/back-navigation step is needed.
-**Chart & Tags** puts the chart and a grouped, clickable tagging panel side by side. Click a tag to
+The trade list stays on the left while the selected trade stays on the right, as one page that scrolls.
+Click a row, or use Prev / Next; no separate opening/back-navigation step is needed. The trade's page, top to
+bottom:
+
+- its numbers: **Net P&L** (Open P&L while it is open), **MAE**, **MFE**, **R** (the result divided by the
+  risk to your stop; — without a stop, and the ? says why) and **Contracts**, the most held at once;
+- the chart, 30 minutes before entry to 30 minutes after exit with your stop always drawn, beside the tags and
+  the Rating stars;
+- the note and the **Stop**;
+- the **Checklist**, once you have built one;
+- **Details**, closed until you open it: the fills, how your stop order moved, notes on the chart's candles,
+  the MAE / MFE path and its CSV, the After Exit sentence, and the contract's dollars per point, which you can
+  correct there. It stays open as you step through trades and while an open trade updates.
+
+**Merge Trades**, beside **Filters** above the list, reviews several trades as one (same account, contract,
+currency and direction, within 24 hours) and splits a merged trade into its original trades again.
+
+The chart and the grouped, clickable tagging panel sit side by side. Click a tag to
 toggle it; changes save automatically. **+ Tag** creates a reusable tag and applies it to the current
 trade; **+ Category** creates a category. **More Tagging Tools → Copy Tags From Another Trade** adds
 another trade's tags without replacing existing tags or notes. Day tags you explicitly select are
@@ -387,7 +402,8 @@ A trade's setup is a **Setup** tag: click it, or make a new one with **+ Tag**. 
 1 to 5 stars for how well you traded your plan, the one grade a trade has; Stats compares and filters by it.
 **Tag score**, the sum of scores you give tags in Settings → Tags, Playbooks & Checklists, shows only once a
 tag has a score.
-A trade whose contract has no dollars-per-point multiplier asks for one on the trade itself.
+A trade whose contract has no dollars per point asks for it at the top of the trade; a wrong one is changed
+under **Details**, and every trade of that contract follows it.
 
 **Time Zone** is on **Settings**. Every time is shown in it, and every trading day runs from midnight to
 midnight there, in Live and Replay: the trade list's days, the calendar, Stats' dates, the Daily Report Card
@@ -421,7 +437,9 @@ largest. Profit banked by a partial exit never counts. Switching units only resc
 
 Long 2 NQ at 100, price dips to 97, you sell 1 at 102, then the runner dips to 96: MAE is 3 points on the 2
 contracts held at the dip, $120, 12 ticks. The runner's 4-point dip on 1 contract is $80, less, so it is not
-the MAE.
+the MAE. The MAE / MFE path under a trade's **Details**, drawn in points or ticks, still reaches that 4-point
+dip, so the chart says which moment MAE counts: "MAE counts the moment the most money was at risk: 3.00 pts with
+2 contracts." In dollars and R the path never reaches past MAE and MFE, so it says nothing there.
 
 Only recorded ticks measure MAE and MFE: there is no accuracy to choose and no price source to pick.
 Candles, proxies, simulated replay prints and ticks with a reported gap do not measure a trade, and a trade
@@ -471,8 +489,7 @@ The outright index tick defaults follow CME's [Micro equity product overview](ht
 and [MNQ specifications](https://www.cmegroup.com/markets/equities/nasdaq/micro-e-mini-nasdaq-100.contractSpecs.html).
 These are not spread/option specifications; contract-specific overrides are stored separately.
 
-Use the in-place **Notes** and **Checklist** tabs and the **More** tab (MAE / MFE, Executions, After Exit)
-instead of scrolling through a long stacked page. A trade's review is its note and its Stop. Every review box
+A trade's review is its note and its Stop, side by side under the chart. Every review box
 (the note, the Stop, and each box of the Daily Report Card) saves when it changes or you leave it; there is no
 Save button, and clicking another trade or day keeps what was typed. Opening a journal from 0.4.16 or earlier
 once turns each typed setup into a Setup tag and each Followed my plan answer into an Execution tag (Yes is
@@ -525,7 +542,7 @@ and counter nodes; selection, duplication, color/text/tag edits, alignment, star
 undo/redo, and explicit save. Questions may branch only to answers. Answer loops must reach a
 manual question; automatic endless loops are rejected. Definitions have JSON export/import and
 non-destructive local versions. Runs retain their definition
-snapshot, answers, counters and collected tags: a trade's run in its Checklist tab, a session run from the
+snapshot, answers, counters and collected tags: a trade's run in its Checklist section, a session run from the
 Checklist menu above the trade list. Applying those tags is explicit; no checklist can
 place, modify or block an order. This editor is not pixel/shortcut/format compatible with CheckMate.
 
@@ -607,7 +624,7 @@ it stood 10 seconds after entry. A trade with neither is held to breakeven, its 
 There is no take profit, and only recorded ticks count. A replay trade's 15 minutes go by as the replay plays
 them.
 
-In Trades, open **More → After Exit**. It is one sentence in your MAE / MFE unit, for example "In the 15
+In Trades, open the trade's **Details**. After Exit is one sentence in your MAE / MFE unit, for example "In the 15
 minutes after you exited, price went 6.25 pts further your way before reaching your stop." It can also say
 that the price did not reach your stop, that it reached your stop without going any further your way, that you
 exited at or past your stop (nothing left to hold), that the 15 minutes are not over yet, or that no price, or
@@ -797,8 +814,8 @@ its average entry, at the moment that move times the contracts held was largest,
 a partial exit is not added. Fees are excluded from excursions; recorded fees
 reduce net trade P&L. Fees are whatever MotiveWave reports for each fill: set commission rates in MotiveWave, and a
 fill MotiveWave reports with no commission counts as $0. A stop order counts when it is on the same
-account and contract as the position and on its closing side (study 0.3.5); a stop you type under
-Notes replaces it for R, and the chart shows both.
+account and contract as the position and on its closing side (study 0.3.5); a stop you type in the trade's
+Stop box replaces it for R, and the chart shows both.
 
 ## Verify
 

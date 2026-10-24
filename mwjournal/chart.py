@@ -11,9 +11,10 @@ from .risk import settles_at
 from .scope import allows_source, is_history, is_simulated, provenance
 
 STOP = '#F05B70'
+CONTEXT = 30               # minutes of chart before entry and after exit: the same on every trade, nothing to pick
 
 
-def chart_window(trade: Trade, padding_minutes=15, *, now=None):
+def chart_window(trade: Trade, padding_minutes=CONTEXT, *, now=None):
     """From padding_minutes before entry to padding_minutes after exit. An open trade's ends at `now`, its replay
     clock (Journal.trade_clock), when it has one: a replay's later minutes are already stored, and a chart drawn
     while the trade is open must not show them. A live one has none and runs on past the wall clock."""

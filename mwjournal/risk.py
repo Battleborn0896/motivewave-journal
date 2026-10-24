@@ -1,6 +1,6 @@
 """A trade's stop and the risk R divides by: one rule, and the only place the app works out risk.
 
-A trade's stop is one price: the stop the trader saved for it (Stop under Notes), otherwise the
+A trade's stop is one price: the stop the trader saved for it (its Stop box), otherwise the
 linked stop order as it stood STOP_SETTLES seconds after the first fill. Its initial risk is what
 that stop puts at risk on the position held at that moment. Where the trade was closed, and any
 take profit, play no part: R is the result divided by this risk.
@@ -28,7 +28,7 @@ STOP_SETTLES = 10
 @dataclass(frozen=True)
 class Plan:
     stop: float | None      # the price R uses
-    source: str             # 'saved' (typed under Notes), 'order' (the captured stop order), 'merged' or ''
+    source: str             # 'saved' (typed in the Stop box), 'order' (the captured stop order), 'merged' or ''
     risk: float | None      # in account currency; None when it cannot be known
     order: float | None     # the captured stop order's price, which clearing a saved stop returns to
     why: str = ''           # why risk is None, in a trader's words
@@ -109,7 +109,7 @@ def plan(trade, annotation: dict, events) -> Plan:
         if trade.incomplete:
             why = ''                      # the line under the trade's numbers says why its result is unknown
         elif trade.point_value is None:
-            why = 'R needs this contract\'s multiplier.'
+            why = 'R needs this contract\'s dollars per point.'
         elif stop is None and len(prices) > 1:
             why = (f'Your stop orders had different prices {STOP_SETTLES} seconds after entry. '
                    'Type the stop R should use.')

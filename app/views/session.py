@@ -5,7 +5,7 @@ a large count, play, pause and stop, and a duration box in minutes. When it runs
 under Check-Ins ask for your current state, once each, and the count starts again. It never re-arms on a
 restart and has no sound, recording or background notification. The menus beside it hold the check-in
 groups and history, pre-trade drafts, and a checklist run for the whole session (a trade's own checklist is
-its Checklist tab).
+on the trade, under its note).
 """
 import datetime as dt
 import hashlib
@@ -161,7 +161,7 @@ def groups(journal) -> list[str]:
 MENUS = {'Check-Ins': 'Which tag groups ask how you are doing when the timer runs out, and the latest check-ins.',
          'Drafts': 'Pre-trade drafts: a plan that attaches its tags, note and stop to the next trade captured on '
                    'that account and contract.',
-         'Checklist': 'Run a checklist for the whole session. A trade\'s own checklist is its Checklist tab.'}
+         'Checklist': 'Run a checklist for the whole session. A trade\'s own checklist is on the trade, under its note.'}
 
 
 def menus(journal, rows) -> None:
@@ -229,7 +229,7 @@ def draft_panel(journal, rows):
                                   key=common.key(journal, 'draft-tags-' + group))
                 tags.extend([values] if isinstance(values, str) else values or [])
             stop = st.text_input('Stop · optional', placeholder='Your stop price',
-                                 help='The stop R uses for the trade, unless you change it under Notes. Blank: the '
+                                 help='The stop R uses for the trade, unless you change it in the trade\'s Stop box. Blank: the '
                                       'stop order you place with the trade counts.')
             notes = st.text_area('Pre-trade note', height=90)
             if st.form_submit_button('Arm Draft', type='primary'):

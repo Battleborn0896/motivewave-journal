@@ -383,7 +383,7 @@ PRIMARY KEY (trade_id, fills_key)
 - **Units:** points; ticks = points ÷ row `tick_size`; dollars = held × trade point value; R = dollars ÷ `risk.plan(...).risk`.
 - **Open P&L** = `trade.net_at(row.last_price)`. `common.open_pnl` already does this with the row in place of the metric.
 - **Replay "now"** for an open trade = `row.ts`. This replaces `store.trade_clock`'s scan of prices.
-- **Chart:** `bars(trade.symbol, start, end)` over `chart_window(trade, context)`, exact contract first, else the product (old continuous labels), never both. The forming bar is drawn as the last candle. Fills and stop segments are drawn as today.
+- **Chart:** `bars(trade.symbol, start, end)` over `chart_window(trade)` (30 minutes each side), exact contract first, else the product (old continuous labels), never both. The forming bar is drawn as the last candle. Fills and stop segments are drawn as today.
 - **Path chart:** from `row.path`, one line per side, "P&L before fees" (UX 21).
 - **Runner** (`post_exit`): from `row.after_exit` (section 1).
   - The stop is the existing choice: saved, order, or breakeven.
@@ -443,7 +443,7 @@ PRIMARY KEY (trade_id, fills_key)
 - **`common.py`:**
   - `policy_selector`, `display_metric`, `best_display_metric`'s ranking, `metric_options`, `recalculate`;
   - `replay_ticks_pending`, `REPLAY_TICKS_LATER`, `PRECISION`;
-  - the tick-size popover in `excursion_help`.
+  - the tick-size popover, `tick_size_menu`.
 - **`views/trades.py`:**
   - `window_prices` and `KEPT`;
   - the Chart price source and Measurement selectboxes;
@@ -474,8 +474,9 @@ PRIMARY KEY (trade_id, fills_key)
   - Set Tick Size;
   - Prices CSV;
   - import "your own prices";
-  - the bridge path form.
-- "Context each side" and "Look after exit" stay.
+  - the bridge path form;
+  - "Context each side": a trade's chart shows a fixed 30 minutes before entry and after exit;
+  - "Look after exit": After Exit is the same 15 minutes on every trade.
 
 ---
 

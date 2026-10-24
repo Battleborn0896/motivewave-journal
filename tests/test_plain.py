@@ -9,7 +9,7 @@ import runtime
 from mwjournal import Execution, Journal, PriceSample, journals
 from mwjournal.metrics import measurements
 from mwjournal.model import ProtectionEvent, instant
-from test_app import chosen, listed, open_app, pick, press, said, show, widget
+from test_app import chosen, details, listed, open_app, open_details, pick, press, said, show, widget
 from test_chart import seed_preview
 from test_moved_tools import menu
 from views import checklists
@@ -181,7 +181,7 @@ def causes(app):
 
 
 @pytest.mark.parametrize('case', ['no prices', 'incomplete', 'candles only', 'ticks missed', 'waiting'])
-def test_a_trade_without_mae_mfe_says_the_real_cause_in_the_header_and_under_more(home, case):
+def test_a_trade_without_mae_mfe_says_the_real_cause_once_under_its_numbers(home, case):
     journal = seed_preview(home) if case == 'candles only' else Journal()
     expected = {
         'no prices': 'No prices were recorded for MNQ during this trade. Keep the study on an MNQ chart while you '
@@ -203,10 +203,9 @@ def test_a_trade_without_mae_mfe_says_the_real_cause_in_the_header_and_under_mor
                               'dropped': 4}])
     elif case == 'waiting':
         journal.ingest([fill('w-in', 'buy', 20000, '2026-10-07T14:00:00Z', symbol='MNQZ6')])
-    app = open_app()
+    app = open_details(open_app())
     captions, infos = causes(app)
-    assert expected in captions                                           # under the trade's numbers
-    assert expected in infos                                              # and More → MAE / MFE, word for word
+    assert captions.count(expected) == 1 and expected not in infos        # under the trade's numbers, once
     said_ = everything(app)
     for pointer in ('Settings →', 'Accuracy', 'accuracy policy', 'Allow labelled estimates', 'need recorded ticks'):
         assert pointer not in said_                                       # a trade screen never points at a setting
@@ -253,16 +252,16 @@ def test_orders_and_fills_read_as_time_stop_status_price_with_no_ids(home):
                                stop('ord-78', '2026-10-07T14:00:03Z', 'cancelled', 4990),
                                stop('ord-77', '2026-10-07T14:01:00Z', 'working', 4996),
                                stop('ord-77', '2026-10-07T14:03:00Z', 'filled', 4996)])
-    app = open_app()
-    orders = next(d.value for d in app.dataframe if 'Status' in d.value.columns)
+    app = open_details(open_app())
+    orders = next(d.value for d in details(app).dataframe if 'Status' in d.value.columns)
     assert list(orders.columns) == ['Time', 'Stop', 'Status', 'Price']
     assert list(orders['Stop']) == [1, 2, 2, 1, 1]                       # each order by its number
     assert list(orders['Status']) == ['Working', 'Working', 'Cancelled', 'Working', 'Filled']
     shown = cells(app) + [everything(app)]
     for code in ('ord-77', 'ord-78', 'o-d5-in', 'o-d5-out', trade.id, 'Execution', 'Stop order'):
         assert not any(code in text for text in shown), code
-    fills = [d.value for d in app.dataframe if 'Role' in d.value.columns]
-    assert len(fills) == 2 and all('Order' not in f.columns and 'Execution' not in f.columns for f in fills)
+    fills = [d.value for d in app.dataframe if 'Role' in d.value.columns]                 # listed once
+    assert [list(f.columns) for f in fills] == [['Time', 'Role', 'Side', 'Contracts', 'Price', 'Fee']]
 
 
 def test_accounts_are_shown_by_their_name_never_the_provider_code(home):

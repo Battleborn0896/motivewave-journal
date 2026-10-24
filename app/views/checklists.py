@@ -1,6 +1,6 @@
 """Checklist definitions and the offline node canvas (Settings → Tags, Playbooks & Checklists), and runs that keep a
-snapshot of their checklist: on a trade in its Checklist tab on Trades, or for the session from the Checklist
-menu above the trade list."""
+snapshot of their checklist: on a trade, in its Checklist section on Trades (drawn once a checklist exists), or for
+the session from the Checklist menu above the trade list."""
 import json
 import streamlit as st
 
@@ -73,7 +73,7 @@ def render(journal, rows):
     with runs:
         history = sorted(state['runs'].values(), key=lambda r: r['started'], reverse=True)
         if not history:
-            st.info('No runs yet. Run a checklist from a trade\'s Checklist tab on Trades, or for the whole '
+            st.info('No runs yet. Run a checklist on a trade in Trades, under its note, or for the whole '
                     'session from the Checklist menu above the trade list.')
         else:
             zone = common.display_zone(journal)
@@ -83,6 +83,11 @@ def render(journal, rows):
             st.dataframe([{'Checklist': r['name'], 'Started': common.moment(r['started'], zone),
                            'Trade': names.get(r['trade_id'], 'A trade no longer listed') if r['trade_id'] else 'Session',
                            'Answers': len(r['answers']), 'Complete': r['complete']} for r in history], hide_index=True)
+
+
+def offered(journal) -> bool:
+    """Whether a trade has a Checklist section: some checklist is not hidden from trade review."""
+    return any(not d['hidden'] for d in journal.workspace()['checklists'].values())
 
 
 def run_panel(journal, trade=None, *, prefix='trade'):
