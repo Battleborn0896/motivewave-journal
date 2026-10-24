@@ -162,9 +162,9 @@ class ReviewJournal:
                 seen.add(identity)
         return result
 
-    def start_checklist(self, id, trade_id=None):
+    def start_checklist(self, id, trade_id=None, *, day=None):
         from .workspace import Workspace
-        return Workspace.start_checklist(self, id, trade_id)
+        return Workspace.start_checklist(self, id, trade_id, day=day)
 
     def record_checkin(self, *args, **kwargs):
         from .workspace import Workspace

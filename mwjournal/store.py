@@ -23,7 +23,8 @@ from .model import (NATIVE, Execution, PriceSample, ProtectionEvent, digest, fin
 from .risk import stop_for_risk
 from .scope import event_mode, allows_source
 from .tags import DAY
-from .workspace import Workspace, read as read_workspace, time_zone, write as write_workspace
+from .workspace import (MAX_QUESTIONS, Workspace, checklist_questions, follow, question, read as read_workspace,
+                        store_checklist, time_zone, write as write_workspace)
 
 SCHEMA_VERSION = 4
 # The one connection a journal reads, the study's bridge file (sync.py): its row in 'profiles' and 'sync_status'.
@@ -461,6 +462,67 @@ def _fixed_stats_tabs(db) -> None:
     db.execute("INSERT OR REPLACE INTO journal_meta VALUES('fixed_stats_tabs',?)", (str(int(changed)),))
 
 
+def _walked(graph) -> dict:
+    """`graph` with its questions in the order a walk from its start question meets them, a question's first answer
+    followed before its second, and without the questions no walk reaches."""
+    nodes = {node['id']: node for node in graph['nodes']}
+    order = []
+
+    def visit(id):
+        if id is not None and id not in order:
+            order.append(id)
+            for answer in nodes[id].get('next', [])[:2]:
+                visit(follow(nodes, answer)[2])
+    visit(follow(nodes, graph['start'])[2])
+    return {'start': order[0] if order else graph['start'],
+            'nodes': [*(nodes[id] for id in order), *(node for node in graph['nodes'] if node['kind'] != 'question')]}
+
+
+def _checklists_as_lists(db) -> None:
+    """Once per journal, inside the caller's transaction. Until 0.4.17 a checklist was a canvas of question, answer,
+    pass and counter nodes; now it is a list of yes/no questions (workspace.question). Each checklist becomes the list
+    a walk from its start question meets (_walked, workspace.checklist_questions): a question's first answer is its
+    Yes and its second its No, a third answer and an answer's own wording go, and the pass and counter nodes after an
+    answer fold into it. Its previous graph stays in its backups and every run keeps its own copy, so this needs no
+    backup. A hidden checklist shows again. A checklist only ever run for the session, from the menu above the trade
+    list, runs before the session, on the Daily Report Card; every other one on each trade. A session run is given the
+    day it started in the Time Zone, so it is that day's. A checklist already a list is left as it is."""
+    state, zone = read_workspace(db), time_zone(db)
+    old = [key for key, definition in state['checklists'].items() if 'runs_on' not in definition]
+    # Read only when needed: a journal's first read of its tag library decides whether it is offered the starters.
+    library = tagging.library(db) if old else None
+    converted = session = hidden = 0
+    for key in old:
+        definition = state['checklists'][key]
+        runs = [run for run in state['runs'].values() if run.get('checklist_id') == key]
+        runs_on = 'session' if runs and not any(run.get('trade_id') for run in runs) else 'trade'
+        walked = _walked(definition['graph'])
+        questions = (checklist_questions(walked) if any(node['kind'] == 'question' for node in walked['nodes'])
+                     else [question(next(node['text'] for node in walked['nodes'] if node['id'] == walked['start']))])
+        questions = questions[:MAX_QUESTIONS]
+        for asked in questions:
+            for answer in ('yes', 'no'):
+                branch = asked[answer]
+                branch['tag_ids'] = [id for id in branch['tag_ids'] if id in library['tags']]
+                if type(branch['go']) is int and branch['go'] > len(questions):
+                    branch['go'] = 'finish'
+        store_checklist(state, library, key, definition['name'], questions, runs_on)
+        converted += 1
+        session += runs_on == 'session'
+        hidden += bool(definition.get('hidden'))
+    dated = [run for run in state['runs'].values() if not run.get('trade_id') and not run.get('day')]
+    for run in dated:
+        run['day'] = tagging.day_key(run['started'], zone)
+    if old or dated:
+        write_workspace(db, state)
+    db.execute("INSERT OR REPLACE INTO journal_meta VALUES('checklists_as_lists',?)", (str(converted),))
+    if converted:
+        words = ['Checklists are now lists of yes/no questions',
+                 *(['a checklist you ran for the session is now on the Daily Report Card'] if session else []),
+                 *(['hidden checklists show again, and Delete removes one'] if hidden else [])]
+        _add_note(db, 'checklists', {'converted': converted, 'note': '; '.join(words) + '.'})
+
+
 def _add_note(db, name: str, data: dict):
     """Records what a one-time step did in the upgrade note (Journal.upgrade_note) under `name`, inside the caller's
     transaction."""
@@ -532,6 +594,8 @@ class Journal(Workspace):
                 _one_connection(db)
             if not db.execute("SELECT 1 FROM journal_meta WHERE key='fixed_stats_tabs'").fetchone():
                 _fixed_stats_tabs(db)
+            if not db.execute("SELECT 1 FROM journal_meta WHERE key='checklists_as_lists'").fetchone():
+                _checklists_as_lists(db)
             trim = not db.execute("SELECT 1 FROM journal_meta WHERE key='prices_trimmed'").fetchone()
         if trim:
             self._trim_prices()
@@ -662,7 +726,8 @@ class Journal(Workspace):
         once (_trim_prices); under 'packed', the first packing of the recorded ticks (pack_prices); under
         'answers', the typed setups and 'Followed my plan' answers that became tags (_answers_to_tags); under
         'connections', the watched files that were removed (_one_connection); under 'stats_tabs', a saved choice of
-        Stats tabs that is no longer used (_fixed_stats_tabs); and under 'measurement_rules_3', every trade measured
+        Stats tabs that is no longer used (_fixed_stats_tabs); under 'checklists', the checklists that became lists of
+        yes/no questions (_checklists_as_lists); and under 'measurement_rules_3', every trade measured
         again under MEASUREMENT_RULES 3 (recalculation_done). Each one-time step has a note in plain words, which
         Settings shows once (unseen_notes)."""
         with self.connect() as db:
@@ -1200,6 +1265,29 @@ class Journal(Workspace):
                     active = [i for i in active if i in current][:1] or active[:1]
                 data = tagging.set_group(state, data, group, active, session)
             db.execute('INSERT OR REPLACE INTO annotations VALUES(?,?)', (trade.id, encode(data)))
+
+    def add_day_tags(self, date, tags) -> list[str]:
+        """Adds `tags` (names or ids) that are available on days to a day's tags, as a checklist's Apply Collected Tags
+        does, and returns the names added. In a one-choice category the new tag replaces the day's."""
+        with self.connect() as db:
+            db.execute('BEGIN IMMEDIATE')
+            state = tagging.library(db)
+            key = dt.date.fromisoformat(str(date)).isoformat()
+            row = db.execute('SELECT payload FROM sessions WHERE key=?', (key,)).fetchone()
+            old = json.loads(row[0]) if row else {}
+            incoming = sorted(id for id in tagging.ids(state, tags)
+                              if not state['tags'][id]['retired'] and 'day' in state['tags'][id]['levels'])
+            chosen = set(tagging.inherited(state, old))
+            for group in {state['tags'][id]['group'] for id in incoming}:
+                choices = [id for id in incoming if state['tags'][id]['group'] == group]
+                if state['groups'][group]['exclusive']:
+                    if len(choices) > 1:
+                        raise ValueError(f'{group} takes one tag, and this checklist collected {len(choices)}.')
+                    chosen = {id for id in chosen if state['tags'][id]['group'] != group}
+                chosen.update(choices)
+            db.execute('INSERT OR REPLACE INTO sessions VALUES(?,?)',
+                       (key, encode({**old, 'date': key, 'day_tag_ids': sorted(chosen)})))
+        return tagging.names(state, incoming)
 
     def update_session(self, key, changes):
         """Saves fields of one day's review (its Rating, its note), keyed by the day's date 'YYYY-MM-DD'."""

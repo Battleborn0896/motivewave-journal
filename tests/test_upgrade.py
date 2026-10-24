@@ -7,7 +7,7 @@ import traceback
 import pytest
 
 import common
-from mwjournal import Execution, Journal, humanize, paths, store, tagging
+from mwjournal import Execution, Journal, humanize, paths, store, tagging, workspace
 from mwjournal.importers import apply_preview, preview_bridge, preview_csv
 from mwjournal.matching import match
 from mwjournal.metrics import excursions
@@ -750,3 +750,102 @@ def test_a_saved_choice_of_stats_tabs_is_left_unread_and_said_once_with_no_backu
     as_0_4_17_tabs(Journal(every), ['Overview', 'Compare', 'MAE / MFE', 'Runners'])
     assert Journal(every).upgrade_note() is None and meta(every, 'fixed_stats_tabs') == '0'
     assert Journal(tmp_path / 'new.sqlite3').upgrade_note() is None
+
+
+# ---------------------------------------------------------------- checklists become lists of yes/no questions
+
+def node(id, kind, text, *links, tags=()):
+    return {'id': id, 'kind': kind, 'text': text, 'next': list(links), 'tag_ids': list(tags), 'x': 0, 'y': 0,
+            'color': '#E2CF32'}
+
+
+def canvas_0_4_17(patient):
+    """A checklist drawn on the node canvas of 0.4.17: three answers to the first question, a pass node collecting a
+    tag on the way to the second, a counter after No, a loop back, and a question nothing leads to."""
+    return {'start': 'q1', 'nodes': [
+        node('q1', 'question', 'Is the setup valid?', 'a1', 'a2', 'a3'),
+        node('a1', 'answer', 'Yes, continue my plan', 'p1'),
+        node('p1', 'pass', 'Patience noted', 'q2', tags=[patient]),
+        node('a2', 'answer', 'No, stand aside', 'c1'),
+        node('c1', 'counter', 'Setups skipped'),
+        node('a3', 'answer', 'Maybe', 'q9'),
+        node('q2', 'question', 'Is my stop placed?', 'b1', 'b2'),
+        node('b1', 'answer', 'Placed'),
+        node('b2', 'answer', 'Not yet', 'q1'),
+        node('q9', 'question', 'Nothing leads here', 'z1'),
+        node('z1', 'answer', 'Ok')]}
+
+
+def as_0_4_17_checklists(journal, checklists, runs):
+    """The checklists and runs as 0.4.17 stored them, and a journal that has not taken the step yet."""
+    with journal.connect() as db:
+        state = workspace.read(db)
+        state.update(checklists=checklists, runs=runs)
+        workspace.write(db, state)
+        db.execute("DELETE FROM journal_meta WHERE key='checklists_as_lists'")
+
+
+def old_run(id, checklist, trade_id, started, graph):
+    return {'id': id, 'checklist_id': checklist, 'name': 'Old', 'trade_id': trade_id, 'started': started,
+            'graph': graph, 'answers': [], 'answer_events': [], **workspace.replay_run(graph, [])}
+
+
+def test_a_canvas_checklist_becomes_a_list_its_old_graph_is_kept_and_session_runs_get_their_day(tmp_path):
+    path = tmp_path / 'trades.sqlite3'
+    journal = Journal(path)
+    journal.save_preferences(display_timezone=NY)
+    patient = tagging.identity('Patient')
+    assert patient in journal.tag_library()['tags']
+    plan, morning = canvas_0_4_17(patient), {'start': 's', 'nodes': [
+        node('s', 'question', 'Did I sleep well?', 'y', 'n'), node('y', 'answer', 'Yes'),
+        node('n', 'answer', 'No', tags=[tagging.identity('Tilted')])]}
+    as_0_4_17_checklists(journal, {
+        'plan': {'id': 'plan', 'name': 'Plan', 'hidden': True, 'graph': plan, 'backups': [], 'order': 0},
+        'morning': {'id': 'morning', 'name': 'Morning', 'hidden': False, 'graph': morning, 'backups': [], 'order': 1}},
+        {'on-trade': old_run('on-trade', 'plan', 'some-trade', '2026-10-07T14:00:00Z', plan),
+         'session-plan': old_run('session-plan', 'plan', None, '2026-10-07T15:00:00Z', plan),
+         'session': old_run('session', 'morning', None, '2026-10-07T03:30:00Z', morning)})
+    opened = Journal(path)
+    state = opened.workspace()
+    converted = state['checklists']['plan']
+    assert workspace.checklist_questions(converted['graph']) == [
+        # The pass node folded into Yes, the counter is Count this answer on No, Maybe and the wording went, and the
+        # question nothing led to is not asked.
+        workspace.question('Is the setup valid?', yes={'tag_ids': [patient]}, no={'go': 'finish', 'count': True}),
+        workspace.question('Is my stop placed?', no={'go': 1})]
+    assert converted['runs_on'] == 'trade' and 'hidden' not in converted          # hidden: shown again
+    assert converted['backups'][-1]['graph'] == plan
+    assert not any(n['kind'] == 'pass' for n in converted['graph']['nodes'])
+    # Only ever run for the session: before the session, on the Daily Report Card.
+    assert state['checklists']['morning']['runs_on'] == 'session'
+    # A session run is that day's in the Time Zone (03:30 UTC is 23:30 the day before in New York); every run keeps
+    # its own copy.
+    assert state['runs']['session']['day'] == '2026-10-06' and state['runs']['session-plan']['day'] == '2026-10-07'
+    assert 'day' not in state['runs']['on-trade'] and state['runs']['on-trade']['graph'] == plan
+    note = ('Checklists are now lists of yes/no questions; a checklist you ran for the session is now on the Daily '
+            'Report Card; hidden checklists show again, and Delete removes one.')
+    assert opened.unseen_notes() == {'checklists': note}
+    assert not backups(tmp_path) and meta(path, 'checklists_as_lists') == '2'
+    # Twice: nothing changes.
+    with opened.connect() as db:
+        db.execute("DELETE FROM journal_meta WHERE key='checklists_as_lists'")
+    again = Journal(path)
+    assert again.workspace() == state and meta(path, 'checklists_as_lists') == '0'
+    assert again.unseen_notes() == {'checklists': note}
+
+
+def test_a_checklist_with_no_question_or_too_many_still_converts(tmp_path):
+    path = tmp_path / 'trades.sqlite3'
+    journal = Journal(path)
+    only_answer = {'start': 'a', 'nodes': [node('a', 'answer', 'Ready to trade')]}
+    long = {'start': 'q0', 'nodes': [n for i in range(60) for n in (
+        node(f'q{i}', 'question', f'Question {i}?', f'y{i}'),
+        node(f'y{i}', 'answer', 'Yes', f'q{i + 1}' if i < 59 else 'q0'))]}
+    as_0_4_17_checklists(journal, {
+        'one': {'id': 'one', 'name': 'One', 'hidden': False, 'graph': only_answer, 'backups': [], 'order': 0},
+        'long': {'id': 'long', 'name': 'Long', 'hidden': False, 'graph': long, 'backups': [], 'order': 1}}, {})
+    state = Journal(path).workspace()
+    assert workspace.checklist_questions(state['checklists']['one']['graph']) == [workspace.question('Ready to trade')]
+    kept = workspace.checklist_questions(state['checklists']['long']['graph'])
+    assert len(kept) == workspace.MAX_QUESTIONS and kept[-1]['yes']['go'] == 'next'     # its loop back is cut off
+    assert meta(path, 'checklists_as_lists') == '2' and Journal(tmp_path / 'new.sqlite3').upgrade_note() is None

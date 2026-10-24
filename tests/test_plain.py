@@ -6,13 +6,13 @@ import datetime as dt
 import pytest
 
 import runtime
-from mwjournal import Execution, Journal, PriceSample, journals
+from mwjournal import Execution, Journal, PriceSample, journals, tagging
 from mwjournal.metrics import measurements
 from mwjournal.model import ProtectionEvent, instant
+from mwjournal.workspace import question
 from test_app import chosen, details, listed, open_app, open_details, pick, press, said, show, widget
 from test_chart import seed_preview
 from test_moved_tools import menu
-from views import checklists
 
 NY = 'America/New_York'
 TICKS = 'motivewave-ticks'
@@ -311,22 +311,24 @@ def test_drafts_say_waiting_used_cancelled_or_needs_review_and_name_the_trade(ho
     assert not any(state in cells(app) for state in ('armed', 'ambiguous', 'attached', 'cancelled'))
 
 
-def test_check_ins_and_checklist_runs_name_their_trade_instead_of_its_id(home):
+def test_check_ins_name_their_trade_and_checklist_settings_show_no_ids(home):
     journal = Journal()
     journal.ingest([fill('a-in', 'sell', 5000, '2026-10-07T14:00:00Z', qty=2),
                     fill('a-out', 'buy', 4998, '2026-10-07T14:03:00Z', qty=2)])
     trade = journal.trades()[0]
     journal.record_checkin('Mindset', ['Patient'], trade_id=trade.id)
     journal.record_checkin('Mindset', ['Patient'])
-    journal.start_checklist(journal.save_checklist('Plan', checklists.starter()), trade.id)
+    definition = journal.save_checklist('Plan', [question('Patient?', yes={'go': 'finish', 'tag_ids': ['Patient']})])
+    journal.start_checklist(definition, trade.id)
     app = open_app()
     menu(app, 'Check-Ins')
     checkins = next(d.value for d in app.dataframe if 'Group' in d.value.columns)
     assert sorted(checkins['Trade']) == ['Oct 7, 10:00 AM · ESZ6 Short 2', 'Session']
     show(app, 'Checklists')
-    runs = next(d.value for d in app.dataframe if 'Answers' in d.value.columns)
-    assert list(runs['Trade']) == ['Oct 7, 10:00 AM · ESZ6 Short 2']
-    assert not any(trade.id in text for text in cells(app))
+    assert not app.dataframe                                    # no run history: each run is on its trade or day
+    assert said(app.caption, 'Yes collects Patient')            # a tag by its name
+    shown = [*cells(app), *(w.label for w in app.text_input), *(s.label for s in app.selectbox)]
+    assert not any(id in text for text in shown for id in (trade.id, definition, tagging.identity('Patient')))
 
 
 def test_a_stop_typed_with_a_thousands_comma_is_the_same_price(home):

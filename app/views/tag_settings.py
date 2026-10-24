@@ -1,5 +1,5 @@
 """Tags, Playbooks & Checklists, a Settings page: click-first, non-destructive tag and playbook management, and the
-checklist editor. Running a checklist happens on Trades, on the selected trade, under its note."""
+checklist editor. A checklist is answered where it runs: on each trade's page, or on the Daily Report Card."""
 import streamlit as st
 
 import common
@@ -11,9 +11,8 @@ TABS = ('Tags', 'Categories', 'Playbooks', 'Checklists')
 
 
 def render(journal, rows):
-    theme.section('Tags, Playbooks & Checklists', help='Categories such as Setup or Mindset hold reusable tags. '
-                  'Renaming and retiring never change a trade\'s history; only an unused tag or an empty category can '
-                  'be deleted. Checklists are built here and run on Trades, on a trade under its note.')
+    theme.section('Tags, Playbooks & Checklists', help='Categories such as Setup or Mindset hold reusable tags; '
+                  'checklists are yes/no questions answered on each trade or on the Daily Report Card.')
     library = journal.tag_library()
     tags_tab, groups_tab, books_tab, checks_tab = common.tabs(TABS, common.key(journal, 'tag-settings-tabs'))
     with tags_tab:
@@ -31,7 +30,7 @@ def render(journal, rows):
             st.info('No categories yet. Create one under Tags.')
     with books_tab:
         playbooks(journal, library)
-    if checks_tab.open:                        # the node editor is only drawn when its tab is open
+    if checks_tab.open:                        # the checklist editor is only drawn when its tab is open
         with checks_tab:
             checklists.render(journal, rows)
 

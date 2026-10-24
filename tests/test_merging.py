@@ -123,7 +123,12 @@ def test_merge_ui_compound_tagging_checklists_and_the_originals_stay_stored(home
     assert 'Patient' in journal.annotations()[merged.id]['tags']
     from views.checklists import starter
     definition = journal.save_checklist('Plan', starter())
-    assert view.start_checklist(definition, merged.id)
+    run = view.start_checklist(definition, merged.id)                  # a merged trade is a trade of the view
+    assert journal.workspace()['runs'][run]['trade_id'] == merged.id
+    with pytest.raises(ValueError, match='Choose a trade from this journal'):
+        journal.start_checklist(definition, merged.id)                 # not of the journal underneath
+    day = view.start_checklist(definition, day='2026-10-07')
+    assert journal.workspace()['runs'][day]['day'] == '2026-10-07'
     assert len(view.trades()) == 1 and len(journal.trades()) == 2      # the merge is a view: both originals stay
     press(app, 'Split Into Original Trades')
     assert len(merging.ReviewJournal(journal).trades()) == 2

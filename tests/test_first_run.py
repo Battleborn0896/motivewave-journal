@@ -172,7 +172,7 @@ def test_merge_trades_sits_next_to_filters_and_the_chart_has_nothing_to_set(home
     journal.ingest([fill('n1', 'buy', 1, 5010, '2026-10-07T15:10:00Z'), fill('n2', 'sell', 1, 5012, '2026-10-07T15:12:00Z')])
     app = open_app()
     popovers = [p.proto.popover.label for p in app.main.get('popover')]
-    assert popovers[3:5] == ['Filters', 'Merge Trades']            # after the session tools' three menus
+    assert popovers[2:4] == ['Filters', 'Merge Trades']            # after the session tools' two menus
     assert not any(label in popovers for label in ('More', 'Options', 'Chart settings', 'Trade filters'))
     # The chart: MotiveWave's candles, 30 minutes each side, the stop always drawn. Nothing to pick.
     assert not any(s.label in ('Chart price source', 'Context each side', 'Chart timezone', 'Review a trade')

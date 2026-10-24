@@ -16,9 +16,10 @@ from mwjournal import Execution, Journal
 from mwjournal import backup, tagging
 from mwjournal import workspace
 from mwjournal.workspace import (validate_graph, replay_run, tag_score, filter_sample, combine_filters,
-                                 validate_filter)
+                                 validate_filter, checklist_questions, compile_checklist, question)
 from test_app import menu_label, open_app, show, press, widget, said
 from test_chart import seed_preview, seed_ticks
+from views import checklists
 from views.checklists import starter
 
 
@@ -284,8 +285,7 @@ def test_concurrent_workspace_preferences_and_filters_do_not_clobber(home):
 
 @pytest.mark.parametrize('change', ['unknown-tag', 'unknown-link', 'duplicate', 'automatic-loop', 'question-to-question'])
 def test_graph_validation_rejects_unknowns_and_automatic_loops(home, change):
-    journal = Journal()
-    graph = starter()
+    graph = compile_checklist(starter())
     if change == 'unknown-tag':
         graph['nodes'][1]['tag_ids'] = ['Not a tag']
     elif change == 'unknown-link':
@@ -293,41 +293,87 @@ def test_graph_validation_rejects_unknowns_and_automatic_loops(home, change):
     elif change == 'duplicate':
         graph['nodes'].append(copy.deepcopy(graph['nodes'][1]))
     elif change == 'automatic-loop':
-        graph['nodes'][1]['next'] = ['yes']
+        graph['nodes'][1]['next'] = ['q1-yes']
     else:
-        graph['nodes'][0]['next'] = ['plan']
+        graph['nodes'][0]['next'] = ['q1']
     with pytest.raises(ValueError):
-        journal.save_checklist('Invalid', graph)
+        validate_graph(graph, Journal().tag_library())
+
+
+@pytest.mark.parametrize('questions, says', [
+    ([], 'A checklist has 1 to 40 questions.'),
+    ([question('   ')], 'Type question 1, in at most 400 characters.'),
+    ([question('Planned?', no={'go': 2})], 'Question 1 branches to a question this checklist does not have.'),
+    ([question('Planned?', yes={'tag_ids': ['Not a tag']})], 'Checklist references an unknown tag.')])
+def test_a_checklist_with_an_empty_question_or_a_branch_to_nowhere_is_not_saved(home, questions, says):
+    journal = Journal()
+    with pytest.raises(ValueError, match=re.escape(says)):
+        journal.save_checklist('Plan', questions)
     assert not journal.workspace()['checklists']
+
+
+def test_the_list_compiles_to_the_graph_and_back_unchanged(home):
+    patient = tagging.identity('Patient')
+    questions = [question('Did I wait for my setup?', yes={'tag_ids': [patient]}, no={'go': 3, 'count': True}),
+                 question('Is my stop placed?', no={'go': 'finish'}),
+                 question('Did I size down after a loss?', yes={'go': 1, 'count': True})]
+    graph = compile_checklist(questions)
+    assert [(n['id'], n['kind'], n['next']) for n in graph['nodes']] == [
+        ('q1', 'question', ['q1-yes', 'q1-no']), ('q1-yes', 'answer', ['q2']),
+        ('q1-no', 'answer', ['q1-no-count']), ('q1-no-count', 'counter', ['q3']),
+        ('q2', 'question', ['q2-yes', 'q2-no']), ('q2-yes', 'answer', ['q3']), ('q2-no', 'answer', []),
+        ('q3', 'question', ['q3-yes', 'q3-no']), ('q3-yes', 'answer', ['q3-yes-count']),
+        ('q3-yes-count', 'counter', ['q1']), ('q3-no', 'answer', [])]
+    assert graph['start'] == 'q1' and not any(n['kind'] == 'pass' for n in graph['nodes'])
+    assert next(n for n in graph['nodes'] if n['id'] == 'q1-yes')['tag_ids'] == [patient]   # tags sit on the answer
+    assert checklist_questions(graph) == questions
+    stored = validate_graph(graph, Journal().tag_library())         # as saved: positions and colours added
+    assert checklist_questions(stored) == questions and compile_checklist(checklist_questions(stored)) == graph
+    # Going on to the next question, or finishing after the last, is the default however it was said.
+    said_long = [question('One?', yes={'go': 2}), question('Two?', no={'go': 'finish'})]
+    assert checklist_questions(compile_checklist(said_long)) == [question('One?'), question('Two?')]
 
 
 def test_checklist_branches_tags_counter_loops_undo_and_definition_snapshots(home):
     journal = seed_preview(home)
     trade = journal.trades()[0]
-    graph = starter()
-    graph['nodes'][1].update(next=['counter'], tag_ids=['Patient'])
-    graph['nodes'].append({'id': 'counter', 'kind': 'counter', 'text': 'Plans checked', 'next': ['plan']})
-    definition = journal.save_checklist('Plan', graph)
+    definition = journal.save_checklist('Plan', [question('Plan checked?', yes={'go': 1, 'tag_ids': ['Patient'],
+                                                                                 'count': True})])
+    assert journal.workspace()['checklists'][definition]['runs_on'] == 'trade'
     run = journal.start_checklist(definition, trade.id)
-    result = journal.answer_checklist(run, 'yes')
-    assert result['current'] == 'plan' and result['counters'] == {'counter': 1}
+    result = journal.answer_checklist(run, 'q1-yes')
+    assert result['current'] == 'q1' and result['counters'] == {'q1-yes-count': 1}   # asked again
     assert result['answer_events'][0]['action'] == 'answer' and result['answer_events'][0]['at']
     assert tagging.names(journal.tag_library(), result['tag_ids']) == ['Patient']
     assert 'Patient' not in journal.annotations()[trade.id]['tags']  # no silent apply
-    journal.answer_checklist(run, 'yes')
-    assert journal.workspace()['runs'][run]['counters']['counter'] == 2
+    journal.answer_checklist(run, 'q1-yes')
+    assert journal.workspace()['runs'][run]['counters']['q1-yes-count'] == 2
     journal.answer_checklist(run, undo=True)
-    assert journal.workspace()['runs'][run]['counters']['counter'] == 1
+    assert journal.workspace()['runs'][run]['counters']['q1-yes-count'] == 1
     assert journal.workspace()['runs'][run]['answer_events'][-1]['action'] == 'undo'
-    changed = starter()
-    changed['nodes'][0]['text'] = 'Changed question'
-    journal.save_checklist('Plan revised', changed, id=definition)
-    assert journal.workspace()['runs'][run]['graph']['nodes'][0]['text'] != 'Changed question'
+    journal.save_checklist('Plan revised', [question('Changed question')], id=definition)
+    assert journal.workspace()['runs'][run]['graph']['nodes'][0]['text'] == 'Plan checked?'   # the run's own copy
     assert len(journal.workspace()['checklists'][definition]['backups']) == 1
-    result = journal.answer_checklist(run, 'no')
+    result = journal.answer_checklist(run, 'q1-no')
     assert result['complete']
     with pytest.raises(ValueError):
-        journal.answer_checklist(run, 'yes')
+        journal.answer_checklist(run, 'q1-yes')
+    # Deleting the checklist leaves the run, with its copy.
+    journal.delete_checklist(definition)
+    assert not journal.workspace()['checklists'] and journal.workspace()['runs'][run]['complete']
+
+
+def test_a_run_is_on_one_trade_or_one_day(home):
+    journal = seed_preview(home)
+    definition = journal.save_checklist('Morning', starter(), runs_on='session')
+    id = journal.start_checklist(definition, day='2026-10-07')
+    run = journal.workspace()['runs'][id]
+    assert run['day'] == '2026-10-07' and 'trade_id' not in run          # stored under its date
+    for wrong in ({}, {'trade_id': journal.trades()[0].id, 'day': '2026-10-07'}):
+        with pytest.raises(ValueError, match='one trade or on one day'):
+            journal.start_checklist(definition, **wrong)
+    with pytest.raises(ValueError, match='runs on each trade or before the session'):
+        journal.save_checklist('Morning', starter(), runs_on='weekly')
 
 
 def test_checkin_clock_groups_and_trade_scope_are_explicit(home):
@@ -404,20 +450,80 @@ def test_new_views_render_without_recording_orders_or_raw_trade_changes(home, vi
     assert journal.executions() == before
 
 
-def test_checklist_ui_build_run_branch_undo_and_apply_tags(home):
+def answer(app, label, choice):
+    """Click Yes or No (`choice`, its answer's id) on the checklist question whose label starts with `label`."""
+    pills = widget(app.pills, label)
+    assert not pills.disabled
+    pills.set_value(choice).run()
+    assert not app.exception
+    return app
+
+
+def test_checklist_ui_run_branch_undo_and_apply_tags(home):
     journal = seed_preview(home)
-    graph = starter()
-    graph['nodes'][1]['tag_ids'] = ['Patient']
-    journal.save_checklist('Plan', graph)
+    journal.save_checklist('Plan', [question('Setup valid?', no={'go': 3, 'tag_ids': ['Patient']}),
+                                    question('Stop placed?'), question('Size right?')])
+    trade = journal.trades()[0]
     app = open_app()
-    press(app, 'Start New Run')
-    press(app, 'Yes — continue my plan')
-    assert said(app.success, 'Checklist complete')
+    asked = [p.label for p in app.pills if '·' in p.label]
+    assert asked == ['1 · Setup valid?', '2 · Stop placed?', '3 · Size right?']
+    assert [widget(app.pills, f'{n} ·').disabled for n in (1, 2, 3)] == [False, True, True]   # the first is due
+    assert not journal.workspace()['runs']                                         # a run starts with an answer
+    answer(app, '1 · Setup valid?', 'q1-no')
+    assert not any(p.label.startswith('2 ·') for p in app.pills)                   # the branch hid question 2
+    assert widget(app.pills, '1 ·').value == 'q1-no' and not widget(app.pills, '3 ·').disabled
+    assert said(app.caption, 'Collected tags: Patient')
     press(app, 'Undo Last Answer')
-    assert not said(app.success, 'Checklist complete')
-    press(app, 'Yes — continue my plan')
+    assert any(p.label.startswith('2 ·') for p in app.pills) and widget(app.pills, '1 ·').value is None
+    answer(app, '1 · Setup valid?', 'q1-no')
+    answer(app, '3 · Size right?', 'q3-yes')
+    assert said(app.success, 'Checklist complete')
+    assert 'Patient' not in journal.annotations().get(trade.id, {}).get('tags', [])    # only Apply applies
     press(app, 'Apply Collected Tags')
-    assert 'Patient' in journal.annotations()[journal.trades()[0].id]['tags']
+    assert 'Patient' in journal.annotations()[trade.id]['tags']
+    runs = list(journal.workspace()['runs'].values())
+    assert len(runs) == 1 and runs[0]['trade_id'] == trade.id and runs[0]['answers'] == ['q1-no', 'q3-yes']
+
+
+def editing(app):
+    """The checklist editor's boxes, by what they say."""
+    return {w.label: w for w in [*app.text_input, *app.selectbox, *app.multiselect, *app.checkbox, *app.radio]}
+
+
+def test_the_checklist_editor_builds_a_list_with_a_branch_and_saves_it_once(home):
+    journal = seed_preview(home)
+    app = open_app('Checklists')
+    boxes = editing(app)
+    assert boxes['Checklist name'].value == 'Pre-trade plan' and boxes['Runs on'].value == 'trade'
+    assert boxes['Question 1'].value == checklists.STARTER and said(app.caption, "On every trade's page.")
+    assert [e.label for e in app.expander] == ['Add a Branch'] and not journal.workspace()['checklists']
+    boxes['Checklist name'].set_value('Morning plan').run()
+    press(app, 'Add Question')
+    editing(app)['Question 2'].input('Is my stop placed?').run()
+    press(app, 'Add Question')
+    editing(app)['Question 3'].input('Did I sleep well?').run()
+    assert [b.disabled for b in app.button if b.label == 'Move Up'] == [True, False, False]
+    [b for b in app.button if b.label == 'Move Up'][1].click().run()
+    assert editing(app)['Question 1'].value == 'Is my stop placed?'        # question 2 moved up
+    no_goes = [s for s in app.selectbox if s.label == 'No goes to']
+    no_goes[0].set_value(next(o for o in no_goes[0].options if o == 'Question 3')).run()
+    assert said(app.caption, 'No goes to Question 3')
+    collects = [m for m in app.multiselect if m.label == 'No collects tags'][0]
+    collects.set_value([tagging.identity('Patient')]).run()
+    [c for c in app.checkbox if c.label == 'Count this answer'][1].check().run()
+    press(app, 'Save Checklist')
+    (id, saved), = journal.workspace()['checklists'].items()
+    assert saved['name'] == 'Morning plan' and saved['runs_on'] == 'trade'
+    assert checklist_questions(saved['graph']) == [
+        question('Is my stop placed?', no={'go': 3, 'tag_ids': [tagging.identity('Patient')], 'count': True}),
+        question(checklists.STARTER), question('Did I sleep well?')]
+    assert app.session_state['checklist-editor-choice-live'] == id and not said(app.caption, 'Not saved yet.')
+    editing(app)['Runs on'].set_value('session').run()
+    assert said(app.caption, 'On the Daily Report Card, once a day.') and said(app.caption, 'Not saved yet.')
+    press(app, 'Save Checklist')
+    assert journal.workspace()['checklists'][id]['runs_on'] == 'session'
+    press(app, 'Delete Checklist')
+    assert not journal.workspace()['checklists'] and editing(app)['Checklist name'].value == 'Pre-trade plan'
 
 
 def test_dashboard_calendar_navigation_and_widget_save(home):
@@ -603,7 +709,7 @@ def test_calendar_tint_steps():
 def test_the_backup_includes_workflow_definitions_and_run_history(home):
     journal = seed_preview(home)
     definition = journal.save_checklist('Plan', starter())
-    journal.start_checklist(definition)
+    journal.start_checklist(definition, day='2026-10-07')
     with zipfile.ZipFile(backup.write(home / 'backup.zip')) as archive:
         copy = Journal(archive.extract('live.sqlite3', home / 'unzipped'))
     assert len(copy.workspace()['runs']) == 1
